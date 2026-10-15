@@ -75,7 +75,7 @@ class Plan[T]:
     """Raised by the validating decoders; re-raised as `fastpg.DecodeError`."""
     text_columns: tuple[str, ...]
     """Columns feeding `str` fields: the msgpack/json routes encode a json/jsonb value there
-    as its text, which is what direct construction gives such a field (ADR 0016)."""
+    as its text, which is what direct construction gives such a field (ADR 0003)."""
 
 
 class StructPlanner:

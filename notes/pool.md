@@ -153,8 +153,7 @@ Without draining, an acquire could starve under constant shared load.
 9. **`Transaction` shares `Connection`'s query methods.** Both subclass the private
    `_Queries`, so `tx.select_one(...)` etc. need no wrappers, and both inherit whatever is
    added there. `Transaction` is a plain `__slots__` class like its base, not a dataclass
-   (style guide §1 deviation: it has a custom `__init__` and slots). Until [ADR 0062](../adr/0062-queries-on-connection.md) it
-   subclassed the public `Cursor`.
+   (style guide §1 deviation: it has a custom `__init__` and slots).
 10. **COMMIT of an aborted transaction raises instead of silently rolling back.** The
     COMMIT script is `SELECT 1; COMMIT` (or `<reset>; COMMIT` in the pool). If the block
     swallowed a server error, the first statement fails with 25P02, the transaction is

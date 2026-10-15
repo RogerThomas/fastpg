@@ -1,7 +1,7 @@
 # TLS (`sslmode`)
 
 > Written when there were two connection paths, the threaded (tokio) one and inline mode.
-> Inline mode is now the only one ([ADR 0057](../adr/0057-loop-native-only-io-path.md) and [ADR 0060](../adr/0060-tls-with-rustls.md)), so "both paths" below means "the
+> Inline mode is now the only one ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md) and [ADR 0008](../adr/0008-tls.md)), so "both paths" below means "the
 > loop-native path", and the threaded rows in section 7 are history.
 
 Branch `tls`, on top of the inline-mode prototype. Code: `native/src/tls.rs` (DSN keys,
@@ -104,14 +104,14 @@ it (section 4), which is why `channel_binding=disable` can't be offered.
   `flush()`, which xitca calls after every write burst (its `WantFlush` state).
 * `poll_shutdown` sends `close_notify`, flushes, then shuts the socket down.
 
-**Dead-connection detection through TLS ([ADR 0026](../adr/0026-detect-server-closed-connections.md), [ADR 0052](../adr/0052-fail-pipelined-queries-after-fatal-error.md), [ADR 0055](../adr/0055-treat-read-errors-as-eof.md)).** `EofWatch` now sees
+**Dead-connection detection through TLS ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md)).** `EofWatch` now sees
 plaintext, so every way a TLS connection ends reaches it:
 
 | what happens | rustls / `TlsStream::read` | `EofWatch` |
 |---|---|---|
 | server sends `close_notify` (PostgreSQL does on exit, e.g. `pg_terminate_backend`) | `Ok(0)` | 0-byte read → EOF |
 | TCP FIN without `close_notify` (crash, proxy, network) | `Err(UnexpectedEof)` | fatal error → EOF |
-| TCP reset (Linux `ECONNRESET`, [ADR 0055](../adr/0055-treat-read-errors-as-eof.md)) | socket error passed through | fatal error → EOF |
+| TCP reset (Linux `ECONNRESET`, [ADR 0002](../adr/0002-protocol-on-the-event-loop.md)) | socket error passed through | fatal error → EOF |
 | TLS alert / corrupt record | `Err(InvalidData)` | fatal error → EOF |
 | write after the peer is gone (`EPIPE`) | socket error | fatal error → EOF |
 
@@ -149,7 +149,7 @@ already authenticates the peer).
 | `sslnegotiation` | `postgres` (default), `direct` (PostgreSQL 17+) | `direct` needs `require` or stronger (libpq 17) |
 | `sslcert`, `sslkey` | PEM client certificate (chain) and unencrypted key | both or neither; PKCS#8, PKCS#1 and SEC1 keys |
 | `sslsni` | `1` (default), `0` | SNI is only ever sent for DNS names |
-| `channel_binding` | `disable`, `prefer` (default), `require` | `disable`/`require` were rejected at first; supported since [ADR 0066](../adr/0066-channel-binding-authentication.md) (`native/src/auth.rs`) |
+| `channel_binding` | `disable`, `prefer` (default), `require` | `disable`/`require` were rejected at first; now supported ([ADR 0008](../adr/0008-tls.md), `native/src/auth.rs`) |
 | `sslpassword` | — | rejected: encrypted keys aren't supported |
 
 How the server certificate is checked:
@@ -197,8 +197,8 @@ safe defaults (ECDHE, AES-GCM/ChaCha20); PostgreSQL's own minimum is TLS 1.2.
   SCRAM login over TLS in the tests checks the non-default hash.
 * `channel_binding=require` can't be honoured through xitca: it doesn't say whether
   SCRAM-PLUS was used (the server may pick md5, password or trust). It was rejected rather
-  than ignored; since [ADR 0066](../adr/0066-channel-binding-authentication.md) fastpg runs the authentication itself for `require` and
-  `disable` (`native/src/auth.rs`).
+  than ignored; fastpg now runs the authentication itself for `require` and `disable`
+  (`native/src/auth.rs`, [ADR 0008](../adr/0008-tls.md)).
 
 ## 5. Tests and the TLS test server
 
@@ -299,7 +299,7 @@ Desktop) the difference was inside the noise.
 * `sslmode=allow` (plaintext first, then TLS) is not supported, and `prefer` doesn't retry
   in plaintext when a TLS handshake *fails* (it does fall back when the server answers `N`).
   Both would need a second connection attempt.
-* `channel_binding=disable|require` were rejected (section 4; supported since [ADR 0066](../adr/0066-channel-binding-authentication.md)).
+* `channel_binding=disable|require` were rejected (section 4; now supported, [ADR 0008](../adr/0008-tls.md)).
   SCRAM over TLS with the default `prefer` fails with Ed25519/Ed448 server certificates
   (xitca sends gs2 `y`; `disable` works there). Upstream fix: xitca should send
   `n` ("client doesn't support binding") when it has no end-point data, and could report

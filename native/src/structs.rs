@@ -235,7 +235,7 @@ struct BoundColumn {
     field: usize,
     codec: Codec,
     int_as_float: bool,
-    /// A `str` field fed from json/jsonb: it gets the raw JSON text (ADR 0016).
+    /// A `str` field fed from json/jsonb: it gets the raw JSON text (ADR 0003).
     json_as_text: bool,
     nullable: bool,
 }

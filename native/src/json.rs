@@ -135,7 +135,7 @@ fn write_base64(out: &mut Vec<u8>, data: &[u8]) {
 }
 
 /// `as_text`: a json/jsonb value is written as a string literal holding its JSON text (it
-/// feeds a `str` field, ADR 0016) instead of embedded verbatim.
+/// feeds a `str` field, ADR 0003) instead of embedded verbatim.
 fn encode_value(
     out: &mut Vec<u8>,
     scratch: &mut String,

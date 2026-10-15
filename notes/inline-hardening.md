@@ -1,6 +1,6 @@
 # Inline mode hardening: pool, zero extra threads, stress tests
 
-> **History.** Inline mode became the only I/O path afterwards ([ADR 0057](../adr/0057-loop-native-only-io-path.md)–[ADR 0061](../adr/0061-loop-path-hardening.md)): there
+> **History.** Inline mode became the only I/O path afterwards ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md)): there
 > is no `inline=` option, no threaded path, no spin and no `FASTPG_IO`, and the pool always
 > opens loop-native connections. File names below are updated to the current ones
 > (`native/src/event_loop.rs`, `tests/test_loop_io_stress.py`, `tests/thread_probe.py`,

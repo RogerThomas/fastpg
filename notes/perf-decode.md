@@ -183,7 +183,7 @@ it twice (`dictresize` was 3% of pydantic samples). 9 runs (`raw/ab_pyddict.summ
 
 * **Zero-copy cells.** xitca 0.4's `Row` keeps its `DataRowBody` private, so cells can only
   be kept alive through `try_get_zc::<Bytes>` (an atomic refcount per cell, and the
-  empty-value-as-NULL bug of [ADR 0008](../adr/0008-raw-row-access-via-fromsql.md)) or by reading the protocol bytes between the
+  empty-value-as-NULL bug of [ADR 0001](../adr/0001-rust-core-on-xitca-postgres.md)) or by reading the protocol bytes between the
   slices `RawCell` returns (pointer arithmetic on xitca internals). What they would save is
   small: the arena `memcpy`s and its growth are ~4% of samples. A safe stand-in, constant-
   size copies for 1/4/8/16-byte cells plus chunk arenas presized from the previous chunk
@@ -221,7 +221,7 @@ it twice (`dictresize` was 3% of pydantic samples). 9 runs (`raw/ab_pyddict.summ
   problem. Pydantic rows keep 3 tracked objects (from 5), ~240 ns/row of GC (24% of their
   cost) is inherent to the model's layout.
 * **Other Struct construction paths.** A Struct costs ~25–30 ns over a tuple; msgspec has
-  no faster public constructor, and writing its slots was already rejected ([ADR 0020](../adr/0020-structs-built-via-init.md)).
+  no faster public constructor, and writing its slots was already rejected ([ADR 0003](../adr/0003-typed-results-with-into.md)).
 * **Rust allocations** (alloc-stats builds, `raw/console.txt`): 0.04 per row before, 0.07
   after (twice as many chunks, each regrowing its arena); not a cost that shows up. The
   presized arenas above would bring it back down at no measurable gain.
@@ -273,9 +273,9 @@ socket reads (~11%, set by how the bytes arrive), and pydantic's GC (~24% of a p
 ## Found along the way (not changed)
 
 * A `str` field fed from a json/jsonb column gets the *decoded* JSON value (a `dict` for an
-  object), not the raw text that [ADR 0016](../adr/0016-direct-mode-type-compatibility.md) promises: `decode()` always JSON-decodes
+  object), not the raw text that [ADR 0003](../adr/0003-typed-results-with-into.md) promises: `decode()` always JSON-decodes
   json/jsonb, and `StructPlanner` only attaches a decoder to `Kind.JSON` fields. Rows with a
   json/jsonb column are never untracked, so the GC changes are safe either way. *Fixed
   later:* the binding now marks such columns and `decode()` returns their text.
-* README, `docs/architecture.md` and the chunk test comments now say 512; [ADR 0007](../adr/0007-stream-large-results.md) and
-  perf-notes change #3 record the change from 1,024.
+* README, `docs/architecture.md` and the chunk test comments now say 512; perf-notes change #3
+  records the change from 1,024.

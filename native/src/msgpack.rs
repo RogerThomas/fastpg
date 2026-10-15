@@ -47,7 +47,7 @@ fn fixed<const N: usize>(raw: &[u8]) -> Result<[u8; N], String> {
 }
 
 /// `as_text`: a json/jsonb value is written as a string holding its JSON text (it feeds a
-/// `str` field, ADR 0016) instead of as the MessagePack form of the JSON value.
+/// `str` field, ADR 0003) instead of as the MessagePack form of the JSON value.
 fn encode_value(
     out: &mut Vec<u8>,
     scratch: &mut String,

@@ -214,7 +214,7 @@ FASTPG_DSN=postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg_writes uv run yeet 
 
 People-shaped rows (10 columns, `LIKE people INCLUDING ALL`, PK index), truncated before each
 run, best of 3. "loop" = event-loop thread CPU (`time.thread_time`); "process" includes
-fastpg's I/O thread, which these runs still had (they predate [ADR 0057](../adr/0057-loop-native-only-io-path.md)).
+fastpg's I/O thread, which these runs still had (they predate loop-native I/O, [ADR 0002](../adr/0002-protocol-on-the-event-loop.md)).
 
 | method | 1k rows/s | 10k rows/s | 100k rows/s | loop ns/row | process CPU, 100k |
 |---|---:|---:|---:|---:|---:|

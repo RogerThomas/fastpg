@@ -258,19 +258,19 @@ and pool-of-few-connections workloads.
   resume, but every alternative breaks asyncio's scheduling guarantees or re-enters the
   connection from inside its own callback. asyncpg pays the same. Rejected.
 * **Speculative read after the write / busy-polling**: on a LAN the response is ≥ 50 µs away,
-  so a read right after the write is a wasted syscall; spinning was rejected in [ADR 0058](../adr/0058-delete-spin-busy-poll.md).
+  so a read right after the write is a wasted syscall; spinning was rejected ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md)).
 * **`Decimal` via a max-precision `Context.create_decimal`**: 84 → 72 ns per numeric cell
   (timeit), with a precision/semantics argument to make. Not worth it.
 * **Executor: one allocation per task** (task box and waker `Arc` merged, as tokio does):
   −1 allocation per query, a rewrite of `event_loop.rs`'s slab. Small gain; not now.
 * **Cheaper dead-connection race** (`unless_dead`: tokio `watch` + `Notify` registration,
-  ~0.15 µs in the profile): it is the hang fix of [ADR 0052](../adr/0052-fail-pipelined-queries-after-fatal-error.md); not worth the risk for the
+  ~0.15 µs in the profile): it is what fails pending operations on a dead connection ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md)); not worth the risk for the
   gain.
 * **Statement-cache key hashing** (SipHash of the ~130-byte SQL text, ~50 ns): could reuse
   Python's cached `str` hash; small gain, API churn.
 * **`Planner.plan_for`** (classmethod binding + `isinstance` + dict lookup: 54 ns vs 12 ns
   for the bare lookup): ~40 ns; skipped.
-* **xitca's per-query costs** (no vendoring, [ADR 0008](../adr/0008-raw-row-access-via-fromsql.md), [ADR 0048](../adr/0048-bulk-writes.md)): a boxed future per
+* **xitca's per-query costs** (no vendoring, [ADR 0001](../adr/0001-rust-core-on-xitca-postgres.md)): a boxed future per
   `AsyncIoDyn::ready` call (≈3 per query, ~0.5 µs here), a tokio mpsc channel per request
   (`Arc<Chan>` + block allocation; plus a lazily boxed pthread mutex on macOS), a range
   vector per row stream. Worth raising upstream: an `AsyncIoDyn::poll_ready` path without

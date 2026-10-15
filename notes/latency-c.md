@@ -1,7 +1,7 @@
 # Attempt C: inline mode (zero thread hops), and the road to a loop-native fastpg
 
 > **History.** This is the design note for the loop-native prototype ("inline mode", attempt
-> C). It became the only I/O path: see [ADR 0057](../adr/0057-loop-native-only-io-path.md)–[ADR 0059](../adr/0059-tokio-without-runtime.md). The
+> C). It became the only I/O path: see [ADR 0002](../adr/0002-protocol-on-the-event-loop.md). The
 > `inline=` option, the threaded path, `FASTPG_SPIN_US`, `runtime.rs` and the
 > `fastpg-inline` / `fastpg-struct` (threaded) bench adapters it compares no longer exist;
 > `inline.rs` is now `native/src/event_loop.rs`, and the tests are `tests/test_loop_io.py`,
@@ -306,14 +306,14 @@ is the base. Steps, in order, each leaving the suite green:
 5. **Pool, transactions, savepoints.** Pure Python over `Connection`/`Cursor`
    (`_pool.py`, `Transaction`), no change beyond the removed `inline=` parameter. Pool
    connections stay bound to the loop as before.
-6. **Server disconnect ([ADR 0026](../adr/0026-detect-server-closed-connections.md), [ADR 0052](../adr/0052-fail-pipelined-queries-after-fatal-error.md), [ADR 0055](../adr/0055-treat-read-errors-as-eof.md)).** `EofWatch` wraps `LoopSocket` exactly
+6. **Server disconnect ([ADR 0002](../adr/0002-protocol-on-the-event-loop.md)).** `EofWatch` wraps `LoopSocket` exactly
    as it wrapped tokio's stream (0-byte read or fatal read/write error → `eof` → `serve`
    drops the driver → `dead` → every pending operation fails → `detach`). All three
    disconnect tests pass inline today; keep them.
 7. **Statement cache, decoding, params, errors**: unchanged (`stmt_cache.rs`, `decode.rs`,
    `structs.rs`, `rows.rs`, `params.rs`, `errors.rs`, `msgpack.rs`, `json.rs`).
 8. **Docs**: README architecture diagram and limitations (`Not fork-safe once used` goes
-   away: no threads), [ADR 0005](../adr/0005-no-pyo3-async-runtimes.md), [ADR 0006](../adr/0006-single-tokio-io-thread.md) and [ADR 0067](../adr/0067-io-thread-busy-poll.md) superseded, `perf-notes.md` numbers redone on
+   away: no threads), the ADRs, `perf-notes.md` numbers redone on
    Linux.
 
 What is deleted: `runtime.rs` (runtime + spin), `mailbox.rs`, `Connection::connect`,

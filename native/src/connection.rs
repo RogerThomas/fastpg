@@ -71,7 +71,7 @@ enum Target {
     Tuple,
     Struct(Py<StructSpec>),
     /// Rows encoded for a validating decoder. The names are the columns that feed `str`
-    /// fields: a json/jsonb value there is encoded as its text (ADR 0016).
+    /// fields: a json/jsonb value there is encoded as its text (ADR 0003).
     Msgpack(Vec<String>),
     Json(Vec<String>),
 }

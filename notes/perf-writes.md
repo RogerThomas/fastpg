@@ -1,7 +1,7 @@
 # Write throughput on the loop-native driver
 
 `execute`, `execute_many`, `insert_many` and `copy_in`, re-measured on the loop-native code
-(no I/O thread, [ADR 0057](../adr/0057-loop-native-only-io-path.md)) and pushed. Compared with asyncpg (`executemany`,
+(no I/O thread, [ADR 0002](../adr/0002-protocol-on-the-event-loop.md)) and pushed. Compared with asyncpg (`executemany`,
 `copy_records_to_table`) and psycopg 3 async (`executemany`, binary `copy`).
 
 Raw logs, JSON and the scripts that produced them: `notes/eval/2026-10-writes-perf/`.

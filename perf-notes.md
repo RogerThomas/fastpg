@@ -4,7 +4,7 @@ What I measured, what I changed, and what's still open. All numbers come from an
 Mac running Docker Desktop (14 CPUs / 16 GB VM), Python 3.14.7, uvloop, PostgreSQL 18.6, unless
 stated otherwise.
 
-Since [ADR 0057](adr/0057-loop-native-only-io-path.md) fastpg has one I/O path: the asyncio loop thread runs the protocol itself
+fastpg has one I/O path ([ADR 0002](adr/0002-protocol-on-the-event-loop.md)): the asyncio loop thread runs the protocol itself
 and there is no I/O thread. The [Perf round](#perf-round-2026-10-11) section has the current
 numbers; the [Loop-native I/O](#loop-native-io) section's are from the day before and are
 kept as history, as are the sections that measured the old threaded path (the I/O thread,
@@ -150,7 +150,7 @@ That swamps any client-side difference for point lookups: every async driver lan
 
 ## Changes, with before/after
 
-Measured on the threaded path; rows 1 and 7 no longer apply ([ADR 0057](adr/0057-loop-native-only-io-path.md) and [ADR 0058](adr/0058-delete-spin-busy-poll.md)).
+Measured on the threaded path; rows 1 and 7 no longer apply ([ADR 0002](adr/0002-protocol-on-the-event-loop.md)).
 
 | # | change | metric | before | after |
 |---|---|---|---|---|
@@ -201,7 +201,7 @@ from binary. msgpack is still the right tool when a Struct needs msgspec *valida
 ## Single-query latency on a fast network: the thread-hop cost (history)
 
 *Historical: this measured the threaded path. Its I/O thread, `FASTPG_IO_THREADS` and
-`FASTPG_SPIN_US` are gone; see [Loop-native I/O](#loop-native-io), [ADR 0057](adr/0057-loop-native-only-io-path.md) and [ADR 0058](adr/0058-delete-spin-busy-poll.md).*
+`FASTPG_SPIN_US` are gone; see [Loop-native I/O](#loop-native-io) and [ADR 0002](adr/0002-protocol-on-the-event-loop.md).*
 
 Running the suite inside Linux (container-to-container, ~50 µs round trip) exposed the one
 scenario where the design costs something. In a sequential point lookup, fastpg makes **two
@@ -346,7 +346,7 @@ single `functools.cache` hit.
   very-low-latency network. But it would move I/O and protocol work back onto the loop thread,
   the very thing the current design avoids. Worth prototyping only if single-query latency on
   LAN-local databases turns out to matter more than throughput.
-  *Done later ([ADR 0057](adr/0057-loop-native-only-io-path.md)): CPU-quota measurements made it the only I/O path.*
+  *Done later ([ADR 0002](adr/0002-protocol-on-the-event-loop.md)): CPU-quota measurements made it the only I/O path.*
 * **Zero-copy rows** (keeping xitca's `DataRowBody` instead of copying into the arena). The copy
   is one `memcpy` per cell (~1–2% of the per-row cost) and keeps the arena allocation-free per
   row, so it isn't worth the lifetime complexity.

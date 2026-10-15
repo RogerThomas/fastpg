@@ -1,5 +1,5 @@
 """What importing and using fastpg imports: never pydantic, which only matters to applications
-with pydantic models (who have imported it already; ADR 0034). Each case runs in a fresh
+with pydantic models (who have imported it already; ADR 0003). Each case runs in a fresh
 interpreter, since this one has imported pydantic already.
 """
 
