@@ -24,6 +24,7 @@ lose the column types (dates as strings, ...).
 
 import inspect
 import sys
+import types
 import typing
 from dataclasses import dataclass
 from enum import IntEnum
@@ -188,6 +189,45 @@ class StructPlanner:
                 return False
         return False
 
+    @staticmethod
+    def _allocatable_named_tuple(target: type[tuple[Any, ...]], arity: int) -> bool:
+        """Whether calling `target` with `arity` positional arguments does no more than
+        `tuple.__new__(target, args)`, so the native builder may allocate instances and fill
+        their items itself. That holds when:
+
+        * the metaclass is `type`, whose `__call__` calls `__new__`, then `__init__`;
+        * `__new__` is the one `collections.namedtuple` generates for `arity` fields,
+          `lambda _cls, a, b, ...: _tuple_new(_cls, (a, b, ...))` with `_tuple_new` being
+          `tuple.__new__`: the namedtuple class's own, which a subclass may inherit but not
+          override (its bytecode is compared with that of a namedtuple of the same arity);
+        * `__init__` is `object.__init__`, which ignores the arguments;
+        * instances have no `__dict__`. A subclass adding methods keeps the namedtuple's
+          layout when it declares `__slots__ = ()` (without it, instances get a `__dict__`;
+          a tuple subclass can't declare non-empty slots).
+        """
+        if type(target) is not type or target.__init__ is not object.__init__:
+            return False
+        if target.__dictoffset__ != 0:
+            return False
+        new = target.__new__
+        probe_fields: list[tuple[str, type[object]]] = [(f"f{i}", object) for i in range(arity)]
+        probe: type[tuple[Any, ...]] = typing.NamedTuple("Probe", probe_fields)
+        reference = probe.__new__
+        if not isinstance(new, types.FunctionType) or not isinstance(reference, types.FunctionType):
+            return False
+        # `vars(tuple)["__new__"]` is `tuple.__new__`, without its generic signature.
+        tuple_new = vars(tuple)["__new__"]
+        if new.__globals__.get("_tuple_new") is not tuple_new:  # absent: not generated
+            return False
+        code, expected = new.__code__, reference.__code__
+        return (
+            code.co_code == expected.co_code
+            and code.co_names == expected.co_names
+            and code.co_argcount == expected.co_argcount
+            and code.co_kwonlyargcount == expected.co_kwonlyargcount
+            and code.co_flags == expected.co_flags
+        )
+
     @classmethod
     def plan(cls, struct: type[msgspec.Struct]) -> Plan[msgspec.Struct]:
         info = mi.type_info(struct)
@@ -238,7 +278,9 @@ class StructPlanner:
     @classmethod
     def plan_named_tuple(cls, target: type[tuple[Any, ...]]) -> Plan[tuple[Any, ...]]:
         """A `NamedTuple` (typing's or collections'): fields are classified as for Structs;
-        instances are built by calling the class positionally with every field."""
+        instances are allocated and filled natively when that is what calling the class does
+        (`_allocatable_named_tuple`), otherwise built by calling the class positionally with
+        every field."""
         info = mi.type_info(target)
         if not isinstance(info, mi.NamedTupleType):  # guaranteed for namedtuple classes
             msg = f"msgspec does not describe {target!r} as a NamedTuple"
@@ -256,6 +298,7 @@ class StructPlanner:
                 named_tuple_defaults=[
                     (False, None) if f.required else (True, f.default) for f in info.fields
                 ],
+                named_tuple_alloc=cls._allocatable_named_tuple(target, len(fields)),
                 untrackable=cls._untrackable_named_tuple(target),
             )
         route_error = (

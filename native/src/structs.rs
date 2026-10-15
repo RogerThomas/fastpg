@@ -11,9 +11,12 @@
 //! arguments whose names are the Struct's own interned field-name objects (msgspec matches
 //! those by identity first). No tuple, dict or other intermediate container is created.
 //!
-//! A `NamedTuple` is always called positionally, one argument per field in field order, with
-//! the field's default for a field no column feeds. A dict row (`StructSpec.for_dict()`) has
-//! no fields: every column is bound and keyed by its name, interned once per statement.
+//! A `NamedTuple` gets one value per field in field order, with the field's default for a
+//! field no column feeds. When calling the class would do no more than `tuple.__new__(cls,
+//! values)` (checked in `fastpg/_spec.py`), the instance is allocated and filled here, as
+//! CPython's `tuple_subtype_new` does; otherwise the class is called positionally. A dict row
+//! (`StructSpec.for_dict()`) has no fields: every column is bound and keyed by its name,
+//! interned once per statement.
 
 use std::collections::{HashMap, HashSet};
 use std::ptr;
@@ -102,9 +105,14 @@ impl FieldKind {
 enum Mode {
     /// msgspec Struct: call the class.
     Struct,
-    /// `NamedTuple`: call the class positionally with every field. Holds the default for each
-    /// field (`None` = required).
-    NamedTuple(Vec<Option<Py<PyAny>>>),
+    /// `NamedTuple`: one value per field, in field order.
+    NamedTuple {
+        /// The default for each field (`None` = required).
+        defaults: Vec<Option<Py<PyAny>>>,
+        /// Calling the class is equivalent to `tuple.__new__(cls, values)`: allocate and fill
+        /// instances natively. Otherwise call the class positionally with every field.
+        alloc: bool,
+    },
     /// Pydantic model: build instances like `model_construct` instead of calling the class.
     Pydantic {
         /// The default for each field (`None` = no usable default).
@@ -165,7 +173,7 @@ impl StructSpec {
     /// The default of each field, for the modes that fill missing fields themselves.
     fn defaults(&self) -> Option<&[Option<Py<PyAny>>]> {
         match &self.mode {
-            Mode::NamedTuple(defaults) | Mode::Pydantic { defaults, .. } => Some(defaults),
+            Mode::NamedTuple { defaults, .. } | Mode::Pydantic { defaults, .. } => Some(defaults),
             Mode::Struct | Mode::Dict => None,
         }
     }
@@ -182,8 +190,10 @@ impl StructSpec {
     /// directly, exactly as `BaseModel.model_construct` does, without calling `__init__`.
     ///
     /// `named_tuple_defaults` (one `(has_default, default)` per field) switches to
-    /// `NamedTuple` mode: the class is called positionally with every field, in field order,
-    /// the default standing in for a field no column feeds.
+    /// `NamedTuple` mode: one value per field, in field order, the default standing in for a
+    /// field no column feeds. With `named_tuple_alloc` (calling the class only does
+    /// `tuple.__new__(cls, values)`), instances are allocated and filled natively; otherwise
+    /// the class is called positionally with the values.
     ///
     /// `untrackable`: the Struct type is GC-tracked (`gc=True`) and has neither
     /// `__post_init__` nor `__dict__` (a `NamedTuple`: neither `__dict__` nor a custom
@@ -197,8 +207,10 @@ impl StructSpec {
         positional_fields,
         pydantic_defaults = None,
         named_tuple_defaults = None,
+        named_tuple_alloc = false,
         untrackable = false,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         struct_type: Bound<'_, PyAny>,
         fields: Vec<FieldArg<'_>>,
@@ -206,6 +218,7 @@ impl StructSpec {
         positional_fields: usize,
         pydantic_defaults: Option<Vec<(bool, Bound<'_, PyAny>)>>,
         named_tuple_defaults: Option<Vec<(bool, Bound<'_, PyAny>)>>,
+        named_tuple_alloc: bool,
         untrackable: bool,
     ) -> PyResult<Self> {
         let qualname = struct_type.getattr("__qualname__")?.extract::<String>()?;
@@ -254,7 +267,10 @@ impl StructSpec {
                     slots,
                 }
             }
-            (None, Some(defaults)) => Mode::NamedTuple(unbind_defaults(defaults)),
+            (None, Some(defaults)) => Mode::NamedTuple {
+                defaults: unbind_defaults(defaults),
+                alloc: named_tuple_alloc,
+            },
             (None, None) => Mode::Struct,
         };
         Ok(Self {
@@ -312,7 +328,7 @@ struct PydanticPlan {
     fields_set: Py<PyFrozenSet>,
 }
 
-/// One argument of a `NamedTuple` call.
+/// One item of a `NamedTuple`.
 enum Arg {
     /// The value of `Binding::columns[i]`.
     Column(usize),
@@ -328,6 +344,9 @@ enum Make {
     /// Call the class positionally with one argument per field, in field order
     /// (`NamedTuple`s whose columns are not exactly their fields, in order).
     Fields(Vec<Arg>),
+    /// Allocate a `NamedTuple` and fill its items, one per field in field order, as
+    /// `tuple.__new__` does (`Mode::NamedTuple { alloc: true, .. }`).
+    NamedTuple(Vec<Arg>),
     Pydantic(PydanticPlan),
     /// A dict keyed by column name: the interned names, one per column.
     Dict(Vec<Py<PyString>>),
@@ -404,7 +423,7 @@ impl Binding {
         })
     }
 
-    /// The arguments of a `NamedTuple` call: each field's column value, or its default.
+    /// The items of a `NamedTuple`: each field's column value, or its default.
     fn named_tuple_args(
         py: Python<'_>,
         spec: &StructSpec,
@@ -543,8 +562,10 @@ impl Binding {
                     fields_set: PyFrozenSet::new(py, names)?.unbind(),
                 })
             }
-            Mode::NamedTuple(defaults) => {
-                if in_field_order && bound.len() == spec.fields.len() {
+            Mode::NamedTuple { defaults, alloc } => {
+                if *alloc {
+                    Make::NamedTuple(Self::named_tuple_args(py, spec, &bound, defaults)?)
+                } else if in_field_order && bound.len() == spec.fields.len() {
                     Make::Call(None)
                 } else {
                     Make::Fields(Self::named_tuple_args(py, spec, &bound, defaults)?)
@@ -694,6 +715,7 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
                 // and the binding the defaults.
                 unsafe { call(py, &self.cls, &mut self.args, args, ptr::null_mut())? }
             }
+            Make::NamedTuple(items) => self.named_tuple(items)?,
         };
         if binding.untrack {
             decode::gc_untrack(&obj);
@@ -743,6 +765,40 @@ impl<'py> StructBuilder<'_, 'py> {
             dict.set_item(key.bind(py), value)?;
         }
         Ok(dict.into_any())
+    }
+
+    /// `tuple.__new__(cls, values)` for a `NamedTuple` class whose call does no more than that
+    /// (checked in `fastpg/_spec.py`), as CPython's `tuple_subtype_new` does it: allocate an
+    /// instance with one item per field, fill the items, reset the hash cache, make sure the
+    /// instance is GC-tracked. Unlike the class's `__new__`, builds no intermediate tuple.
+    fn named_tuple(&self, items: &[Arg]) -> PyResult<Bound<'py, PyAny>> {
+        let py = self.py;
+        // SAFETY: `cls` is a tuple subclass (a heap type, so GC-enabled, whose layout is a
+        // tuple's: it has no `__dict__`, and tuple subclasses can't add slots), so tp_alloc
+        // returns a zeroed instance with room for `items.len()` items and `ob_size` set to
+        // that. Each item is set exactly once, with a new reference, before the instance
+        // escapes, and nothing between the allocation and the last item runs Python code
+        // (cloning only increments reference counts); a GC pass seeing the tracked instance
+        // meanwhile skips its NULL items, as for any tuple under construction. The hash cache
+        // is reset to -1 ("not computed") since the allocation zeroed it.
+        unsafe {
+            let tp = self.cls.as_ptr().cast::<pyo3::ffi::PyTypeObject>();
+            let alloc = (*tp).tp_alloc.unwrap_or(pyo3::ffi::PyType_GenericAlloc);
+            let n = items.len() as pyo3::ffi::Py_ssize_t;
+            let obj = Bound::from_owned_ptr_or_err(py, alloc(tp, n))?;
+            (*obj.as_ptr().cast::<pyo3::ffi::PyTupleObject>()).ob_hash = -1;
+            for (i, item) in items.iter().enumerate() {
+                let value = match item {
+                    Arg::Column(c) => self.values[*c].clone().into_ptr(),
+                    Arg::Default(default) => default.clone_ref(py).into_ptr(),
+                };
+                pyo3::ffi::PyTuple_SET_ITEM(obj.as_ptr(), i as pyo3::ffi::Py_ssize_t, value);
+            }
+            if pyo3::ffi::PyObject_GC_IsTracked(obj.as_ptr()) == 0 {
+                pyo3::ffi::PyObject_GC_Track(obj.as_ptr().cast());
+            }
+            Ok(obj)
+        }
     }
 
     /// `BaseModel.model_construct`, natively: allocate the instance without `__init__`, install

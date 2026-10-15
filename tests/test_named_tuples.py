@@ -2,6 +2,9 @@
 
 import datetime as dt
 import gc
+import pickle
+import sys
+import tracemalloc
 import uuid
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple, Self, assert_type
@@ -36,6 +39,27 @@ class Everything(NamedTuple):
 class NameAge(NamedTuple):
     name: str
     age: int
+
+
+class NameAgeWithMethod(NameAge):
+    """Adds a method but no field; ``__slots__ = ()`` keeps instances free of a ``__dict__``."""
+
+    __slots__ = ()
+
+    def label(self) -> str:
+        return f"{self.name}-{self.age}"
+
+
+class UpperName(NameAge):
+    __slots__ = ()
+
+    def __new__(cls, name: str, age: int) -> Self:
+        return super().__new__(cls, name.upper(), age)
+
+
+class NameBalance(NamedTuple):
+    name: str
+    balance: Decimal = Decimal(1)
 
 
 class WithDefaults(NamedTuple):
@@ -218,12 +242,102 @@ async def test_other_strategies_are_unsupported(
         await conn.select_one("SELECT 'name' AS name, 1 AS age", into=NameAge, strategy=strategy)
 
 
-async def test_large_result_streams_in_chunks(conn: fastpg.Connection) -> None:
+@pytest.mark.parametrize("into", [NameAge, NameAgeWithMethod, UpperName])
+async def test_large_result_streams_in_chunks(
+    conn: fastpg.Connection,
+    into: type[NameAge],
+) -> None:
     # Spans several 512-row chunks with a partial final chunk.
     sql = "SELECT name, age FROM people WHERE id <= 5000 ORDER BY id"
-    rows = await conn.select_many(sql, into=NameAge)
-    assert rows == [NameAge(*t) for t in await conn.select_many(sql)]
+    rows = await conn.select_many(sql, into=into)
+    assert rows == [into(*t) for t in await conn.select_many(sql)]
     assert len(rows) == 5000
+    assert all(type(row) is into for row in rows)
+
+
+async def test_rows_are_instances_of_the_class(conn: fastpg.Connection) -> None:
+    row = await conn.select_one("SELECT name, age FROM people WHERE id = 3", into=NameAge)
+    assert type(row) is NameAge
+    assert isinstance(row, tuple)
+    assert (row.name, row.age) == ("person-3", 21)
+    assert (row[0], row[1], row[-1]) == ("person-3", 21, 21)
+    assert len(row) == 2
+
+
+async def test_rows_behave_like_constructed_instances(conn: fastpg.Connection) -> None:
+    row = await conn.select_one("SELECT age, name FROM people WHERE id = 3", into=NameAge)
+    constructed = NameAge("person-3", 21)
+    assert row == constructed
+    assert row == ("person-3", 21)
+    assert row._replace(age=1) == NameAge("person-3", 1)
+    assert type(row._replace(age=1)) is NameAge
+    assert row._asdict() == {"name": "person-3", "age": 21}
+    assert repr(row) == "NameAge(name='person-3', age=21)"
+    assert hash(row) == hash(row) == hash(constructed) == hash(("person-3", 21))
+    assert {row: 1}[constructed] == 1
+    unpickled = pickle.loads(pickle.dumps(row))  # noqa: S301 - pickled just above
+    assert unpickled == constructed
+    assert type(unpickled) is NameAge
+
+
+async def test_subclass_adding_a_method(conn: fastpg.Connection) -> None:
+    row = await conn.select_one(
+        "SELECT name, age FROM people WHERE id = 3",
+        into=NameAgeWithMethod,
+    )
+    assert type(row) is NameAgeWithMethod
+    assert row.label() == "person-3-21"
+    assert row == NameAgeWithMethod("person-3", 21)
+    assert hash(row) == hash(NameAgeWithMethod("person-3", 21))
+    assert repr(row) == "NameAgeWithMethod(name='person-3', age=21)"
+    assert type(row._replace(age=1)) is NameAgeWithMethod
+
+
+async def test_custom_new_runs(conn: fastpg.Connection) -> None:
+    row = await conn.select_one("SELECT age, name FROM people WHERE id = 3", into=UpperName)
+    assert type(row) is UpperName
+    assert row == UpperName("person-3", 21) == ("PERSON-3", 21)
+
+
+async def test_defaults_and_nulls_in_many_rows(conn: fastpg.Connection) -> None:
+    # Over one 512-row chunk: `age` comes from its default, `email` is NULL.
+    sql = "SELECT name, NULL::text AS email FROM people WHERE id <= 600 ORDER BY id"
+    rows = await conn.select_many(sql, into=WithDefaults)
+    assert rows == [WithDefaults(f"person-{i}", 1, None) for i in range(1, 601)]
+
+
+async def test_no_reference_leaks(conn: fastpg.Connection) -> None:
+    sql = "SELECT name FROM people WHERE id <= 10000"
+    await conn.select_many(sql, into=NameBalance)  # plans the type and prepares the statement
+    # The connection holds on to the last result until the next query.
+    await conn.select_one("SELECT 1")
+    default = NameBalance._field_defaults["balance"]
+    before = sys.getrefcount(default)
+    rows = await conn.select_many(sql, into=NameBalance)
+    await conn.select_one("SELECT 1")
+    assert sys.getrefcount(default) == before + 10_000
+    constructed = [NameBalance("".join(["person", "-1"]), Decimal(2))]
+    assert sys.getrefcount(rows[0]) == sys.getrefcount(constructed[0])
+    assert sys.getrefcount(rows[0].name) == sys.getrefcount(constructed[0].name)
+    del rows
+    assert sys.getrefcount(default) == before
+
+
+async def test_rows_are_freed(conn: fastpg.Connection) -> None:
+    sql = "SELECT name, age FROM people WHERE id <= 10000"
+    await conn.select_many(sql, into=NameAge)  # plans the type and prepares the statement
+    tracemalloc.start()
+    try:
+        for _ in range(3):
+            assert len(await conn.select_many(sql, into=NameAge)) == 10_000
+        # The connection holds on to the last result until the next query.
+        await conn.select_one("SELECT 1")
+        gc.collect()
+        current, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # 10,000 leaked rows and names would be over 1 MB.
+    assert current < 100_000
 
 
 async def test_select_one_or_none(conn: fastpg.Connection) -> None:

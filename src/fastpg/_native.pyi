@@ -23,6 +23,7 @@ class StructSpec:
         positional_fields: int,
         pydantic_defaults: Sequence[tuple[bool, object]] | None = None,
         named_tuple_defaults: Sequence[tuple[bool, object]] | None = None,
+        named_tuple_alloc: bool = False,
         untrackable: bool = False,
     ) -> StructSpec: ...
     @staticmethod
