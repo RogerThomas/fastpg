@@ -240,6 +240,8 @@ class Pool:
     # _place keeps membership in step with (state, load) on every transition; a shared
     # statement pops its connection off the stack (popitem: the top) just before _begin.
     _idle: dict[_Entry, None] = field(init=False, repr=False, default_factory=dict[_Entry, None])
+    _draining: int = field(init=False, repr=False, default=0)
+    """Connections in the DRAINING state."""
     _drained: dict[_Entry, None] = field(
         init=False,
         repr=False,
@@ -324,6 +326,9 @@ class Pool:
             self._drained[entry] = None
 
     def _set_state(self, entry: _Entry, state: int) -> None:
+        # Count draining connections, so _dispatch can skip _rebalance when there's nothing
+        # for it to do (no acquire() waiters and nothing draining).
+        self._draining += (state == _Entry.DRAINING) - (entry.state == _Entry.DRAINING)
         entry.state = state
         self._router.set_shared(entry.slot, state == _Entry.SHARED)
         self._place(entry)
@@ -544,7 +549,8 @@ class Pool:
             self._hand(entry, waiter)
         if acquiring or waiting:
             self._grow()
-        self._rebalance()
+        if acquiring or self._draining:
+            self._rebalance()
 
     def _fail_waiters(self, error: BaseException) -> None:
         for future in (*(w.future for w in self._waiting), *self._acquiring):
