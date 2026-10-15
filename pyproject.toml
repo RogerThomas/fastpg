@@ -80,6 +80,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "rich>=15.0.0",
     "ruff>=0.17.0",
+    "testcontainers>=4.15.0",
     "uvloop>=0.23.0",
     "yeetr>=2026.9.18",
 ]

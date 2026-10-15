@@ -42,6 +42,7 @@ tasks:
   test-tls:
     desc: Run tests/test_tls.py against the TLS-only PostgreSQL (needs `task db-up db-tls-up`)
     env:
+      FASTPG_DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
       FASTPG_TLS_DSN: postgresql://fastpg:fastpg@localhost:55433/fastpg
       FASTPG_TLS_CA: docker/tls/certs/ca.crt
     cmd: uv run pytest tests/test_tls.py {{.CLI_ARGS}}
@@ -51,7 +52,7 @@ tasks:
     cmd: uv sync --all-groups --reinstall-package fastpg
 
   test:
-    desc: Run Rust unit tests and the pytest suite (needs `task db-up`)
+    desc: Run Rust unit tests and the pytest suite (in throwaway PostgreSQL containers unless FASTPG_DSN is set)
     cmds:
       - cargo test --manifest-path native/Cargo.toml -q
       - uv run pytest {{.CLI_ARGS}}

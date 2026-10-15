@@ -1,20 +1,18 @@
 """TLS (``sslmode`` and friends) on both connection paths.
 
-Tests against the TLS-only server are skipped unless ``FASTPG_TLS_DSN`` (a URL without TLS
-keys whose host is a name in the server certificate, e.g. ``localhost``) and
-``FASTPG_TLS_CA`` (the server's CA certificate; the client certificate and key are expected
-next to it) are set; notes/tls.md shows how to run that server. The other tests only need
-the plain compose server (``FASTPG_DSN``).
+Tests against the TLS-only server use ``FASTPG_TLS_DSN`` (a URL without TLS keys whose host
+is a name in the server certificate, e.g. ``localhost``) and ``FASTPG_TLS_CA`` (the server's
+CA certificate; the client certificate and key are expected next to it). Without them, a
+throwaway server is started, unless ``FASTPG_DSN`` is set: then they are skipped (see the
+``tls_server`` fixture in conftest.py). The other tests only need the plain server.
 """
 
 import asyncio
-import os
 import socket
 import ssl
 import struct
 from contextlib import suppress
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -26,6 +24,7 @@ from fastpg import errors
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
 
 class Item(msgspec.Struct):
@@ -166,11 +165,8 @@ class FakeServer:
 
 
 @pytest.fixture
-def server() -> TLSServer:
-    dsn, ca = os.environ.get("FASTPG_TLS_DSN"), os.environ.get("FASTPG_TLS_CA")
-    if dsn is None or ca is None:
-        pytest.skip("FASTPG_TLS_DSN and FASTPG_TLS_CA are not set")
-    return TLSServer(dsn, Path(ca))
+def server(tls_server: tuple[str, Path]) -> TLSServer:
+    return TLSServer(*tls_server)
 
 
 @pytest.fixture
