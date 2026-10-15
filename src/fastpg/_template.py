@@ -39,7 +39,7 @@ class Identifier:
     Put it where a bare name would go, never inside quotes.
     """
 
-    __slots__ = ("_parts", "_sql")
+    __slots__ = ("_parts", "_quoted")
 
     def __init__(self, *parts: str) -> None:
         if not parts:
@@ -53,16 +53,16 @@ class Identifier:
                 msg = f"invalid SQL identifier {part!r}: must be non-empty and contain no NUL"
                 raise ValueError(msg)
         self._parts = parts
-        self._sql = ".".join('"' + part.replace('"', '""') + '"' for part in parts)
+        self._quoted = ".".join('"' + part.replace('"', '""') + '"' for part in parts)
 
     @property
     def parts(self) -> tuple[str, ...]:
         return self._parts
 
     @property
-    def sql(self) -> str:
+    def quoted(self) -> str:
         """The quoted form spliced into the query, e.g. ``"my schema"."people"``."""
-        return self._sql
+        return self._quoted
 
     @override
     def __repr__(self) -> str:
@@ -98,7 +98,7 @@ def _shape(template: Template, values: list[object]) -> _Shape:
         if type(value) is Template:
             parts.append(_shape(value, values))
         elif type(value) is Identifier:
-            parts.append(value.sql)
+            parts.append(value.quoted)
         else:
             values.append(value)
             parts.append(None)

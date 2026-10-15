@@ -305,7 +305,7 @@ async def test_identifiers_are_quoted(conn: fastpg.Connection) -> None:
 
 
 def test_identifier_value_semantics() -> None:
-    assert Identifier("a", 'b"c').sql == '"a"."b""c"'
+    assert Identifier("a", 'b"c').quoted == '"a"."b""c"'
     assert Identifier("a", "b").parts == ("a", "b")
     assert repr(Identifier("a", "b")) == "Identifier('a', 'b')"
     assert Identifier("a") == Identifier("a")

@@ -108,7 +108,7 @@ class Target:
 
     @property
     def quoted(self) -> str:
-        return fastpg.Identifier(self.table).sql
+        return fastpg.Identifier(self.table).quoted
 
     @property
     def create(self) -> str:

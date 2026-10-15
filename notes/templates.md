@@ -40,7 +40,7 @@ Code: `src/fastpg/_template.py` (pure Python). Tests: `tests/test_templates.py`.
   `SELECT * FROM "my schema"."people"`. Use it for tables, columns, schemas and type
   names (`{v}::{Identifier('int4')}`); parameters can't stand for any of these.
   - It rejects zero parts, empty parts, NUL and non-`str` parts.
-  - It has `.parts`, `.sql`, `==`/`hash` and a `repr`.
+  - It has `.parts`, `.quoted`, `==`/`hash` and a `repr`.
 * **Escape hatch for trusted dynamic SQL text:** `Template("ORDER BY created_at DESC")`. A
   `str` argument to the `Template` constructor is static text. That's explicit, and greppable.
 * **Errors** are builtin types, because they're programming errors at the call site:
