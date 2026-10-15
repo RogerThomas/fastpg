@@ -79,11 +79,11 @@ class _FastpgShared:
         self._conns = conns
         self._inflight = [0] * len(conns)
 
-    async def run(self, sql: str, *params: object) -> None:
+    async def run(self, query: str, *params: object) -> None:
         i = min(range(len(self._inflight)), key=self._inflight.__getitem__)
         self._inflight[i] += 1
         try:
-            await self._conns[i].select_many(sql, *params)
+            await self._conns[i].select_many(query, *params)
         finally:
             self._inflight[i] -= 1
 
@@ -109,14 +109,14 @@ class _FastpgAware(_FastpgShared):
         oldest = now - min(started.values())
         return oldest + len(started) * self.PER_QUERY_NS
 
-    async def run(self, sql: str, *params: object) -> None:
+    async def run(self, query: str, *params: object) -> None:
         now = time.perf_counter_ns()
         i = min(range(len(self._started)), key=partial(self._score, now=now))
         self._token += 1
         token = self._token
         self._started[i][token] = now
         try:
-            await self._conns[i].select_many(sql, *params)
+            await self._conns[i].select_many(query, *params)
         finally:
             del self._started[i][token]
 
@@ -127,8 +127,8 @@ class _FastpgPool:
 
     _pool: fastpg.Pool
 
-    async def run(self, sql: str, *params: object) -> None:
-        await self._pool.select_many(sql, *params)
+    async def run(self, query: str, *params: object) -> None:
+        await self._pool.select_many(query, *params)
 
     async def close(self) -> None:
         await self._pool.close()
@@ -138,8 +138,8 @@ class _AsyncpgPool:
     def __init__(self, pool: asyncpg.Pool[asyncpg.Record]) -> None:
         self._pool = pool
 
-    async def run(self, sql: str, *params: object) -> None:
-        await self._pool.fetch(sql, *params)
+    async def run(self, query: str, *params: object) -> None:
+        await self._pool.fetch(query, *params)
 
     async def close(self) -> None:
         await self._pool.close()
@@ -157,7 +157,7 @@ async def _drive(
     rate: int,
     seconds: float,
     slow_fraction: float,
-    slow_sql: str,
+    slow_query: str,
     rng: random.Random,
 ) -> tuple[list[int], list[int], int, float]:
     fast: list[int] = []
@@ -167,7 +167,7 @@ async def _drive(
     async def request(is_slow: bool, person_id: int) -> None:  # noqa: FBT001
         t0 = time.perf_counter_ns()
         if is_slow:
-            await run(slow_sql)
+            await run(slow_query)
         else:
             await run(FAST_SQL, person_id)
         (slow if is_slow else fast).append(time.perf_counter_ns() - t0)
@@ -266,20 +266,20 @@ async def _measure(
     rates: list[int],
     seconds: float,
     slow_fraction: float,
-    slow_sql: str,
+    slow_query: str,
 ) -> list[MixResult]:
     target = await _open(dsn, config)
     out: list[MixResult] = []
     try:
         for rate in rates:
             rng = random.Random(42)
-            await _drive(target.run, rate, 1.0, slow_fraction, slow_sql, rng)  # warm-up
+            await _drive(target.run, rate, 1.0, slow_fraction, slow_query, rng)  # warm-up
             fast, slow, sent, wall = await _drive(
                 target.run,
                 rate,
                 seconds,
                 slow_fraction,
-                slow_sql,
+                slow_query,
                 rng,
             )
             out.append(
@@ -338,7 +338,7 @@ def main(
     closed_loop_tasks: Annotated[list[int] | None, Opt("-n")] = None,
     throughput_only: bool = False,
     slow_fraction: Annotated[float, Opt("-f")] = 0.01,
-    slow_sql: str = "SELECT pg_sleep(0.02)",
+    slow_query: str = "SELECT pg_sleep(0.02)",
     seconds: Annotated[float, Opt("-t")] = 5.0,
     dsn: Annotated[str, Opt(envvar="FASTPG_DSN", help="Database URL")] = DEFAULT_DSN,
 ) -> None:
@@ -354,7 +354,7 @@ def main(
         closed_loop_tasks: Also measure pure point-lookup throughput with this many tasks.
         throughput_only: Skip the mixed workload (use with -n).
         slow_fraction: Fraction of requests that run the slow query.
-        slow_sql: The slow query.
+        slow_query: The slow query.
         seconds: Measured duration per (config, rate), after a 1s warm-up.
         dsn: PostgreSQL DSN.
     """
@@ -375,9 +375,9 @@ def main(
     results: list[MixResult] = []
     for config in configs:
         results += run_coroutine(
-            _measure(dsn, config, rates, seconds, slow_fraction, slow_sql),
+            _measure(dsn, config, rates, seconds, slow_fraction, slow_query),
         )
-    title = f"Mixed workload: {slow_fraction:.1%} slow ({slow_sql}), rest point lookups"
+    title = f"Mixed workload: {slow_fraction:.1%} slow ({slow_query}), rest point lookups"
     table = Table(title=title)
     for col in ("config", "rate/s", "achieved/s", "fast p50", "fast p99", "fast p99.9",
                 "slow p50", "slow p99"):  # fmt: skip

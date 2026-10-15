@@ -129,8 +129,8 @@ async def write(
     assert isinstance(table, str)
     assert columns is not None
     placeholders = ", ".join(f"${i + 1}" for i in range(len(columns)))
-    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
-    return await conn.execute_many(sql, rows)
+    query = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
+    return await conn.execute_many(query, rows)
 
 
 def numbered_rows(count: int, started: asyncio.Event) -> Iterator[tuple[int, str]]:

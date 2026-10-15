@@ -417,9 +417,9 @@ class Pool:
 
     # --- routing ------------------------------------------------------------------------
 
-    def _begin(self, entry: _Entry, sql: str) -> int:
-        """Reserve a slot on ``entry`` (a SHARED one, off the idle stack) for ``sql``."""
-        return self._router.begin(entry.slot, sql)
+    def _begin(self, entry: _Entry, query: str) -> int:
+        """Reserve a slot on ``entry`` (a SHARED one, off the idle stack) for ``query``."""
+        return self._router.begin(entry.slot, query)
 
     def _best_slot(self) -> _Entry | None:
         """An idle shared connection, else the least stalled one under the cap (rule 3).
@@ -479,10 +479,10 @@ class Pool:
         entry: _Entry,
         token: int,
         error: BaseException | None = None,
-        sql: str | None = None,
+        query: str | None = None,
     ) -> None:
-        """Release a shared slot; ``sql`` (on success) feeds the service time estimates."""
-        left = self._router.finish(entry.slot, token, sql)
+        """Release a shared slot; ``query`` (on success) feeds the service time estimates."""
+        left = self._router.finish(entry.slot, token, query)
         if error is None and not entry.state:  # the common case: success, SHARED connection
             if not left:
                 self._idle[entry] = None  # idle now: on top of the stack (what _place does)
@@ -564,10 +564,10 @@ class Pool:
         entry: _Entry,
         token: int,
         error: BaseException | None = None,
-        sql: str | None = None,
+        query: str | None = None,
     ) -> None:
         """Release a shared slot (``_settle``), then hand freed capacity to waiters."""
-        self._settle(entry, token, error, sql)
+        self._settle(entry, token, error, query)
         if self._waiting or self._acquiring:
             self._dispatch()
 
@@ -914,11 +914,11 @@ class Pool:
         affected: int = await self._query(self._EXECUTE, query, args, None, "auto")
         return affected
 
-    async def execute_script(self, sql: str | Template, /) -> None:
+    async def execute_script(self, query: str | Template, /) -> None:
         """Shared mode ``Connection.execute_script``: runs as one implicit transaction."""
-        if isinstance(sql, Template):
-            sql = self._templates.script(sql)
-        await self._query(self._SCRIPT, sql, (), None, "auto")
+        if isinstance(query, Template):
+            query = self._templates.script(query)
+        await self._query(self._SCRIPT, query, (), None, "auto")
 
     async def execute_many(self, query: str, rows: Iterable[Sequence[object]], /) -> int:
         """``Connection.execute_many`` on a connection checked out exclusively for the call."""

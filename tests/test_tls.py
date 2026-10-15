@@ -53,8 +53,8 @@ def _as(dsn: str, user: str) -> str:
 
 
 async def _ssl_in_use(conn: fastpg.Connection) -> bool:
-    sql = "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
-    (ssl,) = await conn.select_one(sql)
+    query = "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+    (ssl,) = await conn.select_one(query)
     return ssl
 
 
@@ -297,8 +297,8 @@ async def test_queries_structs_and_writes(tls_conn: fastpg.Connection) -> None:
     await tls_conn.execute_script(
         "DROP TABLE IF EXISTS tls_write_test; CREATE TABLE tls_write_test (id int, v text);",
     )
-    sql = "INSERT INTO tls_write_test VALUES ($1, $2)"
-    assert await tls_conn.execute_many(sql, [(1, "a"), (2, "b")]) == 2
+    query = "INSERT INTO tls_write_test VALUES ($1, $2)"
+    assert await tls_conn.execute_many(query, [(1, "a"), (2, "b")]) == 2
     # Several MB: far past rustls' 64 KiB send buffer, so writes meet backpressure.
     copied = await tls_conn.copy_in("tls_write_test", [(i, "v" * 200) for i in range(3, 30_003)])
     assert copied == 30_000

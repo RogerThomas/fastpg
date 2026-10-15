@@ -63,8 +63,8 @@ async def _prepared_sql(conn: fastpg.Connection, marker: str) -> str:
 
 
 async def test_select_methods_take_params(conn: fastpg.Connection) -> None:
-    sql = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
-    person = await conn.select_one(sql, params=PersonSelect(id=42, min_age=30), into=Person)
+    query = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
+    person = await conn.select_one(query, params=PersonSelect(id=42, min_age=30), into=Person)
     assert_type(person, Person)
     assert person == await conn.select_one(
         "SELECT name, age FROM people WHERE id = $1 AND age >= $2",
@@ -72,14 +72,14 @@ async def test_select_methods_take_params(conn: fastpg.Connection) -> None:
         30,
         into=Person,
     )
-    assert await conn.select_one(sql, params={"id": 42, "min_age": 30}, into=Person) == person
-    row = await conn.select_one(sql, params={"id": 42, "min_age": 30})
+    assert await conn.select_one(query, params={"id": 42, "min_age": 30}, into=Person) == person
+    row = await conn.select_one(query, params={"id": 42, "min_age": 30})
     assert_type(row, tuple[Any, ...])
     assert row == ("person-42", 60)
-    missing = await conn.select_one_or_none(sql, params={"id": 42, "min_age": 100}, into=Person)
+    missing = await conn.select_one_or_none(query, params={"id": 42, "min_age": 100}, into=Person)
     assert_type(missing, Person | None)
     assert missing is None
-    assert await conn.select_one_or_none(sql, params={"id": 42, "min_age": 30}) == row
+    assert await conn.select_one_or_none(query, params={"id": 42, "min_age": 30}) == row
     people = await conn.select_many(
         "SELECT name, age FROM people WHERE id <= :last ORDER BY id",
         params={"last": 2},
@@ -106,13 +106,13 @@ async def test_select_methods_take_params(conn: fastpg.Connection) -> None:
     ids=["struct", "renamed-struct", "dataclass", "slots-dataclass", "pydantic", "dict", "mapping"],
 )
 async def test_every_params_type(conn: fastpg.Connection, params: fastpg.NamedParams) -> None:
-    sql = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
-    assert await conn.select_one(sql, params=params) == ("person-42", 60)
-    assert await conn.select_one(sql, params=params, into=Person) == Person("person-42", 60)
+    query = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
+    assert await conn.select_one(query, params=params) == ("person-42", 60)
+    assert await conn.select_one(query, params=params, into=Person) == Person("person-42", 60)
 
 
 @pytest.mark.parametrize(
-    ("sql", "expected"),
+    ("query", "expected"),
     [
         ("SELECT ':missing', :x::text", (":missing", "x")),
         ("SELECT 'it''s :missing', :x::text", ("it's :missing", "x")),
@@ -146,18 +146,18 @@ async def test_every_params_type(conn: fastpg.Connection, params: fastpg.NamedPa
 )
 async def test_text_that_is_not_a_placeholder_survives(
     conn: fastpg.Connection,
-    sql: str,
+    query: str,
     expected: tuple[object, ...],
 ) -> None:
-    assert await conn.select_one(sql, params={"x": "x"}) == expected
+    assert await conn.select_one(query, params={"x": "x"}) == expected
 
 
 async def test_escaped_colon_is_a_literal_colon(conn: fastpg.Connection) -> None:
-    sql = (
+    query = (
         "SELECT array_length((ARRAY[1, 2, 3])[lo\\:hi], 1), :x::text "
         "FROM (SELECT 2 AS lo, 3 AS hi) AS t"
     )
-    assert await conn.select_one(sql, params={"x": "x"}) == (2, "x")
+    assert await conn.select_one(query, params={"x": "x"}) == (2, "x")
     assert await conn.select_one("SELECT '\\:x', :x::text", params={"x": "x"}) == ("\\:x", "x")
     assert await conn.select_one(
         "SELECT array_length((ARRAY[1, 2, 3])[:lo\\::hi], 1)",
@@ -166,18 +166,18 @@ async def test_escaped_colon_is_a_literal_colon(conn: fastpg.Connection) -> None
 
 
 async def test_repeated_names_share_a_placeholder(conn: fastpg.Connection) -> None:
-    sql = "SELECT :a::int + :a::int AS named_numbering, :b::text, :a::int"
-    assert await conn.select_one(sql, params={"a": 1, "b": "b"}) == (2, "b", 1)
+    query = "SELECT :a::int + :a::int AS named_numbering, :b::text, :a::int"
+    assert await conn.select_one(query, params={"a": 1, "b": "b"}) == (2, "b", 1)
     assert await _prepared_sql(conn, "named_numbering") == (
         "SELECT $1::int + $1::int AS named_numbering, $2::text, $1::int"
     )
 
 
 async def test_without_params_the_query_is_not_scanned(conn: fastpg.Connection) -> None:
-    sql = "SELECT array_length((ARRAY[1, 2, 3])[lo:hi], 1) FROM (SELECT 2 AS lo, 3 AS hi) AS t"
-    assert await conn.select_one(sql) == (2,)
+    query = "SELECT array_length((ARRAY[1, 2, 3])[lo:hi], 1) FROM (SELECT 2 AS lo, 3 AS hi) AS t"
+    assert await conn.select_one(query) == (2,)
     with pytest.raises(fastpg.ParameterError, match=":hi"):
-        await conn.select_one(sql, params={})
+        await conn.select_one(query, params={})
 
 
 async def test_query_without_placeholders(conn: fastpg.Connection) -> None:
@@ -203,9 +203,9 @@ async def test_missing_name_raises_parameter_error(
     conn: fastpg.Connection,
     params: fastpg.NamedParams,
 ) -> None:
-    sql = "SELECT name FROM people WHERE id = :id AND age >= :max_age"
+    query = "SELECT name FROM people WHERE id = :id AND age >= :max_age"
     with pytest.raises(fastpg.ParameterError, match=r":max_age.*SELECT name FROM people"):
-        await conn.select_one(sql, params=params)
+        await conn.select_one(query, params=params)
     assert await conn.select_one("SELECT 1") == (1,)
 
 
@@ -280,12 +280,16 @@ async def test_transaction_takes_params(conn: fastpg.Connection) -> None:
 
 async def test_pool_takes_params(dsn: str) -> None:
     async with await fastpg.create_pool(dsn) as pool:
-        sql = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
-        person = await pool.select_one(sql, params=PersonSelect(id=42, min_age=30), into=Person)
+        query = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
+        person = await pool.select_one(query, params=PersonSelect(id=42, min_age=30), into=Person)
         assert_type(person, Person)
         assert person == Person("person-42", 60)
-        assert await pool.select_one(sql, params={"id": 42, "min_age": 30}) == ("person-42", 60)
-        missing = await pool.select_one_or_none(sql, params={"id": 42, "min_age": 100}, into=Person)
+        assert await pool.select_one(query, params={"id": 42, "min_age": 30}) == ("person-42", 60)
+        missing = await pool.select_one_or_none(
+            query,
+            params={"id": 42, "min_age": 100},
+            into=Person,
+        )
         assert_type(missing, Person | None)
         assert missing is None
         people = await pool.select_many(
@@ -297,9 +301,9 @@ async def test_pool_takes_params(dsn: str) -> None:
         assert people == [Person("person-1", 19), Person("person-2", 20)]
         assert await pool.execute("SELECT generate_series(1, :n)", params={"n": 4}) == 4
         with pytest.raises(fastpg.ParameterError, match=":min_age"):
-            await pool.select_one(sql, params={"id": 42})
+            await pool.select_one(query, params={"id": 42})
         with pytest.raises(TypeError, match="not both"):
-            await pool.select_one(sql, 42, params={"id": 42})
+            await pool.select_one(query, 42, params={"id": 42})
         a = 1
         with pytest.raises(TypeError, match="t-string"):
             await pool.execute(t"SELECT {a}::int", params={"a": 1})

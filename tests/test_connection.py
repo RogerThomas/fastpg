@@ -68,7 +68,7 @@ async def test_unique_violation(conn: fastpg.Connection) -> None:
 
 
 @pytest.mark.parametrize(
-    ("sql", "error", "sqlstate"),
+    ("query", "error", "sqlstate"),
     [
         ("SELEC 1", errors.SQLSyntaxError, "42601"),
         ("SELECT * FROM no_such_table", errors.UndefinedTableError, "42P01"),
@@ -79,12 +79,12 @@ async def test_unique_violation(conn: fastpg.Connection) -> None:
 )
 async def test_server_errors_map_to_classes(
     conn: fastpg.Connection,
-    sql: str,
+    query: str,
     error: type[fastpg.DatabaseError],
     sqlstate: str,
 ) -> None:
     with pytest.raises(error) as exc:
-        await conn.select_one(sql)
+        await conn.select_one(query)
     assert exc.value.sqlstate == sqlstate
     # The connection stays usable after a server error.
     assert await conn.select_one("SELECT 1") == (1,)
@@ -120,23 +120,23 @@ async def test_rows_of_any_width_with_nulls(conn: fastpg.Connection, width: int)
     columns = ", ".join(
         f"NULL::int4 AS c{i}" if null else f"n + {i} AS c{i}" for i, null in enumerate(nulls)
     )
-    sql = f"SELECT {columns} FROM generate_series(1, $1) AS n"  # noqa: S608 - fixed text
-    rows = await conn.select_many(sql, 600)
+    query = f"SELECT {columns} FROM generate_series(1, $1) AS n"  # noqa: S608 - fixed text
+    rows = await conn.select_many(query, 600)
     assert len(rows) == 600
     assert rows[-1] == tuple(None if null else 600 + i for i, null in enumerate(nulls))
-    one = await conn.select_one(sql, 1)
+    one = await conn.select_one(query, 1)
     assert one == tuple(None if null else 1 + i for i, null in enumerate(nulls))
 
 
 async def test_results_of_different_shapes_on_one_connection(conn: fastpg.Connection) -> None:
     # Each result's row buffer is reused by the next ones.
-    sql = "SELECT n, repeat('é', n % 7), NULL::text, n::float8 FROM generate_series(1, $1) AS n"
-    first = await conn.select_many(sql, 2000)
+    query = "SELECT n, repeat('é', n % 7), NULL::text, n::float8 FROM generate_series(1, $1) AS n"
+    first = await conn.select_many(query, 2000)
     assert first[-1] == (2000, "é" * (2000 % 7), None, 2000.0)
     assert await conn.select_one("SELECT 'a', NULL::int4, 'ü✓'") == ("a", None, "ü✓")
     assert await conn.select_one("SELECT 1") == (1,)
-    assert await conn.select_many(sql, 2000) == first
-    assert await conn.select_many(sql, 3) == first[:3]
+    assert await conn.select_many(query, 2000) == first
+    assert await conn.select_many(query, 3) == first[:3]
 
 
 @pytest.mark.parametrize("size", [16_383, 16_384, 16_385, 65_536, 500_000])
@@ -230,9 +230,9 @@ async def test_cancelled_connect_does_not_leak(conn: fastpg.Connection, dsn: str
         except asyncio.CancelledError:
             continue
         await opened.close()  # connected before the cancel landed
-    sql = "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'fastpg_cancel_test'"
+    query = "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'fastpg_cancel_test'"
     async with asyncio.timeout(5):
-        while (await conn.select_one(sql))[0]:
+        while (await conn.select_one(query))[0]:
             await asyncio.sleep(0.05)
 
 
@@ -278,9 +278,9 @@ async def test_unclosed_connection_warns_and_cleans_up(conn: fastpg.Connection, 
     with pytest.warns(ResourceWarning, match="unclosed fastpg connection"):
         del leaked  # refcounting frees it right here, running __del__
     # The session was closed: its backend goes away.
-    sql = "SELECT count(*) FROM pg_stat_activity WHERE pid = $1"
+    query = "SELECT count(*) FROM pg_stat_activity WHERE pid = $1"
     async with asyncio.timeout(5):
-        while (await conn.select_one(sql, pid))[0]:
+        while (await conn.select_one(query, pid))[0]:
             await asyncio.sleep(0.01)
 
 

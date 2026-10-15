@@ -296,7 +296,7 @@ async def execute_many(
     first = next(chunks, None)
     if first is None:
         return 0
-    return await _run(loop, partial(native.execute_many, sql=query), first, chunks)
+    return await _run(loop, partial(native.execute_many, query=query), first, chunks)
 
 
 async def insert_many(

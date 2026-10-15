@@ -117,7 +117,7 @@ class ScalarsWithNew(Scalars):
 
 
 async def test_every_column_type(conn: fastpg.Connection) -> None:
-    sql = """
+    query = """
 SELECT true AS b, 1::int2 AS i2, 2::int4 AS i4, 3::int8 AS i8, 1.5::float4 AS f4,
        2.5::float8 AS f8, 'text' AS s, 'varchar'::varchar AS vc, 'a'::"char" AS ch,
        '\\x0102'::bytea AS raw, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS u,
@@ -126,7 +126,7 @@ SELECT true AS b, 1::int2 AS i2, 2::int4 AS i4, 3::int8 AS i8, 1.5::float4 AS f4
        '2024-02-29 12:34:56.789+00'::timestamptz AS tstz, 12.340::numeric AS n,
        '{"k": [1]}'::jsonb AS jb, '[1, "two"]'::json AS j, 4 AS anything
 """
-    row = await conn.select_one(sql, into=Everything)
+    row = await conn.select_one(query, into=Everything)
     assert_type(row, Everything)
     assert row == Everything(
         b=True,
@@ -172,7 +172,7 @@ async def test_missing_required_field(conn: fastpg.Connection) -> None:
 
 
 @pytest.mark.parametrize(
-    ("sql", "expected"),
+    ("query", "expected"),
     [
         ("SELECT 'name' AS name", WithDefaults("name", 1, "email")),
         ("SELECT 'name' AS name, NULL AS email", WithDefaults("name", 1, None)),
@@ -182,10 +182,10 @@ async def test_missing_required_field(conn: fastpg.Connection) -> None:
 )
 async def test_missing_fields_with_defaults_use_them(
     conn: fastpg.Connection,
-    sql: str,
+    query: str,
     expected: WithDefaults,
 ) -> None:
-    assert await conn.select_one(sql, into=WithDefaults) == expected
+    assert await conn.select_one(query, into=WithDefaults) == expected
 
 
 async def test_nulls(conn: fastpg.Connection) -> None:
@@ -248,9 +248,9 @@ async def test_large_result_streams_in_chunks(
     into: type[NameAge],
 ) -> None:
     # Spans several 512-row chunks with a partial final chunk.
-    sql = "SELECT name, age FROM people WHERE id <= 5000 ORDER BY id"
-    rows = await conn.select_many(sql, into=into)
-    assert rows == [into(*t) for t in await conn.select_many(sql)]
+    query = "SELECT name, age FROM people WHERE id <= 5000 ORDER BY id"
+    rows = await conn.select_many(query, into=into)
+    assert rows == [into(*t) for t in await conn.select_many(query)]
     assert len(rows) == 5000
     assert all(type(row) is into for row in rows)
 
@@ -301,19 +301,19 @@ async def test_custom_new_runs(conn: fastpg.Connection) -> None:
 
 async def test_defaults_and_nulls_in_many_rows(conn: fastpg.Connection) -> None:
     # Over one 512-row chunk: `age` comes from its default, `email` is NULL.
-    sql = "SELECT name, NULL::text AS email FROM people WHERE id <= 600 ORDER BY id"
-    rows = await conn.select_many(sql, into=WithDefaults)
+    query = "SELECT name, NULL::text AS email FROM people WHERE id <= 600 ORDER BY id"
+    rows = await conn.select_many(query, into=WithDefaults)
     assert rows == [WithDefaults(f"person-{i}", 1, None) for i in range(1, 601)]
 
 
 async def test_no_reference_leaks(conn: fastpg.Connection) -> None:
-    sql = "SELECT name FROM people WHERE id <= 10000"
-    await conn.select_many(sql, into=NameBalance)  # plans the type and prepares the statement
+    query = "SELECT name FROM people WHERE id <= 10000"
+    await conn.select_many(query, into=NameBalance)  # plans the type and prepares the statement
     # The connection holds on to the last result until the next query.
     await conn.select_one("SELECT 1")
     default = NameBalance._field_defaults["balance"]
     before = sys.getrefcount(default)
-    rows = await conn.select_many(sql, into=NameBalance)
+    rows = await conn.select_many(query, into=NameBalance)
     await conn.select_one("SELECT 1")
     assert sys.getrefcount(default) == before + 10_000
     constructed = [NameBalance("".join(["person", "-1"]), Decimal(2))]
@@ -324,12 +324,12 @@ async def test_no_reference_leaks(conn: fastpg.Connection) -> None:
 
 
 async def test_rows_are_freed(conn: fastpg.Connection) -> None:
-    sql = "SELECT name, age FROM people WHERE id <= 10000"
-    await conn.select_many(sql, into=NameAge)  # plans the type and prepares the statement
+    query = "SELECT name, age FROM people WHERE id <= 10000"
+    await conn.select_many(query, into=NameAge)  # plans the type and prepares the statement
     tracemalloc.start()
     try:
         for _ in range(3):
-            assert len(await conn.select_many(sql, into=NameAge)) == 10_000
+            assert len(await conn.select_many(query, into=NameAge)) == 10_000
         # The connection holds on to the last result until the next query.
         await conn.select_one("SELECT 1")
         gc.collect()
@@ -341,16 +341,16 @@ async def test_rows_are_freed(conn: fastpg.Connection) -> None:
 
 
 async def test_select_one_or_none(conn: fastpg.Connection) -> None:
-    sql = "SELECT name, age FROM people WHERE id = $1"
-    assert await conn.select_one_or_none(sql, -1, into=NameAge) is None
-    assert await conn.select_one_or_none(sql, 3, into=NameAge) == NameAge("person-3", 21)
+    query = "SELECT name, age FROM people WHERE id = $1"
+    assert await conn.select_one_or_none(query, -1, into=NameAge) is None
+    assert await conn.select_one_or_none(query, 3, into=NameAge) == NameAge("person-3", 21)
 
 
 async def test_rows_of_scalars_are_not_gc_tracked(conn: fastpg.Connection) -> None:
     # Immutable, with no `__dict__`: like a tuple of scalars, nothing can make it part of a
     # cycle.
-    sql = "SELECT id, external_id, balance, email FROM people WHERE id <= 3000 ORDER BY id"
-    rows = await conn.select_many(sql, into=Scalars)
+    query = "SELECT id, external_id, balance, email FROM people WHERE id <= 3000 ORDER BY id"
+    rows = await conn.select_many(query, into=Scalars)
     gc.collect()
     assert not any(gc.is_tracked(row) for row in rows)
     assert rows[6] == Scalars(
@@ -380,8 +380,8 @@ async def test_rows_that_could_hold_references_stay_gc_tracked(
 
 
 async def test_overridden_new_runs(conn: fastpg.Connection) -> None:
-    sql = "SELECT id, external_id, balance, email FROM people WHERE id = 7"
-    row = await conn.select_one(sql, into=ScalarsWithNew)
+    query = "SELECT id, external_id, balance, email FROM people WHERE id = 7"
+    row = await conn.select_one(query, into=ScalarsWithNew)
     assert row.email == "new"
 
 

@@ -68,70 +68,70 @@ class _Scanner:
     _NAME: ClassVar[re.Pattern[str]] = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
     @classmethod
-    def _comment_end(cls, sql: str, start: int) -> int:
+    def _comment_end(cls, query: str, start: int) -> int:
         """End of the block comment at `start`; PostgreSQL nests them."""
         depth, pos = 1, start + 2
         while depth:
-            mark = cls._COMMENT_MARK.search(sql, pos)
+            mark = cls._COMMENT_MARK.search(query, pos)
             if mark is None:
-                return len(sql)
+                return len(query)
             depth += 1 if mark.group() == "/*" else -1
             pos = mark.end()
         return pos
 
     @classmethod
-    def _dollar_end(cls, sql: str, start: int) -> int:
+    def _dollar_end(cls, query: str, start: int) -> int:
         """End of the dollar-quoted string at `start` (`start` + 1 for a lone ``$``)."""
-        if "0" <= sql[start + 1 : start + 2] <= "9":
+        if "0" <= query[start + 1 : start + 2] <= "9":
             msg = (
-                f"query {sql!r} mixes a $n placeholder with params=; use :name placeholders "
+                f"query {query!r} mixes a $n placeholder with params=; use :name placeholders "
                 "only (for literal text such as '$5', put it in a string literal)"
             )
             raise ValueError(msg)
-        tag = cls._DOLLAR_TAG.match(sql, start)
+        tag = cls._DOLLAR_TAG.match(query, start)
         if tag is None:
             return start + 1
-        close = sql.find(tag.group(), tag.end())
-        return len(sql) if close < 0 else close + len(tag.group())
+        close = query.find(tag.group(), tag.end())
+        return len(query) if close < 0 else close + len(tag.group())
 
     @classmethod
-    def _skip(cls, sql: str, start: int, char: str) -> int:
+    def _skip(cls, query: str, start: int, char: str) -> int:
         """End of the literal, quoted identifier or comment at `start` (or `start` + 1)."""
         if char == "$":
-            return cls._dollar_end(sql, start)
+            return cls._dollar_end(query, start)
         if char == "-":
-            if not sql.startswith("-", start + 1):
+            if not query.startswith("-", start + 1):
                 return start + 1
-            end = cls._LINE_END.search(sql, start)
-            return len(sql) if end is None else end.end()
+            end = cls._LINE_END.search(query, start)
+            return len(query) if end is None else end.end()
         if char == "/":
-            return cls._comment_end(sql, start) if sql.startswith("*", start + 1) else start + 1
-        quoted = cls._QUOTED[char].match(sql, start)
-        return len(sql) if quoted is None else quoted.end()  # unterminated: the rest is quoted
+            return cls._comment_end(query, start) if query.startswith("*", start + 1) else start + 1
+        quoted = cls._QUOTED[char].match(query, start)
+        return len(query) if quoted is None else quoted.end()  # unterminated: the rest is quoted
 
     @classmethod
-    def scan(cls, sql: str) -> tuple[str, tuple[str, ...]]:
-        """The ``$n`` SQL for `sql`, and the placeholder names in ``$n`` order."""
+    def scan(cls, query: str) -> tuple[str, tuple[str, ...]]:
+        """The ``$n`` SQL for `query`, and the placeholder names in ``$n`` order."""
         pieces: list[str] = []
         names: dict[str, int] = {}
-        copied = pos = 0  # sql[:copied] is in pieces
-        while (special := cls._SPECIAL.search(sql, pos)) is not None:
+        copied = pos = 0  # query[:copied] is in pieces
+        while (special := cls._SPECIAL.search(query, pos)) is not None:
             start = special.start()
-            char = sql[start]
+            char = query[start]
             if char == "\\":  # \: is a literal colon: drop the backslash, keep the colon
-                pieces.append(sql[copied:start])
+                pieces.append(query[copied:start])
                 copied, pos = start + 1, start + 2
             elif char != ":":
-                pos = cls._skip(sql, start, char)
-            elif sql.startswith(":", start + 1):  # a :: cast
+                pos = cls._skip(query, start, char)
+            elif query.startswith(":", start + 1):  # a :: cast
                 pos = start + 2
-            elif (name := cls._NAME.match(sql, start + 1)) is None:
+            elif (name := cls._NAME.match(query, start + 1)) is None:
                 pos = start + 1
             else:
                 number = names.setdefault(name.group(), len(names) + 1)
-                pieces.extend((sql[copied:start], f"${number}"))
+                pieces.extend((query[copied:start], f"${number}"))
                 copied = pos = name.end()
-        pieces.append(sql[copied:])
+        pieces.append(query[copied:])
         return "".join(pieces), tuple(names)
 
 
@@ -201,7 +201,7 @@ class NamedBinder:
         return ParameterError(msg)
 
     def _bind_slow(self, query: str, params_type: type[object]) -> _Bound:
-        sql, names = self._scan(query)
+        rewritten, names = self._scan(query)
         fields = self._fields(params_type)
         getter: _Getter
         if not names:
@@ -213,7 +213,7 @@ class NamedBinder:
             if missing:
                 raise self._missing(query, params_type, missing)
             getter = self._BY_ATTRIBUTE(*names)
-        bound = (sql, getter, len(names) == 1)
+        bound = (rewritten, getter, len(names) == 1)
         self._store(self._bound, (query, params_type), bound)
         return bound
 
@@ -240,7 +240,7 @@ class NamedBinder:
         bound = self._bound.get((query, params_type))
         if bound is None:
             bound = self._bind_slow(query, params_type)
-        sql, getter, single = bound
+        rewritten, getter, single = bound
         try:
             values = getter(params)
         except KeyError:
@@ -248,4 +248,4 @@ class NamedBinder:
                 raise
             missing = [name for name in self._scan(query)[1] if name not in params]
             raise self._missing(query, params_type, missing) from None
-        return sql, (values,) if single else values
+        return rewritten, (values,) if single else values

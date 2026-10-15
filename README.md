@@ -69,11 +69,11 @@ task test-docker      # builds fastpg on Linux, runs both test suites against th
 ```python
 conn = await fastpg.connect(dsn, statement_cache_size=256)  # -> fastpg.Connection
 
-await conn.select_one(sql, *args, into=T)  # -> T          (exactly one row)
-await conn.select_one_or_none(sql, *args, into=T)  # -> T | None   (zero or one row)
-await conn.select_many(sql, *args, into=T)  # -> list[T]
-await conn.select_one(sql, *args)  # -> tuple[Any, ...] (no into=)
-await conn.execute(sql, *args)  # -> int, rows affected
+await conn.select_one(query, *args, into=T)  # -> T          (exactly one row)
+await conn.select_one_or_none(query, *args, into=T)  # -> T | None   (zero or one row)
+await conn.select_many(query, *args, into=T)  # -> list[T]
+await conn.select_one(query, *args)  # -> tuple[Any, ...] (no into=)
+await conn.execute(query, *args)  # -> int, rows affected
 await conn.execute_script("CREATE ...; INSERT ...")  # simple protocol, no params
 
 await conn.select_one(
@@ -81,7 +81,7 @@ await conn.select_one(
 )  # named: Struct/model/dataclass/dict
 await conn.select_one(t"SELECT ... WHERE id = {pid}", into=T)  # t-string: values bound as $n
 
-await conn.execute_many(sql, rows)  # -> int; one statement, many param rows
+await conn.execute_many(query, rows)  # -> int; one statement, many param rows
 await conn.insert_many("people", rows)  # -> int; Structs / models / mappings / tuples
 await conn.copy_in("people", rows)  # -> int; binary COPY, fastest for bulk loads
 
@@ -89,7 +89,7 @@ async with conn.transaction() as tx:  # commit on success, rollback on exception
     await tx.execute(...)  # same query methods as conn; nest with tx.savepoint()
 
 pool = await fastpg.create_pool(dsn, max_size=16)  # -> fastpg.Pool
-await pool.select_one(sql, *args, into=T)  # shared: routed + pipelined, no acquire
+await pool.select_one(query, *args, into=T)  # shared: routed + pipelined, no acquire
 async with pool.acquire() as conn:
     ...  # exclusive checkout (session state)
 async with pool.transaction() as tx:
@@ -204,7 +204,7 @@ Design and edge cases are in [notes/templates.md](notes/templates.md).
 
 | method | rows | how | atomicity |
 |---|---|---|---|
-| `execute_many(sql, rows)` | sequences for `$1..$n` | one prepared statement run per row, 1,024 rows pipelined per protocol `Sync` | all-or-nothing |
+| `execute_many(query, rows)` | sequences for `$1..$n` | one prepared statement run per row, 1,024 rows pipelined per protocol `Sync` | all-or-nothing |
 | `insert_many(table, rows, *, columns=None)` | msgspec Structs (encoded names), pydantic models (aliases), mappings, sequences | multi-row `INSERT … VALUES` (64 rows per statement), quoted identifiers | all-or-nothing |
 | `copy_in(table, rows, *, columns=None)` | same as `insert_many` | binary `COPY FROM STDIN`, encoded in Rust and streamed in 4,096-row chunks | all-or-nothing |
 
@@ -306,7 +306,7 @@ xitca-postgres's protocol work, and decoding into Python objects.
  connect(dsn)
    ├─ socket connected in Python (host names via loop.getaddrinfo)
    └─ loop.add_reader / add_writer(socket) → Rust readiness callbacks
- conn.select_one(sql, 42, into=Person)
+ conn.select_one(query, 42, into=Person)
    ├─ params → Rust enums, statement cache lookup
    └─ spawn a query task on the connection's executor, poll it at once
         xitca-postgres: prepare (on cache miss) + bind + execute, binary format, pipelined

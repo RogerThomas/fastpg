@@ -71,11 +71,11 @@ CASES = (
 
 
 async def _fetch(conn: fastpg.Connection, case: Case, start: int, rows: int) -> int:
-    sql = f"SELECT {case.columns} FROM people WHERE id BETWEEN $1 AND $2"  # noqa: S608 - fixed
+    query = f"SELECT {case.columns} FROM people WHERE id BETWEEN $1 AND $2"  # noqa: S608 - fixed
     end = start + rows - 1
     if case.into is None:
-        return len(await conn.select_many(sql, start, end))
-    return len(await conn.select_many(sql, start, end, into=case.into))
+        return len(await conn.select_many(query, start, end))
+    return len(await conn.select_many(query, start, end, into=case.into))
 
 
 async def _sample(conn: fastpg.Connection, case: Case, rows: int, fetches: int) -> float:

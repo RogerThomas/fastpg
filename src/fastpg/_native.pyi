@@ -57,7 +57,7 @@ class Connection:
     def fetch(
         self,
         future: asyncio.Future[Any],
-        sql: str,
+        query: str,
         params: tuple[object, ...],
         shape: int,
         spec: StructSpec | None = None,
@@ -65,7 +65,7 @@ class Connection:
     def fetch_msgpack(
         self,
         future: asyncio.Future[Any],
-        sql: str,
+        query: str,
         params: tuple[object, ...],
         shape: int,
         text_columns: tuple[str, ...] = (),
@@ -73,7 +73,7 @@ class Connection:
     def fetch_json(
         self,
         future: asyncio.Future[Any],
-        sql: str,
+        query: str,
         params: tuple[object, ...],
         shape: int,
         text_columns: tuple[str, ...] = (),
@@ -81,15 +81,15 @@ class Connection:
     def execute(
         self,
         future: asyncio.Future[int],
-        sql: str,
+        query: str,
         params: tuple[object, ...],
     ) -> None: ...
-    def execute_script(self, future: asyncio.Future[None], sql: str) -> None: ...
+    def execute_script(self, future: asyncio.Future[None], query: str) -> None: ...
     def execute_many(
         self,
         ready: asyncio.Future[None],
         done: asyncio.Future[int | None],
-        sql: str,
+        query: str,
         reader: RowReader | None = None,
     ) -> Bulk: ...
     def insert_many(
@@ -145,6 +145,6 @@ class Router:
     def touch(self, slot: int) -> None: ...
     def idle_ns(self, slot: int) -> int: ...
     def load(self, slot: int) -> int: ...
-    def begin(self, slot: int, sql: str) -> int: ...
-    def finish(self, slot: int, token: int, sql: str | None = None) -> int: ...
+    def begin(self, slot: int, query: str) -> int: ...
+    def finish(self, slot: int, token: int, query: str | None = None) -> int: ...
     def best(self, cap: int) -> int | None: ...

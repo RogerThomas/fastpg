@@ -12,7 +12,7 @@ import fastpg
 
 
 async def test_every_column_type(conn: fastpg.Connection) -> None:
-    sql = """
+    query = """
 SELECT true AS b, 1::int2 AS i2, 2::int4 AS i4, 3::int8 AS i8, 1.5::float4 AS f4,
        2.5::float8 AS f8, 'text' AS s, 'varchar'::varchar AS vc, 'ab'::char(3) AS c,
        'a'::"char" AS ch, '\\x0102'::bytea AS raw,
@@ -21,7 +21,7 @@ SELECT true AS b, 1::int2 AS i2, 2::int4 AS i4, 3::int8 AS i8, 1.5::float4 AS f4
        '2024-02-29 12:34:56.789+00'::timestamptz AS tstz, 12.340::numeric AS n,
        '{"k": [1]}'::jsonb AS jb, '[1, "two"]'::json AS j
 """
-    row = await conn.select_one(sql, into=dict)
+    row = await conn.select_one(query, into=dict)
     assert row == {
         "b": True,
         "i2": 1,
@@ -43,7 +43,7 @@ SELECT true AS b, 1::int2 AS i2, 2::int4 AS i4, 3::int8 AS i8, 1.5::float4 AS f4
         "jb": {"k": [1]},
         "j": [1, "two"],
     }
-    assert tuple(row.values()) == await conn.select_one(sql)
+    assert tuple(row.values()) == await conn.select_one(query)
 
 
 async def test_keys_follow_column_order(conn: fastpg.Connection) -> None:
@@ -73,19 +73,19 @@ async def test_unsupported_column_type(conn: fastpg.Connection) -> None:
 
 
 async def test_select_one_or_none_and_empty_results(conn: fastpg.Connection) -> None:
-    sql = "SELECT id, name FROM people WHERE id = $1"
-    assert await conn.select_one_or_none(sql, -1, into=dict) is None
-    assert await conn.select_one_or_none(sql, 3, into=dict) == {"id": 3, "name": "person-3"}
-    assert await conn.select_many(sql, -1, into=dict) == []
+    query = "SELECT id, name FROM people WHERE id = $1"
+    assert await conn.select_one_or_none(query, -1, into=dict) is None
+    assert await conn.select_one_or_none(query, 3, into=dict) == {"id": 3, "name": "person-3"}
+    assert await conn.select_many(query, -1, into=dict) == []
     with pytest.raises(fastpg.NoRowsError):
-        await conn.select_one(sql, -1, into=dict)
+        await conn.select_one(query, -1, into=dict)
 
 
 async def test_large_result_streams_in_chunks(conn: fastpg.Connection) -> None:
     # Spans several 512-row chunks with a partial final chunk.
-    sql = "SELECT id, name, email, balance FROM people WHERE id <= 5000 ORDER BY id"
-    rows = await conn.select_many(sql, into=dict)
-    tuples = await conn.select_many(sql)
+    query = "SELECT id, name, email, balance FROM people WHERE id <= 5000 ORDER BY id"
+    rows = await conn.select_many(query, into=dict)
+    tuples = await conn.select_many(query)
     assert len(rows) == 5000
     assert rows == [dict(zip(("id", "name", "email", "balance"), t, strict=True)) for t in tuples]
 

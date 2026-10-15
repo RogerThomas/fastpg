@@ -84,7 +84,7 @@ drops anyway.
    native.attach(fd, ...)                         → LoopSocket{fd, IoState} wrapped in EofWatch
    loop.add_reader(fd, native.on_readable)        → Postgres::connect_io(socket) spawned on
                                                     the connection's Executor; pump()
- cursor.select_one(sql, 42, into=Person)
+ cursor.select_one(query, 42, into=Person)
    params → Rust (GIL held), statement-cache lookup
    Shared::spawn(run(..)) on the Executor; pump():
      run():  poll woken tasks: query task → DriverTx::send (bytes in xitca's buffer, wakes

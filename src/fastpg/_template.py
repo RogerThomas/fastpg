@@ -193,17 +193,17 @@ class TemplateCompiler:
         # Lookups are single dict operations; only insert-with-eviction needs the lock.
         self._lock: Final = threading.Lock()
 
-    def _store[K](self, cache: dict[K, str], key: K, sql: str) -> None:
+    def _store[K](self, cache: dict[K, str], key: K, query: str) -> None:
         with self._lock:
             if len(cache) >= self._max_size:
                 del cache[next(iter(cache))]
-            cache[key] = sql
+            cache[key] = query
 
     def _flat_sql(self, strings: tuple[str, ...]) -> str:
         """SQL for `strings` with every interpolation a parameter; validates on a miss."""
-        sql = self._flat.get(strings)
-        if sql is not None:
-            return sql
+        query = self._flat.get(strings)
+        if query is not None:
+            return query
         for text in strings:
             if self._placeholder.search(text):
                 msg = (
@@ -225,9 +225,9 @@ class TemplateCompiler:
                     "interpolation; it would change the $n placeholder number"
                 )
                 raise ValueError(msg)
-        sql = _join(strings)
-        self._store(self._flat, strings, sql)
-        return sql
+        query = _join(strings)
+        self._store(self._flat, strings, query)
+        return query
 
     def _render(self, shape: _Shape, segments: list[str], last: _Emitted) -> _Emitted:
         """Append `shape`'s text to `segments` (a new segment per parameter).
@@ -255,17 +255,17 @@ class TemplateCompiler:
         shape = _shape(template, values)
         if shape.count(None) == len(shape) - 1:  # every value is a parameter
             return self._flat_sql(template.strings), tuple(values)
-        sql = self._composed.get(shape)
-        if sql is None:
+        query = self._composed.get(shape)
+        if query is None:
             segments = [""]
             self._render(shape, segments, "text")
-            sql = _join(segments)
-            self._store(self._composed, shape, sql)
-        return sql, tuple(values)
+            query = _join(segments)
+            self._store(self._composed, shape, query)
+        return query, tuple(values)
 
     def _compile(self, template: Template) -> tuple[str, tuple[object, ...]]:
-        sql = self._flat.get(template.strings)
-        if sql is not None:
+        query = self._flat.get(template.strings)
+        if query is not None:
             for interpolation in template.interpolations:
                 value = interpolation.value
                 if (
@@ -276,7 +276,7 @@ class TemplateCompiler:
                 ):
                     break
             else:
-                return sql, template.values
+                return query, template.values
         return self._compile_slow(template)
 
     def cache_len(self) -> int:
@@ -303,7 +303,7 @@ class TemplateCompiler:
 
     def script(self, template: Template) -> str:
         """SQL text for `execute_script`: only identifiers and fragments, no parameters."""
-        sql, params = self._compile(template)
+        query, params = self._compile(template)
         if params:
             msg = (
                 "execute_script() uses the simple query protocol, which has no parameters; "
@@ -311,4 +311,4 @@ class TemplateCompiler:
                 "(one statement), or Identifier for names"
             )
             raise TypeError(msg)
-        return sql
+        return query

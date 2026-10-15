@@ -250,25 +250,25 @@ impl Router {
     }
 
     /// Record a statement sent on the slot now; returns its token.
-    fn begin(&mut self, slot: usize, sql: &Bound<'_, PyString>) -> PyResult<u64> {
-        let cost = self.cost(sql)?;
+    fn begin(&mut self, slot: usize, query: &Bound<'_, PyString>) -> PyResult<u64> {
+        let cost = self.cost(query)?;
         let now = self.now();
         self.slots.begin(slot, cost, now)
     }
 
     /// Record a statement's completion; returns the statements still in flight on the slot.
-    /// Pass `sql` on success only: its service time then feeds the estimate.
-    #[pyo3(signature = (slot, token, sql=None))]
+    /// Pass `query` on success only: its service time then feeds the estimate.
+    #[pyo3(signature = (slot, token, query=None))]
     fn finish(
         &mut self,
         slot: usize,
         token: u64,
-        sql: Option<&Bound<'_, PyString>>,
+        query: Option<&Bound<'_, PyString>>,
     ) -> PyResult<usize> {
         let now = self.now();
         let (service, left) = self.slots.finish(slot, token, now)?;
-        if let Some(sql) = sql {
-            self.learn(sql, service)?;
+        if let Some(query) = query {
+            self.learn(query, service)?;
         }
         Ok(left)
     }

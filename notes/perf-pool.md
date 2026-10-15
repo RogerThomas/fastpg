@@ -83,7 +83,7 @@ Three instruments (scripts in `notes/eval/2026-10-pool-overhead/`):
 1. **Hand-driven microbenchmark** (`micro2.py`): real `Connection` / `_Queries` code over
    a fake native object whose `fetch` does nothing; each statement's coroutine is driven by
    hand (send, resolve the future it yields, send), no event loop. Pool overhead = time per
-   `pool.select_one_or_none(sql, i, into=P, strategy="direct")` minus the same call on a
+   `pool.select_one_or_none(query, i, into=P, strategy="direct")` minus the same call on a
    bare `Connection`, 15–21 interleaved rounds of 200k statements. Spread ±5%. This is the
    idle path (one statement at a time), i.e. the `-c 16` / `-c 100` benchmark shape.
 2. **Loop-driven microbenchmark** (`micro3.py`): the same fake native answering on the

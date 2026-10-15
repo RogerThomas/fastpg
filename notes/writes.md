@@ -7,7 +7,7 @@ Code: `native/src/bulk.rs` (I/O tasks, encoders, row readers), `src/fastpg/_writ
 ## API
 
 ```python
-await cur.execute_many(sql, rows)  # rows: iterable of parameter sequences
+await cur.execute_many(query, rows)  # rows: iterable of parameter sequences
 await cur.insert_many(table, rows, columns=None)  # -> rows inserted
 await cur.copy_in(table, rows, columns=None)  # binary COPY FROM STDIN -> rows copied
 ```

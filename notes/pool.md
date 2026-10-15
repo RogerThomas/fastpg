@@ -20,8 +20,8 @@ pool = await fastpg.create_pool(
 )
 
 # Shared mode: no checkout, each statement autocommits, routed + pipelined.
-await pool.select_one(sql, *params, into=Person)  # also select_one_or_none, select_many
-await pool.execute(sql, *params)  # -> rows affected
+await pool.select_one(query, *params, into=Person)  # also select_one_or_none, select_many
+await pool.execute(query, *params)  # -> rows affected
 await pool.execute_script("CREATE ...; INSERT ...")  # one implicit transaction
 
 # Exclusive mode: the connection leaves shared rotation until the block exits.

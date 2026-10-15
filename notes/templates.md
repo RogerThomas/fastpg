@@ -120,7 +120,7 @@ Two caches on `TemplateCompiler`:
 
 * **Hot path:** one `dict.get(template.strings)`, then one loop over `template.interpolations`
   checking conversion, format spec, and `type(value) is Template/Identifier`. On a hit it
-  returns `(sql, template.values)`.
+  returns `(query, template.values)`.
 * **Composed path:** one recursive walk builds the shape and collects values in order. The
   shape is the key, so different fragments or identifiers in the same outer literal get
   different SQL (tested). The hit path does no string building.

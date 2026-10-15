@@ -128,8 +128,8 @@ async def test_user_defined_parameter_types_are_looked_up_first(
 ) -> None:
     """The enum's type lookups are response cycles of their own, before the write's."""
     rows = [(1, "sad"), (2, "happy")]
-    sql = f"INSERT INTO {table} (id, mood) VALUES ($1, $2)"
-    assert await late_conn.execute_many(sql, rows) == 2
+    query = f"INSERT INTO {table} (id, mood) VALUES ($1, $2)"
+    assert await late_conn.execute_many(query, rows) == 2
     assert await late_conn.insert_many(table, rows, columns=["id", "mood"]) == 2
     got = await late_conn.select_many(f"SELECT id, mood::text FROM {table} ORDER BY id, mood")
     assert got == [(1, "sad"), (1, "sad"), (2, "happy"), (2, "happy")]

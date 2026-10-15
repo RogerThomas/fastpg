@@ -285,15 +285,15 @@ class _Queries:
         self._native.execute(future, query, args)
         return await future
 
-    async def execute_script(self, sql: str | Template, /) -> None:
+    async def execute_script(self, query: str | Template, /) -> None:
         """Run one or more `;`-separated statements without parameters (simple protocol).
 
         A t-string may splice in ``Identifier``s and fragments, but has no value parameters.
         """
-        if isinstance(sql, Template):
-            sql = self._templates.script(sql)
+        if isinstance(query, Template):
+            query = self._templates.script(query)
         future: asyncio.Future[None] = self._loop.create_future()
-        self._native.execute_script(future, sql)
+        self._native.execute_script(future, query)
         await future
 
     async def execute_many(self, query: str, rows: Iterable[Sequence[object]], /) -> int:
@@ -487,17 +487,17 @@ class Transaction(_Queries):
         self._depth = 0
         self._state = self._NEW
 
-    async def _script(self, sql: str) -> None:
+    async def _script(self, query: str) -> None:
         future: asyncio.Future[None] = self._loop.create_future()
-        self._native.execute_script(future, sql)
+        self._native.execute_script(future, query)
         await future
 
-    async def _rollback(self, sql: str, exc: BaseException) -> None:
+    async def _rollback(self, query: str, exc: BaseException) -> None:
         """Run a rollback while ``exc`` propagates; a failure is noted on ``exc``, not raised."""
         try:
-            await self._script(sql)
+            await self._script(query)
         except FastPGError as e:
-            exc.add_note(f"fastpg: {sql!r} failed too: {e}")
+            exc.add_note(f"fastpg: {query!r} failed too: {e}")
 
     async def _commit(self) -> None:
         try:
@@ -600,9 +600,9 @@ class Fetcher(_Queries):
         """``execute``: ``future`` gets the affected row count."""
         self._native.execute(future, query, params)
 
-    def send_script(self, future: asyncio.Future[Any], sql: str) -> None:
+    def send_script(self, future: asyncio.Future[Any], query: str) -> None:
         """``execute_script``: ``future`` gets None."""
-        self._native.execute_script(future, sql)
+        self._native.execute_script(future, query)
 
 
 type _Address = tuple[Any, ...] | str

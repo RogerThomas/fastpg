@@ -509,11 +509,11 @@ impl Connection {
         self.shared.pump(py);
     }
 
-    #[pyo3(signature = (future, sql, params, shape, spec = None))]
+    #[pyo3(signature = (future, query, params, shape, spec = None))]
     fn fetch(
         &self,
         future: Py<PyAny>,
-        sql: &Bound<'_, PyString>,
+        query: &Bound<'_, PyString>,
         params: &Bound<'_, PyTuple>,
         shape: u8,
         spec: Option<Py<StructSpec>>,
@@ -521,43 +521,43 @@ impl Connection {
         let target = spec.map_or(Target::Tuple, Target::Struct);
         self.submit(
             future,
-            sql,
+            query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
             target,
         )
     }
 
-    #[pyo3(signature = (future, sql, params, shape, text_columns = Vec::new()))]
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
     fn fetch_msgpack(
         &self,
         future: Py<PyAny>,
-        sql: &Bound<'_, PyString>,
+        query: &Bound<'_, PyString>,
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
     ) -> PyResult<()> {
         self.submit(
             future,
-            sql,
+            query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
             Target::Msgpack(text_columns),
         )
     }
 
-    #[pyo3(signature = (future, sql, params, shape, text_columns = Vec::new()))]
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
     fn fetch_json(
         &self,
         future: Py<PyAny>,
-        sql: &Bound<'_, PyString>,
+        query: &Bound<'_, PyString>,
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
     ) -> PyResult<()> {
         self.submit(
             future,
-            sql,
+            query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
             Target::Json(text_columns),
@@ -567,20 +567,20 @@ impl Connection {
     fn execute(
         &self,
         future: Py<PyAny>,
-        sql: &Bound<'_, PyString>,
+        query: &Bound<'_, PyString>,
         params: &Bound<'_, PyTuple>,
     ) -> PyResult<()> {
-        self.submit(future, sql, params, Op::Execute, Target::None)
+        self.submit(future, query, params, Op::Execute, Target::None)
     }
 
     /// Run one or more `;`-separated statements via the simple query protocol (no params).
-    fn execute_script(&self, py: Python<'_>, future: Py<PyAny>, sql: String) -> PyResult<()> {
+    fn execute_script(&self, py: Python<'_>, future: Py<PyAny>, query: String) -> PyResult<()> {
         let client = self.require_client(py)?;
         let shared = self.shared.clone();
         let req = request(future, Target::None);
         self.shared.spawn(async move {
             let _gate = shared.gate.read().await;
-            let script = async { Ok(sql.as_str().execute(&*client).await?) };
+            let script = async { Ok(query.as_str().execute(&*client).await?) };
             let outcome = match shared.unless_dead(script).await {
                 Ok(_) => Outcome::Done,
                 Err(e) => Outcome::Failed(e),
@@ -595,17 +595,17 @@ impl Connection {
     /// Start `execute_many` (or `insert_many`, with a `RowReader` for its row type): one
     /// prepared statement, many parameter rows, pipelined. `ready` resolves once rows can be
     /// fed to the returned handle; `done` to the total affected row count. See `bulk.rs`.
-    #[pyo3(signature = (ready, done, sql, reader = None))]
+    #[pyo3(signature = (ready, done, query, reader = None))]
     fn execute_many(
         &self,
         py: Python<'_>,
         ready: Py<PyAny>,
         done: Py<PyAny>,
-        sql: String,
+        query: String,
         reader: Option<Py<RowReader>>,
     ) -> PyResult<Bulk> {
         let client = self.require_client(py)?;
-        let statements = bulk::Statements::PerRow(sql);
+        let statements = bulk::Statements::PerRow(query);
         let bulk = bulk::start_execute_many(
             py,
             self.shared.clone(),

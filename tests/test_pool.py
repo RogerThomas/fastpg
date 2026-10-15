@@ -83,11 +83,11 @@ async def test_shared_queries(dsn: str) -> None:
 @pytest.mark.parametrize("strategy", ["direct", "msgpack", "json"])
 async def test_shared_queries_use_the_strategy(dsn: str, strategy: fastpg.Strategy) -> None:
     async with await fastpg.create_pool(dsn) as pool:
-        sql = "SELECT 7 AS id, 'x' AS v"
-        assert await pool.select_one(sql, into=Item, strategy=strategy) == Item(7, "x")
-        assert await pool.select_one_or_none(sql, into=Item, strategy=strategy) == Item(7, "x")
-        assert await pool.select_many(sql, into=Item, strategy=strategy) == [Item(7, "x")]
-        assert await pool.select_one_or_none(f"{sql} WHERE false", into=Item) is None
+        query = "SELECT 7 AS id, 'x' AS v"
+        assert await pool.select_one(query, into=Item, strategy=strategy) == Item(7, "x")
+        assert await pool.select_one_or_none(query, into=Item, strategy=strategy) == Item(7, "x")
+        assert await pool.select_many(query, into=Item, strategy=strategy) == [Item(7, "x")]
+        assert await pool.select_one_or_none(f"{query} WHERE false", into=Item) is None
 
 
 async def test_shared_query_strategy_errors_reach_the_caller(dsn: str) -> None:
@@ -663,15 +663,15 @@ async def test_transaction_options(
     options: dict[str, Any],
     expected: tuple[str, str, str],
 ) -> None:
-    sql = (
+    query = (
         "SELECT current_setting('transaction_isolation'),"
         " current_setting('transaction_read_only'), current_setting('transaction_deferrable')"
     )
     async with await fastpg.create_pool(dsn) as pool:
         async with pool.transaction(**options) as tx:
-            assert await tx.select_one(sql) == expected
+            assert await tx.select_one(query) == expected
         async with await fastpg.connect(dsn) as conn, conn.transaction(**options) as tx:
-            assert await tx.select_one(sql) == expected
+            assert await tx.select_one(query) == expected
 
 
 async def _insert_readonly(pool: fastpg.Pool) -> None:
@@ -945,9 +945,9 @@ async def test_no_connection_leaks(dsn: str, conn: fastpg.Connection) -> None:
         task = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.2)"))
         await asyncio.sleep(0.02)
         task.cancel()
-    sql = "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'fastpg_pool_leak_test'"
+    query = "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'fastpg_pool_leak_test'"
     async with asyncio.timeout(5):
-        while (await conn.select_one(sql))[0]:
+        while (await conn.select_one(query))[0]:
             await asyncio.sleep(0.05)
 
 

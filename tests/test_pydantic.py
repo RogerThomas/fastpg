@@ -122,9 +122,9 @@ async def test_strategies_agree_with_validation(
     conn: fastpg.Connection,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = "SELECT * FROM people WHERE id BETWEEN $1 AND $2 ORDER BY id"
-    rows = await conn.select_many(sql, 1, 2500, into=PersonModel, strategy=strategy)
-    tuples = await conn.select_many(sql, 1, 2500)
+    query = "SELECT * FROM people WHERE id BETWEEN $1 AND $2 ORDER BY id"
+    rows = await conn.select_many(query, 1, 2500, into=PersonModel, strategy=strategy)
+    tuples = await conn.select_many(query, 1, 2500)
     fields = list(PersonModel.model_fields)
     expected = [PersonModel.model_validate(dict(zip(fields, t, strict=True))) for t in tuples]
     assert rows == expected
@@ -151,17 +151,17 @@ async def test_constraints_are_validated(conn: fastpg.Connection) -> None:
 
 
 async def test_aliases_and_defaults(conn: fastpg.Connection) -> None:
-    sql = "SELECT external_id FROM people WHERE id = 1"
-    direct = await conn.select_one(sql, into=Aliased, strategy="direct")
-    assert direct == await conn.select_one(sql, into=Aliased, strategy="json")
+    query = "SELECT external_id FROM people WHERE id = 1"
+    direct = await conn.select_one(query, into=Aliased, strategy="direct")
+    assert direct == await conn.select_one(query, into=Aliased, strategy="json")
     assert (direct.nickname, direct.flag) == ("anon", None)
     assert direct.model_fields_set == {"ext"}
     assert hash(direct) == hash(direct.model_copy())
 
 
 async def test_direct_dicts_are_per_instance_and_in_field_order(conn: fastpg.Connection) -> None:
-    sql = "SELECT age, name FROM people WHERE id <= 2 ORDER BY id"
-    rows = await conn.select_many(sql, into=DefaultsBetween, strategy="direct")
+    query = "SELECT age, name FROM people WHERE id <= 2 ORDER BY id"
+    rows = await conn.select_many(query, into=DefaultsBetween, strategy="direct")
     assert [list(row.__dict__) for row in rows] == [["nickname", "name", "flag", "age"]] * 2
     assert [row.model_fields_set for row in rows] == [{"name", "age"}] * 2
     rows[0].nickname = "changed"
@@ -194,10 +194,10 @@ async def test_direct_errors(conn: fastpg.Connection) -> None:
 
 
 async def test_json_fields(conn: fastpg.Connection) -> None:
-    sql = """SELECT '[{"x": 1, "y": 2}]'::jsonb AS points, '{"a": 1}'::json AS meta"""
-    direct = await conn.select_one(sql, into=DocModel, strategy="direct")
+    query = """SELECT '[{"x": 1, "y": 2}]'::jsonb AS points, '{"a": 1}'::json AS meta"""
+    direct = await conn.select_one(query, into=DocModel, strategy="direct")
     assert direct == DocModel(points=[PointModel(x=1, y=2)], meta={"a": 1})
-    assert direct == await conn.select_one(sql, into=DocModel, strategy="json")
+    assert direct == await conn.select_one(query, into=DocModel, strategy="json")
 
 
 @pytest.mark.parametrize("strategy", ["direct", "json"])
@@ -207,8 +207,8 @@ async def test_str_field_gets_json_as_raw_text(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONAsTextModel, strategy=strategy)
+    query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONAsTextModel, strategy=strategy)
     assert got == JSONAsTextModel(doc='{"k": 1}', meta=None)
 
 
@@ -219,8 +219,8 @@ async def test_str_field_gets_json_as_raw_text_when_not_null(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONAsTextModel, strategy=strategy)
+    query = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONAsTextModel, strategy=strategy)
     assert got == JSONAsTextModel(doc="[1]", meta='"a"')
 
 
@@ -231,8 +231,8 @@ async def test_dict_and_any_fields_get_decoded_json(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONDecodedModel, strategy=strategy)
+    query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONDecodedModel, strategy=strategy)
     assert got == JSONDecodedModel(doc={"k": 1}, meta=[1, "a"])
 
 
@@ -247,6 +247,8 @@ async def test_msgpack_not_offered_for_pydantic(conn: fastpg.Connection) -> None
 
 
 async def test_json_strategy_for_msgspec(conn: fastpg.Connection) -> None:
-    sql = "SELECT id, name, balance, external_id, created_at, birthday FROM people WHERE id <= 300"
-    direct = await conn.select_many(sql, into=PersonStruct, strategy="direct")
-    assert direct == await conn.select_many(sql, into=PersonStruct, strategy="json")
+    query = (
+        "SELECT id, name, balance, external_id, created_at, birthday FROM people WHERE id <= 300"
+    )
+    direct = await conn.select_many(query, into=PersonStruct, strategy="direct")
+    assert direct == await conn.select_many(query, into=PersonStruct, strategy="json")

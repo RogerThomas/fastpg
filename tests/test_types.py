@@ -97,12 +97,12 @@ async def test_every_parameter_type_in_one_statement(conn: fastpg.Connection) ->
         {"k": 1},
         [1],
     )
-    sql = (
+    query = (
         "SELECT $1::int4, $2::bool, $3::int8, $4::text, $5::float8, $6::bytea, $7::uuid,"
         " $8::uuid, $9::bytea, $10::bytea, $11::timestamptz, $12::timestamp, $13::date,"
         " $14::time, $15::numeric, $16::text, $17::jsonb, $18::jsonb"
     )
-    assert await conn.select_one(sql, *params) == (
+    assert await conn.select_one(query, *params) == (
         None,
         True,
         7,
@@ -199,12 +199,12 @@ async def test_uuid_instances_behave_like_uuids(conn: fastpg.Connection) -> None
 
 async def test_uuids_and_decimals_are_not_gc_tracked(conn: fastpg.Connection) -> None:
     # They can't be part of a reference cycle, so the cyclic GC needn't traverse them.
-    sql = """
+    query = """
 SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid, 1.5::numeric, 'NaN'::numeric,
        '-10000.0005'::numeric, NULL::uuid, NULL::numeric
 FROM generate_series(1, 2000)
 """
-    rows = await conn.select_many(sql)
+    rows = await conn.select_many(query)
     gc.collect()
     assert {gc.is_tracked(value) for row in rows for value in row} == {False}
     u, n, nan, negative, null_u, null_n = rows[-1]
@@ -218,8 +218,8 @@ FROM generate_series(1, 2000)
 
 
 async def test_tuple_rows_of_scalars_are_not_gc_tracked(conn: fastpg.Connection) -> None:
-    sql = "SELECT id, external_id, balance, email FROM people WHERE id <= 2000 ORDER BY id"
-    rows = await conn.select_many(sql)
+    query = "SELECT id, external_id, balance, email FROM people WHERE id <= 2000 ORDER BY id"
+    rows = await conn.select_many(query)
     assert not any(gc.is_tracked(row) for row in rows)
     assert rows[6] == (7, uuid.UUID("8f14e45f-ceea-167a-5a36-dedd4bea2543"), Decimal("2.59"), None)
     single = await conn.select_one("SELECT 1, 'text'")
@@ -248,8 +248,8 @@ async def test_enum_and_text_like_types(conn: fastpg.Connection) -> None:
 
 async def test_internal_char_type(conn: fastpg.Connection) -> None:
     # '\000' is the byte 0, whose text output is empty.
-    sql = """SELECT 'a'::"char", '\\000'::"char", NULL::"char" """
-    assert await conn.select_one(sql) == ("a", "", None)
+    query = """SELECT 'a'::"char", '\\000'::"char", NULL::"char" """
+    assert await conn.select_one(query) == ("a", "", None)
 
 
 async def test_internal_char_from_the_catalog(conn: fastpg.Connection) -> None:
@@ -272,12 +272,12 @@ async def test_internal_char_param_rejects_more_than_one_byte(
 
 
 async def test_pg_type_query_with_internal_char_columns(conn: fastpg.Connection) -> None:
-    sql = """
+    query = """
 select typname, typnamespace, typowner, typlen, typbyval, typcategory, typispreferred,
        typisdefined, typdelim, typrelid, typelem, typarray
 from pg_type where typtypmod = $1 and typisdefined = $2
 """
-    rows = await conn.select_many(sql, *(-1, True))
+    rows = await conn.select_many(query, *(-1, True))
     assert rows
     assert {len(row[5]) for row in rows} == {1}
 
@@ -313,15 +313,15 @@ class Everything(msgspec.Struct):
 
 
 async def test_direct_and_msgpack_agree_on_every_type(conn: fastpg.Connection) -> None:
-    sql = """
+    query = """
 SELECT true AS b, 42 AS i, 1.5::float8 AS f, 'x' AS s, '\\x0102'::bytea AS raw,
        'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS u, '2024-02-29'::date AS d,
        '12:34:56.789'::time AS t, '2024-02-29 12:34:56.789'::timestamp AS ts,
        '2024-02-29 12:34:56.789+00'::timestamptz AS tstz, 12.340::numeric AS n,
        '{"k": [1, {"z": null}]}'::jsonb AS j
 """
-    direct = await conn.select_one(sql, into=Everything, strategy="direct")
-    via_msgpack = await conn.select_one(sql, into=Everything, strategy="msgpack")
+    direct = await conn.select_one(query, into=Everything, strategy="direct")
+    via_msgpack = await conn.select_one(query, into=Everything, strategy="msgpack")
     assert direct == via_msgpack
     assert direct.n == Decimal("12.340")
     assert direct.ts.tzinfo is None

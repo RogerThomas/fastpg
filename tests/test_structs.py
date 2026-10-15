@@ -166,9 +166,9 @@ async def test_strategies_agree_on_seed_data(
     conn: fastpg.Connection,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = "SELECT * FROM people WHERE id BETWEEN $1 AND $2 ORDER BY id"
-    expected = await conn.select_many(sql, 1, 3000, into=Person, strategy="direct")
-    got = await conn.select_many(sql, 1, 3000, into=Person, strategy=strategy)
+    query = "SELECT * FROM people WHERE id BETWEEN $1 AND $2 ORDER BY id"
+    expected = await conn.select_many(query, 1, 3000, into=Person, strategy="direct")
+    got = await conn.select_many(query, 1, 3000, into=Person, strategy=strategy)
     assert len(got) == 3000
     assert got == expected
     assert [p.id for p in got] == list(range(1, 3001))
@@ -235,14 +235,14 @@ async def test_int_column_into_float_field(conn: fastpg.Connection) -> None:
 
 
 async def test_renamed_fields_match_encoded_names(conn: fastpg.Connection) -> None:
-    sql = 'SELECT external_id AS "externalId", created_at AS "createdAt" FROM people WHERE id = 1'
-    direct = await conn.select_one(sql, into=Camel, strategy="direct")
-    assert direct == await conn.select_one(sql, into=Camel, strategy="msgpack")
+    query = 'SELECT external_id AS "externalId", created_at AS "createdAt" FROM people WHERE id = 1'
+    direct = await conn.select_one(query, into=Camel, strategy="direct")
+    assert direct == await conn.select_one(query, into=Camel, strategy="msgpack")
 
 
 async def test_kw_only_fields(conn: fastpg.Connection) -> None:
-    sql = "SELECT name, age FROM people WHERE id = 3"
-    assert await conn.select_one(sql, into=WithKwOnly) == WithKwOnly(name="person-3", age=21)
+    query = "SELECT name, age FROM people WHERE id = 3"
+    assert await conn.select_one(query, into=WithKwOnly) == WithKwOnly(name="person-3", age=21)
 
 
 async def test_post_init_runs(conn: fastpg.Connection) -> None:
@@ -251,10 +251,10 @@ async def test_post_init_runs(conn: fastpg.Connection) -> None:
 
 
 async def test_json_fields_decode_with_field_type(conn: fastpg.Connection) -> None:
-    sql = """SELECT '[{"x": 1, "y": 2}]'::jsonb AS points, NULL::jsonb AS meta"""
-    got = await conn.select_one(sql, into=PointsDoc, strategy="direct")
+    query = """SELECT '[{"x": 1, "y": 2}]'::jsonb AS points, NULL::jsonb AS meta"""
+    got = await conn.select_one(query, into=PointsDoc, strategy="direct")
     assert got == PointsDoc([Point(1, 2)], None)
-    assert got == await conn.select_one(sql, into=PointsDoc, strategy="msgpack")
+    assert got == await conn.select_one(query, into=PointsDoc, strategy="msgpack")
 
 
 async def test_invalid_json_shape_is_decode_error(conn: fastpg.Connection) -> None:
@@ -270,8 +270,8 @@ async def test_str_field_gets_json_as_raw_text(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONAsText, strategy=strategy)
+    query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONAsText, strategy=strategy)
     assert got == JSONAsText('{"k": 1}', None)
 
 
@@ -282,8 +282,8 @@ async def test_str_field_gets_json_as_raw_text_when_not_null(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONAsText, strategy=strategy)
+    query = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONAsText, strategy=strategy)
     assert got == JSONAsText("[1]", '"a"')
 
 
@@ -292,8 +292,8 @@ async def test_str_fields_get_internal_char(
     conn: fastpg.Connection,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = """SELECT 'r'::"char" AS kind, '\\000'::"char" AS empty, NULL::"char" AS other"""
-    got = await conn.select_one(sql, into=InternalChar, strategy=strategy)
+    query = """SELECT 'r'::"char" AS kind, '\\000'::"char" AS empty, NULL::"char" AS other"""
+    got = await conn.select_one(query, into=InternalChar, strategy=strategy)
     assert got == InternalChar("r", "", None)
 
 
@@ -318,8 +318,8 @@ async def test_dict_and_any_fields_get_decoded_json(
     json_type: str,
     strategy: fastpg.Strategy,
 ) -> None:
-    sql = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
-    got = await conn.select_one(sql, into=JSONDecoded, strategy=strategy)
+    query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
+    got = await conn.select_one(query, into=JSONDecoded, strategy=strategy)
     assert got == JSONDecoded({"k": 1}, [1, "a"])
 
 
@@ -343,10 +343,10 @@ async def test_array_like_struct_direct(conn: fastpg.Connection) -> None:
 
 
 async def test_select_one_or_none_into(conn: fastpg.Connection) -> None:
-    sql = "SELECT * FROM people WHERE id = $1"
-    assert await conn.select_one_or_none(sql, -1, into=Person) is None
-    assert await conn.select_one_or_none(sql, -1, into=Person, strategy="msgpack") is None
-    person = await conn.select_one_or_none(sql, 5, into=Person)
+    query = "SELECT * FROM people WHERE id = $1"
+    assert await conn.select_one_or_none(query, -1, into=Person) is None
+    assert await conn.select_one_or_none(query, -1, into=Person, strategy="msgpack") is None
+    person = await conn.select_one_or_none(query, 5, into=Person)
     assert person is not None
     assert person.id == 5
 
@@ -368,8 +368,8 @@ async def test_large_result_streams_in_chunks(conn: fastpg.Connection) -> None:
 async def test_rows_of_scalars_are_not_gc_tracked(conn: fastpg.Connection) -> None:
     # As msgspec does for Structs whose values can't hold references (uuid.UUID and
     # Decimal included), so large results don't make the cyclic GC traverse every row.
-    sql = "SELECT id, external_id, balance, email FROM people WHERE id <= 3000 ORDER BY id"
-    rows = await conn.select_many(sql, into=Scalars)
+    query = "SELECT id, external_id, balance, email FROM people WHERE id <= 3000 ORDER BY id"
+    rows = await conn.select_many(query, into=Scalars)
     gc.collect()
     assert not any(gc.is_tracked(row) for row in rows)
     assert rows[6] == Scalars(
@@ -412,7 +412,7 @@ async def test_error_in_first_chunk_fails_query(conn: fastpg.Connection) -> None
 async def test_error_in_later_chunk_fails_query(conn: fastpg.Connection) -> None:
     # Only id 2100 has a NULL email here, ~1800 rows in: after the first 512-row chunks
     # have already been decoded and accumulated.
-    sql = "SELECT id, email FROM people WHERE id % 7 <> 0 OR id = 2100 ORDER BY id LIMIT 3000"
+    query = "SELECT id, email FROM people WHERE id % 7 <> 0 OR id = 2100 ORDER BY id LIMIT 3000"
     with pytest.raises(fastpg.NullValueError):
-        await conn.select_many(sql, into=IdEmail)
+        await conn.select_many(query, into=IdEmail)
     assert await conn.select_one("SELECT 1") == (1,)
