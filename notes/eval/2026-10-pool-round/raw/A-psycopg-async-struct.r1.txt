@@ -1,0 +1,18 @@
+LOAD 7.09
+ Container fastpg-bench-run-ab90f8afa33d Creating 
+ Container fastpg-bench-run-ab90f8afa33d Created 
+
+2026-10-11 15:53:48,121 [INFO]: 1 drivers x concurrent on             run.py:198
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-11 15:53:48,135 [INFO]: psycopg-async-struct   concurrent harness.py:469
+(x16, pool 16)                                                                  
+2026-10-11 15:53:48 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Concurrent point lookups: 16 tasks sharing the driver's pool of 16                                 
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver               ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ psycopg-async-struct │ async │ struct │ 11,863 │ 11,863 │ 1,325.8 │ 1,450.9 │ 1,851.2 │   1.00x │
+└──────────────────────┴───────┴────────┴────────┴────────┴─────────┴─────────┴─────────┴─────────┘
+2026-10-11 15:53:54,215 [INFO]: wrote /tmp/out/20261011T155348Z.json  run.py:220
+and /tmp/out/20261011T155348Z.md                                                

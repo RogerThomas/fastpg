@@ -1,0 +1,24 @@
+Server (backend process) CPU per row vs the client's loop CPU per row, 102,400 people-shaped
+rows into a TEMP table (no WAL), median of 5 interleaved rounds, macOS host, compose Postgres.
+Backend utime+stime read with `docker exec fastpg-postgres-1 cat /proc/<pid>/stat` (read-only).
+
+    uv run yeet notes/eval/2026-10-writes-perf/server_cpu.py          (at 78ef8e3)
+fastpg execute_many        266,977 rows/s  client    631 ns/row  server  3,711 ns/row
+fastpg insert_many         534,091 rows/s  client    478 ns/row  server  1,855 ns/row
+fastpg copy_in           1,188,820 rows/s  client    353 ns/row  server    781 ns/row
+asyncpg executemany        274,535 rows/s  client  2,092 ns/row  server  3,516 ns/row
+asyncpg unnest x1024       397,911 rows/s  client  2,433 ns/row  server  1,270 ns/row
+asyncpg copy               708,856 rows/s  client  1,364 ns/row  server    781 ns/row
+
+    uv run yeet notes/eval/2026-10-writes-perf/server_cpu_unnest.py   (unnest batch sizes)
+fastpg insert_many         525,028 rows/s  client    481 ns/row  server  1,855 ns/row
+asyncpg unnest x64         356,116 rows/s  client  2,731 ns/row  server  1,660 ns/row
+asyncpg unnest x256        373,603 rows/s  client  2,619 ns/row  server  1,465 ns/row
+asyncpg unnest x1024       379,434 rows/s  client  2,548 ns/row  server  1,367 ns/row
+asyncpg copy               701,237 rows/s  client  1,368 ns/row  server    781 ns/row
+
+    uv run yeet notes/eval/2026-10-writes-perf/shapes.py 102400       (asyncpg as the client)
+asyncpg VALUES x64         524,355 rows/s (502,923-530,701)  client 1,584 ns/row
+asyncpg unnest x1024       408,244 rows/s (362,533-409,710)  client 2,382 ns/row
+asyncpg unnest x4096       365,401 rows/s (330,660-375,106)  client 2,489 ns/row
+asyncpg COPY               742,451 rows/s (686,590-756,553)  client 1,297 ns/row

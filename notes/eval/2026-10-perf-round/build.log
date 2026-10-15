@@ -1,0 +1,292 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.test
+#1 transferring dockerfile: 1.20kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.1s
+
+#3 [internal] load metadata for ghcr.io/astral-sh/uv:0.12.24
+#3 DONE 0.1s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 187B done
+#4 DONE 0.0s
+
+#5 [stage-0 1/7] FROM docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+#5 resolve docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f done
+#5 DONE 0.0s
+
+#6 FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a
+#6 resolve ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a done
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 3.34MB 0.2s done
+#7 DONE 0.2s
+
+#8 [stage-0 2/7] COPY --from=ghcr.io/astral-sh/uv:0.12.24 /uv /uvx /usr/local/bin/
+#8 CACHED
+
+#9 [stage-0 3/7] RUN apt-get update     && apt-get install -y --no-install-recommends curl ca-certificates build-essential     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [stage-0 4/7] RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+#10 CACHED
+
+#11 [stage-0 5/7] WORKDIR /src
+#11 CACHED
+
+#12 [stage-0 6/7] COPY . .
+#12 DONE 0.1s
+
+#13 [stage-0 7/7] RUN uv sync --locked --all-groups
+#13 0.303 Downloading cpython-3.14.7-linux-aarch64-gnu (download) (28.9MiB)
+#13 1.667  Downloaded cpython-3.14.7-linux-aarch64-gnu (download)
+#13 1.780 Using CPython 3.14.7
+#13 1.780 Creating virtual environment at: /opt/venv
+#13 1.783 Resolved 58 packages in 0.89ms
+#13 1.804    Building fastpg @ file:///src
+#13 2.119 Downloading psycopg2-binary (5.6MiB)
+#13 2.120 Downloading psqlpy (4.9MiB)
+#13 2.121 Downloading mkdocs (3.7MiB)
+#13 2.121 Downloading ruff (9.5MiB)
+#13 2.122 Downloading pyright (5.9MiB)
+#13 2.123 Downloading uvloop (4.2MiB)
+#13 2.123 Downloading pygments (1.2MiB)
+#13 2.125 Downloading asyncpg (3.6MiB)
+#13 2.126 Downloading pydantic-core (2.0MiB)
+#13 2.126 Downloading zensical (17.3MiB)
+#13 2.127 Downloading psycopg-binary (6.5MiB)
+#13 3.247  Downloaded pygments
+#13 3.488  Downloaded pydantic-core
+#13 3.893  Downloaded mkdocs
+#13 3.910  Downloaded asyncpg
+#13 4.003  Downloaded uvloop
+#13 4.144  Downloaded psqlpy
+#13 4.244  Downloaded psycopg2-binary
+#13 4.371  Downloaded psycopg-binary
+#13 4.416  Downloaded pyright
+#13 4.570  Downloaded ruff
+#13 6.132  Downloaded zensical
+#13 28.19       Built fastpg @ file:///src
+#13 28.19 Prepared 56 packages in 26.40s
+#13 29.55 Installed 56 packages in 1.35s
+#13 29.55  + annotated-types==0.8.0
+#13 29.55  + asn1crypto==1.5.1
+#13 29.55  + asyncpg==0.32.0
+#13 29.55  + asyncpg-stubs==0.32.0
+#13 29.55  + click==8.5.0
+#13 29.55  + deepmerge==3.0.1
+#13 29.55  + fastpg==0.1.0 (from file:///src)
+#13 29.55  + ghp-import==2.1.0
+#13 29.55  + griffelib==2.3.2
+#13 29.55  + iniconfig==2.3.1
+#13 29.55  + jinja2==3.1.6
+#13 29.55  + markdown==3.11
+#13 29.55  + markdown-it-py==4.2.0
+#13 29.55  + markupsafe==3.0.4
+#13 29.55  + mdurl==0.1.2
+#13 29.55  + mergedeep==1.3.4
+#13 29.55  + mkdocs==1.6.1
+#13 29.55  + mkdocs-autorefs==1.4.4
+#13 29.55  + mkdocs-get-deps==0.2.2
+#13 29.55  + mkdocstrings==1.0.7
+#13 29.55  + mkdocstrings-python==2.0.9
+#13 29.55  + msgspec==0.22.0
+#13 29.55  + nodeenv==1.11.0
+#13 29.55  + packaging==26.3
+#13 29.55  + pathspec==1.1.1
+#13 29.55  + pg8000==1.31.5
+#13 29.55  + platformdirs==4.13.0
+#13 29.55  + pluggy==1.6.0
+#13 29.55  + psqlpy==0.12.1
+#13 29.55  + psycopg==3.3.6
+#13 29.55  + psycopg-binary==3.3.6
+#13 29.55  + psycopg-pool==3.3.3
+#13 29.55  + psycopg2-binary==2.9.13
+#13 29.55  + pydantic==2.14.0
+#13 29.55  + pydantic-core==2.50.0
+#13 29.55  + pygments==2.21.0
+#13 29.55  + pymdown-extensions==12.2
+#13 29.55  + pyright==1.1.414
+#13 29.55  + pytest==9.1.1
+#13 29.55  + pytest-asyncio==1.4.0
+#13 29.55  + python-dateutil==2.9.0.post0
+#13 29.55  + pyyaml==6.0.3
+#13 29.55  + pyyaml-env-tag==1.1
+#13 29.55  + rich==15.0.0
+#13 29.55  + rich-argparse==1.8.0
+#13 29.55  + ruff==0.17.0
+#13 29.55  + scramp==1.4.17
+#13 29.55  + six==1.17.0
+#13 29.55  + tomli==2.5.0
+#13 29.55  + types-psycopg2==2.9.21.20261008
+#13 29.55  + typing-extensions==4.16.0
+#13 29.55  + typing-inspection==0.4.4
+#13 29.55  + uvloop==0.23.0
+#13 29.55  + watchdog==6.0.0
+#13 29.55  + yeetr==2026.9.18
+#13 29.55  + zensical==0.0.69
+#13 DONE 30.7s
+
+#14 exporting to image
+#14 exporting layers
+#14 exporting layers 18.3s done
+#14 exporting manifest sha256:9d41397eb339c380fbb41da32019b0fb9fcb036a5693ed5e4fc7dfcf74711923 0.0s done
+#14 exporting config sha256:65124dc79f8fad23e20163a1437525f29966b286110464b87a410497888f045c done
+#14 exporting attestation manifest sha256:4db9372c4fa52196c1d9fa81dcad800e4f3f469faeba855597ec3154dcf3be3f done
+#14 exporting manifest list sha256:696c20e370cab855b487efec69c241362c934c38f4596db08ec33da2a82d4793 done
+#14 naming to docker.io/library/fastpg-base:latest done
+#14 unpacking to docker.io/library/fastpg-base:latest
+#14 unpacking to docker.io/library/fastpg-base:latest 5.9s done
+#14 DONE 24.3s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/5i04hchisyajyxjj2ckqfpike
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.test
+#1 transferring dockerfile: 1.20kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for ghcr.io/astral-sh/uv:0.12.24
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 187B done
+#4 DONE 0.0s
+
+#5 FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a
+#5 resolve ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a done
+#5 DONE 0.0s
+
+#6 [stage-0 1/7] FROM docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+#6 resolve docker.io/library/debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f done
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 4.96MB 0.4s done
+#7 DONE 0.4s
+
+#8 [stage-0 2/7] COPY --from=ghcr.io/astral-sh/uv:0.12.24 /uv /uvx /usr/local/bin/
+#8 CACHED
+
+#9 [stage-0 3/7] RUN apt-get update     && apt-get install -y --no-install-recommends curl ca-certificates build-essential     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [stage-0 4/7] RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+#10 CACHED
+
+#11 [stage-0 5/7] WORKDIR /src
+#11 CACHED
+
+#12 [stage-0 6/7] COPY . .
+#12 DONE 1.3s
+
+#13 [stage-0 7/7] RUN uv sync --locked --all-groups
+#13 0.260 Downloading cpython-3.14.7-linux-aarch64-gnu (download) (28.9MiB)
+#13 1.686  Downloaded cpython-3.14.7-linux-aarch64-gnu (download)
+#13 1.787 Using CPython 3.14.7
+#13 1.787 Creating virtual environment at: /opt/venv
+#13 1.790 Resolved 58 packages in 0.90ms
+#13 1.802    Building fastpg @ file:///src
+#13 2.153 Downloading asyncpg (3.6MiB)
+#13 2.154 Downloading pyright (5.9MiB)
+#13 2.156 Downloading pygments (1.2MiB)
+#13 2.160 Downloading mkdocs (3.7MiB)
+#13 2.161 Downloading uvloop (4.2MiB)
+#13 2.161 Downloading psycopg-binary (6.5MiB)
+#13 2.162 Downloading psqlpy (4.9MiB)
+#13 2.162 Downloading zensical (17.3MiB)
+#13 2.162 Downloading psycopg2-binary (5.6MiB)
+#13 2.163 Downloading ruff (9.5MiB)
+#13 2.164 Downloading pydantic-core (2.0MiB)
+#13 3.609  Downloaded pygments
+#13 3.840  Downloaded pydantic-core
+#13 4.311  Downloaded asyncpg
+#13 4.376  Downloaded mkdocs
+#13 4.472  Downloaded uvloop
+#13 4.619  Downloaded psqlpy
+#13 4.719  Downloaded psycopg2-binary
+#13 4.779  Downloaded pyright
+#13 4.847  Downloaded psycopg-binary
+#13 5.031  Downloaded ruff
+#13 6.234  Downloaded zensical
+#13 29.38       Built fastpg @ file:///src
+#13 29.38 Prepared 56 packages in 27.59s
+#13 30.58 Installed 56 packages in 1.19s
+#13 30.58  + annotated-types==0.8.0
+#13 30.58  + asn1crypto==1.5.1
+#13 30.58  + asyncpg==0.32.0
+#13 30.58  + asyncpg-stubs==0.32.0
+#13 30.58  + click==8.5.0
+#13 30.58  + deepmerge==3.0.1
+#13 30.58  + fastpg==0.1.0 (from file:///src)
+#13 30.58  + ghp-import==2.1.0
+#13 30.58  + griffelib==2.3.2
+#13 30.58  + iniconfig==2.3.1
+#13 30.58  + jinja2==3.1.6
+#13 30.58  + markdown==3.11
+#13 30.58  + markdown-it-py==4.2.0
+#13 30.58  + markupsafe==3.0.4
+#13 30.58  + mdurl==0.1.2
+#13 30.58  + mergedeep==1.3.4
+#13 30.58  + mkdocs==1.6.1
+#13 30.58  + mkdocs-autorefs==1.4.4
+#13 30.58  + mkdocs-get-deps==0.2.2
+#13 30.58  + mkdocstrings==1.0.7
+#13 30.58  + mkdocstrings-python==2.0.9
+#13 30.58  + msgspec==0.22.0
+#13 30.58  + nodeenv==1.11.0
+#13 30.58  + packaging==26.3
+#13 30.58  + pathspec==1.1.1
+#13 30.58  + pg8000==1.31.5
+#13 30.58  + platformdirs==4.13.0
+#13 30.58  + pluggy==1.6.0
+#13 30.58  + psqlpy==0.12.1
+#13 30.58  + psycopg==3.3.6
+#13 30.58  + psycopg-binary==3.3.6
+#13 30.58  + psycopg-pool==3.3.3
+#13 30.58  + psycopg2-binary==2.9.13
+#13 30.58  + pydantic==2.14.0
+#13 30.58  + pydantic-core==2.50.0
+#13 30.58  + pygments==2.21.0
+#13 30.58  + pymdown-extensions==12.2
+#13 30.58  + pyright==1.1.414
+#13 30.58  + pytest==9.1.1
+#13 30.58  + pytest-asyncio==1.4.0
+#13 30.58  + python-dateutil==2.9.0.post0
+#13 30.58  + pyyaml==6.0.3
+#13 30.58  + pyyaml-env-tag==1.1
+#13 30.58  + rich==15.0.0
+#13 30.58  + rich-argparse==1.8.0
+#13 30.58  + ruff==0.17.0
+#13 30.58  + scramp==1.4.17
+#13 30.58  + six==1.17.0
+#13 30.58  + tomli==2.5.0
+#13 30.58  + types-psycopg2==2.9.21.20261008
+#13 30.58  + typing-extensions==4.16.0
+#13 30.58  + typing-inspection==0.4.4
+#13 30.58  + uvloop==0.23.0
+#13 30.58  + watchdog==6.0.0
+#13 30.58  + yeetr==2026.9.18
+#13 30.58  + zensical==0.0.69
+#13 DONE 31.5s
+
+#14 exporting to image
+#14 exporting layers
+#14 exporting layers 20.9s done
+#14 exporting manifest sha256:7411a7a721c843f3bdbb022e818197b5e936c5d63f5f52861c569ed37a571a32 done
+#14 exporting config sha256:ffa28fe5afad9bae4d8dd613f1cfc5521253f0e126a3c503231e06e6c6b07ffd done
+#14 exporting attestation manifest sha256:dec4eabf022b649e87aa4afd16a02f30a3d39fe59297da7a02293dc575cecca1 done
+#14 exporting manifest list sha256:0377a14553b85d5120901deed76628a78c0fd633cda619de79c21cc6b7767ddb done
+#14 naming to docker.io/library/fastpg-new:latest done
+#14 unpacking to docker.io/library/fastpg-new:latest
+#14 unpacking to docker.io/library/fastpg-new:latest 6.3s done
+#14 DONE 27.2s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/hdhf85qro079vuydx5acmtgbv

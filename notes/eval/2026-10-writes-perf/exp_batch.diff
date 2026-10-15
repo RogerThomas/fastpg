@@ -1,0 +1,60 @@
+diff --git a/native/src/bulk.rs b/native/src/bulk.rs
+index ac99dcc..15e4c7d 100644
+--- a/native/src/bulk.rs
++++ b/native/src/bulk.rs
+@@ -1051,6 +1051,8 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
+     let (mut began, mut ended, mut finished, mut aborted, mut failed) =
+         (false, false, false, false, false);
+     let mut total: u64 = 0;
++    let exp_batch = std::env::var_os("FASTPG_EXP_BATCH").is_some();
++    let mut parsed = false;
+     loop {
+         while let Some(Pending::Ack(_)) = q.front() {
+             if let Some(Pending::Ack(ack)) = q.pop_front() {
+@@ -1101,6 +1103,36 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
+                         q.push_back(Pending::Control(begin.execute(&*client)));
+                         began = true;
+                     }
++                    if exp_batch && group == 1 && rows.nrows > 1 {
++                        if !parsed {
++                            parsed = true;
++                            let oids: Vec<u32> = stmt.params().iter().map(|t| t.oid()).collect();
++                            let sql = statements.sql(1);
++                            let _ = client.send_one_way(|buf| {
++                                postgres_protocol::message::frontend::parse("fastpg_bulk", &sql, oids.iter().copied(), buf)?;
++                                Ok(())
++                            });
++                        }
++                        let n = rows.nrows;
++                        let _ = client.send_one_way(|buf| {
++                            for r in 0..n - 1 {
++                                let bound = postgres_protocol::message::frontend::bind(
++                                    "", "fastpg_bulk", Some(1), rows.rows(r, 1),
++                                    |p: RawParam<'_>, buf: &mut BytesMut| match p.0 {
++                                        None => Ok(postgres_protocol::IsNull::Yes),
++                                        Some(raw) => { buf.put_slice(raw); Ok(postgres_protocol::IsNull::No) }
++                                    },
++                                    Some(1), buf);
++                                if bound.is_err() { return Err(std::io::Error::other("bind").into()); }
++                                postgres_protocol::message::frontend::execute("", 0, buf)?;
++                            }
++                            Ok(())
++                        });
++                        let fut = stmt.bind(rows.rows(n - 1, 1)).execute(&*client);
++                        q.push_back(Pending::Rows(rows.first, n, fut));
++                        q.push_back(Pending::Ack(ack));
++                        continue;
++                    }
+                     let mut r = 0;
+                     while r < rows.nrows {
+                         let (statement, count) = match &single {
+@@ -1139,6 +1171,9 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
+     if let Some(sql) = cleanup {
+         let _ = sql.execute(&*client).await;
+     }
++    if parsed {
++        let _ = "DEALLOCATE fastpg_bulk".execute(&*client).await;
++    }
+     close(&client, stmt);
+     if let Some(single) = single {
+         close(&client, single);

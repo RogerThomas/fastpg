@@ -1,0 +1,3 @@
+target     rows variant                  n ns/row med           IQR       min-max  rows/s med gc ns/row vs first
+struct        1 chunk512_commit          9      39854  37965-40922   36667-41901        2,610         0    +0.0%
+struct        1 shortread2               9      39325  38397-41484   37933-43556        2,717         0    -1.3%

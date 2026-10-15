@@ -1,0 +1,106 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  ARGS: -s -vv -v -rA
+
+env:
+  # PyO3 test binaries link libpython: use uv's interpreter and let the loader find it (Linux).
+  PYO3_PYTHON:
+    sh: uv python find
+  LD_LIBRARY_PATH:
+    sh: $(uv python find) -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))'
+
+tasks:
+  uv-sync: uv sync --all-packages --all-groups
+
+  uv-lock: uv lock {{.CLI_ARGS}}
+
+  ruff: uv run ruff check --fix --unsafe-fixes .
+
+  pyright: uv run pyright .
+
+  # --- fastpg -------------------------------------------------------------------
+
+  db-up:
+    desc: Start PostgreSQL (fresh schema + seed on every start; data on tmpfs)
+    cmd: docker compose up -d --wait postgres
+
+  db-down:
+    desc: Stop PostgreSQL (discarding all data)
+    cmd: docker compose down
+
+  db-tls-up:
+    desc: Start the TLS-only PostgreSQL for tests/test_tls.py (port 55433, certs in docker/tls/certs)
+    cmd: docker compose --profile tls up -d --wait postgres-tls
+
+  db-tls-down:
+    desc: Stop the TLS-only PostgreSQL (the generated certificates are kept)
+    cmd: docker compose --profile tls rm -sf postgres-tls
+
+  test-tls:
+    desc: Run tests/test_tls.py against the TLS-only PostgreSQL (needs `task db-up db-tls-up`)
+    env:
+      FASTPG_TLS_DSN: postgresql://fastpg:fastpg@localhost:55433/fastpg
+      FASTPG_TLS_CA: docker/tls/certs/ca.crt
+    cmd: uv run pytest tests/test_tls.py {{.CLI_ARGS}}
+
+  build:
+    desc: Build the Rust extension (release) into the venv
+    cmd: uv sync --all-groups --reinstall-package fastpg
+
+  test:
+    desc: Run Rust unit tests and the pytest suite (needs `task db-up`)
+    cmds:
+      - cargo test --manifest-path native/Cargo.toml -q
+      - uv run pytest {{.CLI_ARGS}}
+
+  test-docker:
+    desc: Build and test entirely inside Docker (Postgres + Linux build of fastpg)
+    cmd: docker compose --profile test run --rm --build tests
+
+  check:
+    desc: Lint and type-check everything (ruff + pyright strict + rustfmt + clippy)
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check src tests bench examples
+      - uv run pyright .
+      - cargo fmt --manifest-path native/Cargo.toml --check
+      - cargo clippy --manifest-path native/Cargo.toml -q -- -D warnings
+
+  bench:
+    desc: Driver benchmark suite (e.g. `task bench -- -d 'fastpg*' -d 'asyncpg*'`)
+    cmd: uv run yeet ./bench/run.py {{.CLI_ARGS}}
+
+  bench-docker:
+    desc: Benchmark suite inside Linux next to postgres (e.g. `task bench-docker -- -t 3`)
+    cmd: docker compose --profile bench run --rm --build bench ./bench/run.py {{.CLI_ARGS}}
+
+  bench-open-loop:
+    desc: API-like load (Poisson arrivals at fixed rates), latency + event-loop headroom per driver
+    cmd: uv run yeet ./bench/open_loop.py {{.CLI_ARGS}}
+
+  bench-open-loop-docker:
+    desc: Open-loop benchmark inside Linux next to postgres
+    cmd: docker compose --profile bench run --rm --build --entrypoint uv bench run --no-sync yeet ./bench/open_loop.py {{.CLI_ARGS}}
+
+  bench-decode:
+    desc: Loop-thread CPU per row, direct Struct construction vs msgpack (network-independent)
+    cmd: uv run yeet ./bench/decode_cost.py {{.CLI_ARGS}}
+
+  docs-test:
+    desc: Test if the documentation builds without warnings or errors
+    cmd: uv run --group docs yeet ./scripts/build_docs.py --strict
+
+  docs:
+    desc: Build and serve the documentation (stops whatever is already listening on port 8000)
+    cmds:
+      # Listeners only: a plain `lsof -ti tcp:8000` would also match browsers connected to it.
+      - pids=$(lsof -ti tcp:8000 -sTCP:LISTEN || true); [ -z "$pids" ] || kill $pids
+      - uv run --group docs yeet ./scripts/build_docs.py
+      - uv run --group docs zensical serve
+
+  example:
+    desc: Run the minimal example
+    cmd: uv run yeet ./examples/basic.py {{.CLI_ARGS}}

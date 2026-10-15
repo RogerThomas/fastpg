@@ -1,0 +1,40 @@
+--- run 1
+
+round trip (SELECT 1), fastpg conn:          16.5 ms
+913 rows -> Structs, fastpg conn:             39.5 ms
+913 rows -> Structs, fastpg pool:             39.8 ms
+round trip (SELECT 1), asyncpg conn:         17.6 ms
+913 rows -> Structs, asyncpg conn:            37.7 ms
+913 rows -> Structs, asyncpg pool:            54.8 ms
+--- run 2
+
+round trip (SELECT 1), fastpg conn:          18.0 ms
+913 rows -> Structs, fastpg conn:             40.6 ms
+913 rows -> Structs, fastpg pool:             36.9 ms
+round trip (SELECT 1), asyncpg conn:         16.6 ms
+913 rows -> Structs, asyncpg conn:            33.1 ms
+913 rows -> Structs, asyncpg pool:            57.9 ms
+--- run 3
+
+round trip (SELECT 1), fastpg conn:          15.1 ms
+913 rows -> Structs, fastpg conn:             38.9 ms
+913 rows -> Structs, fastpg pool:             40.6 ms
+round trip (SELECT 1), asyncpg conn:         15.1 ms
+913 rows -> Structs, asyncpg conn:            34.0 ms
+913 rows -> Structs, asyncpg pool:            55.3 ms
+--- run 4
+
+round trip (SELECT 1), fastpg conn:          14.7 ms
+913 rows -> Structs, fastpg conn:             36.1 ms
+913 rows -> Structs, fastpg pool:             37.3 ms
+round trip (SELECT 1), asyncpg conn:         15.8 ms
+913 rows -> Structs, asyncpg conn:            39.7 ms
+913 rows -> Structs, asyncpg pool:            50.9 ms
+--- run 5
+
+round trip (SELECT 1), fastpg conn:          16.3 ms
+913 rows -> Structs, fastpg conn:             33.4 ms
+913 rows -> Structs, fastpg pool:             34.1 ms
+round trip (SELECT 1), asyncpg conn:         15.4 ms
+913 rows -> Structs, asyncpg conn:            31.7 ms
+913 rows -> Structs, asyncpg pool:            53.2 ms

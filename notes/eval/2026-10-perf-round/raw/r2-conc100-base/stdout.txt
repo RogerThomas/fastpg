@@ -1,0 +1,25 @@
+
+2026-10-11 17:38:40,543 [INFO]: 1 drivers x concurrent,               run.py:198
+concurrent-pinned on postgresql://fastpg:***@postgres:5432/fastpg               
+(event loop: uvloop)                                                            
+2026-10-11 17:38:40,559 [INFO]: fastpg-struct                     harness.py:488
+concurrent-pinned (x100)                                                        
+2026-10-11 17:38:46,998 [INFO]: fastpg-struct          concurrent harness.py:469
+(x100, pool 100)                                                                
+2026-10-11 17:38:40 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Concurrent point lookups: 100 tasks, each pinned to its own connection                      
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver        ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct │ async │ struct │ 59,192 │ 59,192 │ 1,598.8 │ 1,890.6 │ 3,275.7 │   1.00x │
+└───────────────┴───────┴────────┴────────┴────────┴─────────┴─────────┴─────────┴─────────┘
+Concurrent point lookups: 100 tasks sharing the driver's pool of 100                        
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver        ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct │ async │ struct │ 54,479 │ 54,479 │ 1,747.6 │ 2,050.8 │ 3,540.6 │   1.00x │
+└───────────────┴───────┴────────┴────────┴────────┴─────────┴─────────┴─────────┴─────────┘
+2026-10-11 17:38:53,171 [INFO]: wrote                                 run.py:220
+/src/bench/results/20261011T173840Z.json and                                    
+/src/bench/results/20261011T173840Z.md                                          

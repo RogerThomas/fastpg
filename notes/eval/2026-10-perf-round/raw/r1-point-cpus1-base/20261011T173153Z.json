@@ -1,0 +1,40 @@
+{
+  "started_at": "2026-10-11T17:31:53.513243Z",
+  "python": "3.14.7",
+  "platform": "Linux-7.0.14-linuxkit-aarch64-with-glibc2.41",
+  "event_loop": "uvloop",
+  "plan": {
+    "dsn": "postgresql://fastpg:***@postgres:5432/fastpg",
+    "scenarios": [
+      "point"
+    ],
+    "duration_s": 5.0,
+    "iterations": null,
+    "warmup_s": 1.0,
+    "concurrency": 16,
+    "pool_size": 16,
+    "alloc_iterations": 200,
+    "seed": 42
+  },
+  "versions": {
+    "fastpg": "0.1.0",
+    "msgspec": "0.22.0",
+    "uvloop": "0.23.0"
+  },
+  "results": [
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "point",
+      "rows_per_op": 1,
+      "ops": 78637,
+      "seconds": 5.0,
+      "ops_per_s": 15727.3,
+      "rows_per_s": 15727.3,
+      "p50_us": 60.8,
+      "p90_us": 73.8,
+      "p99_us": 103.9
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+| config | rate | variant | fast p50 | fast p99 | fast p99.9 | slow p99 |
+|---|---:|---|---|---|---|---|
+| fastpg-pool x16 cap 8 | 5k | base | 444µs [415µs..489µs] | 1.2ms [0.8ms..2.8ms] | 3.0ms [1.6ms..5.8ms] | 22.0ms [21.3ms..24.3ms] |
+| fastpg-pool x16 cap 8 | 5k | h2 | 438µs [397µs..465µs] | 855µs [708µs..1044µs] | 1.9ms [1.7ms..2.0ms] | 38.7ms [38.5ms..39.4ms] |
+| fastpg-pool x16 cap 8 | 5k | h2r | 416µs [416µs..519µs] | 873µs [865µs..1048µs] | 1.7ms [1.6ms..1.7ms] | 21.5ms [21.5ms..22.0ms] |
+| fastpg-pool x16 cap 8 | 5k | router | 413µs [408µs..421µs] | 802µs [783µs..1179µs] | 1.3ms [1.2ms..2.4ms] | 22.5ms [21.6ms..24.0ms] |
+| fastpg-pool x16 cap 8 | 10k | base | 483µs [468µs..540µs] | 1.2ms [1.0ms..2.8ms] | 2.5ms [2.1ms..3.5ms] | 21.5ms [21.3ms..23.0ms] |
+| fastpg-pool x16 cap 8 | 10k | h2 | 457µs [449µs..515µs] | 1.0ms [0.9ms..2.1ms] | 2.3ms [1.4ms..13.1ms] | 31.6ms [27.4ms..33.3ms] |
+| fastpg-pool x16 cap 8 | 10k | h2r | 481µs [476µs..574µs] | 1.1ms [1.0ms..1.2ms] | 2.4ms [2.4ms..3.5ms] | 21.5ms [21.3ms..21.5ms] |
+| fastpg-pool x16 cap 8 | 10k | router | 500µs [480µs..567µs] | 1.3ms [1.0ms..48.4ms] | 2.9ms [2.0ms..103.0ms] | 21.2ms [21.1ms..110.9ms] |
+| fastpg-pool x16 cap 8 | 20k | base | 686µs [643µs..692µs] | 1.7ms [1.6ms..2.5ms] | 5.9ms [3.0ms..7.4ms] | 22.2ms [21.6ms..22.8ms] |
+| fastpg-pool x16 cap 8 | 20k | h2 | 597µs [561µs..618µs] | 1.3ms [1.2ms..1.8ms] | 2.8ms [2.5ms..3.4ms] | 21.5ms [21.3ms..22.1ms] |
+| fastpg-pool x16 cap 8 | 20k | h2r | 735µs [720µs..753µs] | 1.9ms [1.6ms..75.2ms] | 3.4ms [2.8ms..98.2ms] | 21.9ms [21.6ms..102.4ms] |
+| fastpg-pool x16 cap 8 | 20k | router | 680µs [635µs..807µs] | 1.5ms [1.4ms..1.8ms] | 3.1ms [2.5ms..3.5ms] | 21.7ms [21.4ms..21.8ms] |
+| fastpg-pool x8 cap 8 | 5k | base | 420µs [416µs..485µs] | 920µs [832µs..998µs] | 2.1ms [1.7ms..2.2ms] | 21.8ms [20.9ms..23.7ms] |
+| fastpg-pool x8 cap 8 | 5k | h2 | 409µs [397µs..472µs] | 700µs [686µs..885µs] | 1.5ms [1.0ms..1.5ms] | 38.1ms [36.9ms..41.8ms] |
+| fastpg-pool x8 cap 8 | 5k | h2r | 409µs [408µs..424µs] | 795µs [765µs..1079µs] | 1.3ms [1.2ms..5.5ms] | 23.9ms [22.9ms..23.9ms] |
+| fastpg-pool x8 cap 8 | 5k | router | 409µs [393µs..414µs] | 809µs [784µs..841µs] | 1.3ms [1.3ms..1.4ms] | 22.4ms [21.7ms..24.1ms] |
+| fastpg-pool x8 cap 8 | 10k | base | 511µs [496µs..525µs] | 2.5ms [1.4ms..76.1ms] | 20.2ms [9.5ms..98.8ms] | 23.0ms [21.6ms..96.4ms] |
+| fastpg-pool x8 cap 8 | 10k | h2 | 451µs [413µs..506µs] | 964µs [884µs..1013µs] | 9.2ms [9.1ms..10.1ms] | 29.7ms [29.7ms..34.3ms] |
+| fastpg-pool x8 cap 8 | 10k | h2r | 464µs [423µs..470µs] | 930µs [827µs..945µs] | 7.8ms [6.9ms..9.1ms] | 22.5ms [22.1ms..22.7ms] |
+| fastpg-pool x8 cap 8 | 10k | router | 466µs [435µs..467µs] | 950µs [943µs..1025µs] | 7.8ms [7.5ms..8.1ms] | 21.4ms [21.3ms..22.7ms] |
+| fastpg-pool x8 cap 8 | 20k | base | 610µs [595µs..715µs] | 20.8ms [20.5ms..21.7ms] | 33.1ms [33.1ms..35.9ms] | 42.1ms [42.0ms..43.1ms] |
+| fastpg-pool x8 cap 8 | 20k | h2 | 587µs [548µs..658µs] | 20.5ms [20.5ms..20.8ms] | 30.6ms [29.9ms..31.1ms] | 41.0ms [40.9ms..41.8ms] |
+| fastpg-pool x8 cap 8 | 20k | h2r | 713µs [603µs..742µs] | 21.4ms [20.6ms..21.9ms] | 30.5ms [30.4ms..33.4ms] | 41.5ms [40.7ms..43.8ms] |
+| fastpg-pool x8 cap 8 | 20k | router | 602µs [563µs..614µs] | 20.7ms [20.5ms..20.8ms] | 30.1ms [29.7ms..35.1ms] | 40.9ms [40.5ms..41.6ms] |

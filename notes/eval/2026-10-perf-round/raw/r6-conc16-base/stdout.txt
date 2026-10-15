@@ -1,0 +1,25 @@
+
+2026-10-11 17:50:41,200 [INFO]: 1 drivers x concurrent,               run.py:198
+concurrent-pinned on postgresql://fastpg:***@postgres:5432/fastpg               
+(event loop: uvloop)                                                            
+2026-10-11 17:50:41,214 [INFO]: fastpg-struct                     harness.py:488
+concurrent-pinned (x16)                                                         
+2026-10-11 17:50:47,331 [INFO]: fastpg-struct          concurrent harness.py:469
+(x16, pool 16)                                                                  
+2026-10-11 17:50:41 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Concurrent point lookups: 16 tasks, each pinned to its own connection                    
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver        ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct │ async │ struct │ 60,896 │ 60,896 │  195.3 │  389.6 │  828.8 │   1.00x │
+└───────────────┴───────┴────────┴────────┴────────┴────────┴────────┴────────┴─────────┘
+Concurrent point lookups: 16 tasks sharing the driver's pool of 16                       
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver        ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct │ async │ struct │ 61,108 │ 61,108 │  217.8 │  422.5 │  536.8 │   1.00x │
+└───────────────┴───────┴────────┴────────┴────────┴────────┴────────┴────────┴─────────┘
+2026-10-11 17:50:53,422 [INFO]: wrote                                 run.py:220
+/src/bench/results/20261011T175041Z.json and                                    
+/src/bench/results/20261011T175041Z.md                                          

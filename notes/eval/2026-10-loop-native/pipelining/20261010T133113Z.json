@@ -1,0 +1,96 @@
+{
+  "started_at": "2026-10-10T13:31:13.809212Z",
+  "python": "3.14.7",
+  "platform": "Linux-7.0.14-linuxkit-aarch64-with-glibc2.41",
+  "event_loop": "uvloop",
+  "plan": {
+    "dsn": "postgresql://fastpg:***@postgres:5432/fastpg",
+    "scenarios": [
+      "concurrent"
+    ],
+    "duration_s": 5.0,
+    "iterations": null,
+    "warmup_s": 1.0,
+    "concurrency": 100,
+    "alloc_iterations": 200,
+    "seed": 42
+  },
+  "versions": {
+    "asyncpg": "0.32.0",
+    "fastpg": "0.1.0",
+    "msgspec": "0.22.0",
+    "uvloop": "0.23.0"
+  },
+  "results": [
+    {
+      "driver": "asyncpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 118670,
+      "seconds": 5.002,
+      "ops_per_s": 23725.8,
+      "rows_per_s": 23725.8,
+      "p50_us": 4076.9,
+      "p90_us": 4723.6,
+      "p99_us": 5706.5
+    },
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 305529,
+      "seconds": 5.0,
+      "ops_per_s": 61102.6,
+      "rows_per_s": 61102.6,
+      "p50_us": 1514.2,
+      "p90_us": 2583.8,
+      "p99_us": 3221.8
+    },
+    {
+      "driver": "fastpg-pipelined",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 777928,
+      "seconds": 5.001,
+      "ops_per_s": 155567.3,
+      "rows_per_s": 155567.3,
+      "p50_us": 628.0,
+      "p90_us": 687.9,
+      "p99_us": 834.2
+    },
+    {
+      "driver": "fastpg-thread-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 355552,
+      "seconds": 5.001,
+      "ops_per_s": 71102.4,
+      "rows_per_s": 71102.4,
+      "p50_us": 1330.8,
+      "p90_us": 1870.4,
+      "p99_us": 2333.0
+    },
+    {
+      "driver": "fastpg-thread-pipelined",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 628171,
+      "seconds": 5.001,
+      "ops_per_s": 125612.4,
+      "rows_per_s": 125612.4,
+      "p50_us": 783.9,
+      "p90_us": 873.1,
+      "p99_us": 1066.0
+    }
+  ]
+}

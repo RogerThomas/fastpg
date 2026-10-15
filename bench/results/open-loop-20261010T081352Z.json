@@ -1,0 +1,34 @@
+[
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 1000,
+    "achieved_rps": 1054.5795841021945,
+    "requests": 1053,
+    "p50_us": 681.875,
+    "p90_us": 940.917,
+    "p99_us": 1185.333,
+    "p999_us": 1306.125,
+    "lag_p99_us": 1361.017,
+    "max_us": 1575.041,
+    "peak_inflight": 7,
+    "loop_busy_pct": 7.249116265563397,
+    "overloaded": false,
+    "errors": 0
+  },
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 3000,
+    "achieved_rps": 2986.6255310376123,
+    "requests": 2988,
+    "p50_us": 510.958,
+    "p90_us": 687.583,
+    "p99_us": 880.416,
+    "p999_us": 1013.0,
+    "lag_p99_us": 1095.524,
+    "max_us": 1101.958,
+    "peak_inflight": 13,
+    "loop_busy_pct": 15.732447301892089,
+    "overloaded": false,
+    "errors": 0
+  }
+]

@@ -1,0 +1,92 @@
+2922 Thread_10889950   DispatchQueue_1: com.apple.main-thread  (serial)
+  2922 start
+    2922 main
+      2922 pymain_main.llvm.13388862887264858933
+        2911 Py_RunMain
+          2911 pymain_run_file
+            2911 pymain_run_file_obj
+              2911 _PyRun_AnyFile
+                2911 _PyRun_SimpleFile
+                  2911 _PyRun_File
+                    2911 run_mod.llvm.2516320461367693794
+                      2911 PyEval_EvalCode
+                        2911 _PyEval_Vector
+                          2911 _TAIL_CALL_CALL.llvm.17169884233875524264
+                            2911 __pyx_pw_6uvloop_4loop_4Loop_45run_until_complete
+                              2911 PyObject_VectorcallMethod
+                                2911 __pyx_pw_6uvloop_4loop_4Loop_25run_forever
+                                  2911 __pyx_f_6uvloop_4loop_4Loop__run
+                                    2911 __pyx_f_6uvloop_4loop_4Loop__Loop__run
+                                      2450 uv_run
+                                        2450 uv__run_idle
+                                          2447 __pyx_f_6uvloop_4loop_cb_idle_callback
+                                            2446 __pyx_f_6uvloop_4loop_6Handle__run
+                                              2437 __pyx_f_6uvloop_4loop_4Loop__on_idle
+                                                2436 __pyx_f_6uvloop_4loop_6Handle__run
+                                                  2425 task_wakeup_lock_held
+                                                    2425 task_step
+                                                      2425 task_step_impl
+                                                        2424 gen_send_ex2
+                                                          2424 _PyEval_EvalFrameDefault
+                                                            2375 _TAIL_CALL_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS.llvm.17169884233875524264
+                                                              2375 pyo3::impl_::trampoline::fastcall_cfunction_with_keywords
+                                                                2375 pyo3::impl_::trampoline::trampoline
+                                                                  2374 _native::bulk::Bulk::__pymethod_feed__
+                                                                    1993 _native::bulk::Bulk::feed
+                                                                      1895 _native::bulk::Bulk::encode_copy::_{{closure}}
+                                                                        1287 _native::bulk::ColumnCodec::encode
+                                                                          411 _native::params::convert
+                                                                            367 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::call_method0
+                                                                              263 PyObject_VectorcallMethod
+                                                                                252 call_tzinfo_method
+                                                                              87 PyObject_VectorcallMethod
+                                                                                48 _PyObject_GetMethodStackRef
+                                                                                26 _PyObject_GetMethodStackRef
+                                                                            38 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::call_method0
+                                                                          165 _native::params::convert
+                                                                            164 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::str
+                                                                              135 PyObject_Str
+                                                                                52 dec_str
+                                                                                37 dec_str
+                                                                          152 _native::params::convert
+                                                                            112 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::getattr
+                                                                              109 PyObject_GetAttr
+                                                                                47 PyObject_GenericGetAttr
+                                                                                27 PyObject_GenericGetAttr
+                                                                            31 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::getattr
+                                                                          142 _native::params::convert
+                                                                            135 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::is_instance
+                                                                              53 object_recursive_isinstance.llvm.13721270631881047205
+                                                                              27 object_recursive_isinstance.llvm.13721270631881047205
+                                                                                27 _Py_dict_lookup_threadsafe_stackref
+                                                                          104 _native::params::convert
+                                                                          38 _native::params::convert
+                                                                          37 _native::params::convert
+                                                                          31 _native::params::convert
+                                                                            25 _<pyo3::instance::Bound<pyo3::types::string::PyString> as pyo3::types::string::PyStringMethods>::to_str
+                                                                          25 _native::params::convert
+                                                                        353 _native::bulk::ColumnCodec::encode
+                                                                          324 _<_native::params::Indexed as postgres_types::ToSql>::to_sql
+                                                                            108 _native::params::encode_numeric
+                                                                              80 core::ptr::drop_in_place<alloc::vec::splice::Splice<core::iter::sources::repeat_n::RepeatN<u8>>>
+                                                                                75 alloc::raw_vec::RawVecInner<A>::reserve::do_reserve_and_handle
+                                                                            79 _native::params::encode_numeric
+                                                                            31 _native::params::encode_numeric
+                                                                          29 _<_native::params::Indexed as postgres_types::ToSql>::to_sql
+                                                                        96 _native::bulk::ColumnCodec::encode
+                                                                        76 _native::bulk::ColumnCodec::encode
+                                                                          51 _<bytes::bytes_mut::BytesMut as bytes::buf::buf_mut::BufMut>::put_slice
+                                                                            45 _platform_memmove
+                                                                        30 _native::bulk::ColumnCodec::encode
+                                                                      81 _native::bulk::Bulk::encode_copy::_{{closure}}
+                                                                    301 _native::bulk::Bulk::feed
+                                                                      300 _native::connection::Shared::pump
+                                                                        286 _native::connection::Connection::attach::_{{closure}}
+                                                                          285 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                                            285 _<_native::net::EofWatch<Io> as std::io::Write>::write
+                                                                              285 _<_native::event_loop::LoopSocket as std::io::Write>::write
+                                                                                285 __sendto
+                                                                    70 _native::bulk::Bulk::feed
+                                      460 uv_run
+                                        450 uv__io_poll
+                                          450 kevent

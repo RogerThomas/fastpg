@@ -1,0 +1,20 @@
+--- run 1
+
+conn                   n=300 median   6.33  mean   6.50  p25   5.80  p75   7.03  min   5.22
+fresh conn             n=300 median   6.42  mean   6.63  p25   5.89  p75   7.23  min   5.52
+pool 4/4               n=300 median   6.41  mean   6.66  p25   5.93  p75   7.28  min   5.43
+pool 1/1               n=300 median   6.45  mean   6.61  p25   5.97  p75   7.10  min   5.29
+fresh conn - conn      paired median  +0.07 ms, slower in 155/300
+pool 4/4 - conn        paired median  +0.06 ms, slower in 157/300
+pool 1/1 - conn        paired median  +0.12 ms, slower in 164/300
+pool 4/4 stats: PoolStats(size=4, opening=0, idle=4, acquired=0, in_flight=0, waiting=0, waiting_acquire=0)
+--- run 2
+
+conn                   n=300 median   6.33  mean   6.49  p25   5.77  p75   7.10  min   5.18
+fresh conn             n=300 median   6.61  mean   6.81  p25   5.93  p75   7.58  min   5.57
+pool 4/4               n=300 median   6.37  mean   6.62  p25   5.91  p75   7.20  min   5.55
+pool 1/1               n=300 median   6.49  mean   6.67  p25   5.93  p75   7.34  min   5.57
+fresh conn - conn      paired median  +0.27 ms, slower in 173/300
+pool 4/4 - conn        paired median  +0.11 ms, slower in 161/300
+pool 1/1 - conn        paired median  +0.11 ms, slower in 162/300
+pool 4/4 stats: PoolStats(size=4, opening=0, idle=4, acquired=0, in_flight=0, waiting=0, waiting_acquire=0)

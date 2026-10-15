@@ -1,0 +1,68 @@
+[
+  {
+    "config": "fastpg-pool x16 cap 8",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4986.982068090941,
+    "fast_p50_us": 55.458,
+    "fast_p99_us": 215.584,
+    "fast_p999_us": 349.792,
+    "slow_p50_us": 21164.375,
+    "slow_p99_us": 25119.291
+  },
+  {
+    "config": "fastpg-pool x16 cap 8",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9981.709128269706,
+    "fast_p50_us": 44.667,
+    "fast_p99_us": 215.834,
+    "fast_p999_us": 371.75,
+    "slow_p50_us": 20800.958,
+    "slow_p99_us": 25078.5
+  },
+  {
+    "config": "fastpg-pool x16 cap 8",
+    "rate": 20000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 19928.50147280427,
+    "fast_p50_us": 44.667,
+    "fast_p99_us": 154.167,
+    "fast_p999_us": 1537.625,
+    "slow_p50_us": 20294.084,
+    "slow_p99_us": 25114.458
+  },
+  {
+    "config": "fastpg-pool x100 cap 8",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4985.339629257953,
+    "fast_p50_us": 50.0,
+    "fast_p99_us": 194.791,
+    "fast_p999_us": 290.292,
+    "slow_p50_us": 21548.958,
+    "slow_p99_us": 25131.042
+  },
+  {
+    "config": "fastpg-pool x100 cap 8",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9978.717246359362,
+    "fast_p50_us": 48.875,
+    "fast_p99_us": 244.166,
+    "fast_p999_us": 479.083,
+    "slow_p50_us": 21078.583,
+    "slow_p99_us": 25092.958
+  },
+  {
+    "config": "fastpg-pool x100 cap 8",
+    "rate": 20000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 19928.468548207005,
+    "fast_p50_us": 49.0,
+    "fast_p99_us": 170.667,
+    "fast_p999_us": 1739.375,
+    "slow_p50_us": 20379.333,
+    "slow_p99_us": 25101.417
+  }
+]

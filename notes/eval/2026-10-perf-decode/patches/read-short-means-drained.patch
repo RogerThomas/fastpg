@@ -1,0 +1,49 @@
+diff --git a/native/src/event_loop.rs b/native/src/event_loop.rs
+index ed1785f..ad32249 100644
+--- a/native/src/event_loop.rs
++++ b/native/src/event_loop.rs
+@@ -232,6 +232,8 @@ enum Sock {
+ pub struct LoopSocket {
+     sock: Sock,
+     state: Arc<IoState>,
++    /// The last read returned less than asked: the socket was drained.
++    drained: bool,
+ }
+ 
+ impl LoopSocket {
+@@ -249,20 +251,30 @@ impl LoopSocket {
+         let mut flags = state.lock();
+         flags.writable = true;
+         drop(flags);
+-        Self { sock, state }
++        Self {
++            sock,
++            state,
++            drained: false,
++        }
+     }
+ }
+ 
+ impl Read for LoopSocket {
+     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        if std::mem::take(&mut self.drained) {
++            self.state.lock().readable = false;
++            return Err(io::ErrorKind::WouldBlock.into());
++        }
+         let result = match &mut self.sock {
+             Sock::Tcp(s) => s.read(buf),
+             Sock::Unix(s) => s.read(buf),
+         };
+-        if let Err(e) = &result
+-            && e.kind() == io::ErrorKind::WouldBlock
+-        {
+-            self.state.lock().readable = false;
++        match &result {
++            Ok(n) if *n > 0 && *n < buf.len() => self.drained = true,
++            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                self.state.lock().readable = false;
++            }
++            _ => {}
+         }
+         result
+     }

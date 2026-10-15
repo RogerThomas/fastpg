@@ -1,0 +1,5 @@
+--- run 1
+
+asyncpg, idle 0.00s   median   35.5 ms  (+  0.0)  min   31.7
+asyncpg, idle 0.50s   median   48.7 ms  (+ 13.3)  min   43.4
+asyncpg, idle 1.00s   median   76.6 ms  (+ 41.2)  min   61.5

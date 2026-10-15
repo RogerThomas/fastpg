@@ -1,0 +1,10 @@
+
+conn 0 peer0: fetch median  93.96 (p25  75.55 p75 102.19)  SELECT 1 median  17.68 ms
+conn 1 peer0: fetch median  72.85 (p25  63.92 p75  84.62)  SELECT 1 median  19.42 ms
+conn 2 peer0: fetch median  84.79 (p25  73.76 p75  91.16)  SELECT 1 median  17.97 ms
+conn 3 peer0: fetch median  86.58 (p25  67.35 p75  93.88)  SELECT 1 median  19.30 ms
+conn 4 peer0: fetch median  65.80 (p25  55.06 p75  89.58)  SELECT 1 median  16.31 ms
+conn 5 peer0: fetch median  78.68 (p25  65.19 p75  94.36)  SELECT 1 median  17.57 ms
+conn 6 peer0: fetch median  83.32 (p25  63.49 p75  94.36)  SELECT 1 median  18.35 ms
+conn 7 peer0: fetch median  77.80 (p25  60.58 p75  89.00)  SELECT 1 median  17.20 ms
+spread of per-connection fetch medians: 65.80..93.96 ms

@@ -1,0 +1,154 @@
+
+== w16: cpu_us
+        base: median      7.251  min-max     7.075-    7.408  n=8
+     base-aa: median      7.272  min-max     7.203-    7.422  n=8  | paired vs base: median   +0.3%  min-max   -0.3..  +2.8%
+    mimalloc: median      7.114  min-max     6.795-    7.295  n=8  | paired vs base: median   -2.2%  min-max   -4.0..  -0.3%
+       abort: median      7.181  min-max     7.036-    7.470  n=8  | paired vs base: median   -1.1%  min-max   -2.6..  +3.2%
+         pgo: median      7.100  min-max     6.994-    7.164  n=8  | paired vs base: median   -2.2%  min-max   -4.1..  +1.3%
+
+== w16: rate
+        base: median 137827.999  min-max 134760.692-141185.509  n=8
+     base-aa: median 137363.634  min-max 133328.683-138736.656  n=8  | paired vs base: median   -0.5%  min-max   -2.8..  +0.3%
+    mimalloc: median 140413.757  min-max 136400.464-146834.072  n=8  | paired vs base: median   +2.2%  min-max   +0.3..  +4.0%
+       abort: median 138345.447  min-max 133109.000-142018.916  n=8  | paired vs base: median   +1.1%  min-max   -3.6..  +2.7%
+         pgo: median 140453.494  min-max 139327.706-142851.820  n=8  | paired vs base: median   +2.3%  min-max   -1.3..  +4.2%
+
+== w16: p50_us
+        base: median     99.917  min-max    98.542-  101.417  n=8
+     base-aa: median    100.104  min-max    98.958-  101.250  n=8  | paired vs base: median   +0.2%  min-max   -0.6..  +0.7%
+    mimalloc: median     97.333  min-max    95.542-   99.541  n=8  | paired vs base: median   -2.6%  min-max   -3.4..  -1.3%
+       abort: median     98.250  min-max    96.709-  101.833  n=8  | paired vs base: median   -1.5%  min-max   -3.2..  +1.6%
+         pgo: median     96.937  min-max    95.500-   98.458  n=8  | paired vs base: median   -2.9%  min-max   -4.5..  -1.0%
+
+== w16: p99_us
+        base: median    216.583  min-max   214.875-  221.709  n=8
+     base-aa: median    217.021  min-max   214.792-  233.000  n=8  | paired vs base: median   +0.0%  min-max   -1.4..  +5.1%
+    mimalloc: median    212.730  min-max   206.459-  221.542  n=8  | paired vs base: median   -2.2%  min-max   -3.9..  +2.2%
+       abort: median    216.146  min-max   208.958-  262.625  n=8  | paired vs base: median   -0.0%  min-max   -3.2.. +19.4%
+         pgo: median    211.521  min-max   207.875-  217.250  n=8  | paired vs base: median   -2.6%  min-max   -4.2..  -0.8%
+
+== w128: cpu_us
+        base: median      3.664  min-max     3.606-    3.799  n=8
+     base-aa: median      3.661  min-max     3.593-    3.793  n=8  | paired vs base: median   -0.1%  min-max   -4.0..  +3.5%
+    mimalloc: median      3.591  min-max     3.536-    3.718  n=8  | paired vs base: median   -1.6%  min-max   -6.0..  +0.9%
+       abort: median      3.532  min-max     3.458-    3.573  n=8  | paired vs base: median   -3.4%  min-max   -8.3..  -2.3%
+         pgo: median      3.584  min-max     3.481-    3.650  n=8  | paired vs base: median   -2.7%  min-max   -6.6..  +0.6%
+
+== w128: rate
+        base: median 272667.918  min-max 263057.079-277179.586  n=8
+     base-aa: median 272781.855  min-max 263196.350-278192.084  n=8  | paired vs base: median   +0.2%  min-max   -3.4..  +4.2%
+    mimalloc: median 278235.088  min-max 268704.552-282643.096  n=8  | paired vs base: median   +1.6%  min-max   -0.9..  +6.6%
+       abort: median 282948.277  min-max 279243.551-289058.308  n=8  | paired vs base: median   +3.5%  min-max   +2.3..  +9.5%
+         pgo: median 278605.408  min-max 273431.816-287077.463  n=8  | paired vs base: median   +2.9%  min-max   -0.7..  +7.3%
+
+== w128: p50_us
+        base: median    430.875  min-max   424.500-  457.000  n=8
+     base-aa: median    430.541  min-max   422.541-  448.166  n=8  | paired vs base: median   -0.4%  min-max   -4.2..  +3.9%
+    mimalloc: median    422.167  min-max   416.416-  440.042  n=8  | paired vs base: median   -2.1%  min-max   -6.5..  +1.0%
+       abort: median    416.063  min-max   408.875-  426.041  n=8  | paired vs base: median   -3.2%  min-max   -8.0..  -1.9%
+         pgo: median    422.396  min-max   410.500-  426.333  n=8  | paired vs base: median   -2.5%  min-max   -7.3..  +0.4%
+
+== w128: p99_us
+        base: median    926.355  min-max   898.167-  995.125  n=8
+     base-aa: median    928.980  min-max   907.458-  963.125  n=8  | paired vs base: median   +0.1%  min-max   -4.3..  +4.0%
+    mimalloc: median    913.980  min-max   896.500-  946.750  n=8  | paired vs base: median   -0.8%  min-max   -6.4..  +2.0%
+       abort: median    895.417  min-max   860.416-  900.833  n=8  | paired vs base: median   -3.7%  min-max  -13.5..  -1.6%
+         pgo: median    911.416  min-max   883.334-  932.125  n=8  | paired vs base: median   -2.0%  min-max   -7.1..  +0.8%
+
+== fetch: loop_ns_1000
+        base: median    645.292  min-max   627.562-  668.479  n=8
+     base-aa: median    639.771  min-max   635.291-  660.396  n=8  | paired vs base: median   +0.0%  min-max   -3.5..  +1.5%
+    mimalloc: median    631.594  min-max   617.167-  680.917  n=8  | paired vs base: median   -0.7%  min-max   -7.7..  +5.6%
+       abort: median    621.969  min-max   612.812-  679.021  n=8  | paired vs base: median   -3.4%  min-max   -7.7..  +5.3%
+         pgo: median    603.365  min-max   592.125-  612.833  n=8  | paired vs base: median   -6.7%  min-max  -11.4..  -2.3%
+
+== fetch: cpu_ns_1000
+        base: median    646.500  min-max   628.000-  669.000  n=8
+     base-aa: median    640.500  min-max   636.000-  661.000  n=8  | paired vs base: median   +0.0%  min-max   -3.4..  +1.4%
+    mimalloc: median    632.500  min-max   618.000-  682.000  n=8  | paired vs base: median   -0.7%  min-max   -7.6..  +5.6%
+       abort: median    622.500  min-max   614.000-  680.000  n=8  | paired vs base: median   -3.4%  min-max   -7.8..  +5.3%
+         pgo: median    604.500  min-max   593.000-  614.000  n=8  | paired vs base: median   -6.7%  min-max  -11.4..  -2.2%
+
+== fetch: loop_ns_10000
+        base: median    711.926  min-max   695.973-  750.735  n=8
+     base-aa: median    719.552  min-max   691.335-  734.929  n=8  | paired vs base: median   +0.9%  min-max   -3.2..  +4.9%
+    mimalloc: median    706.941  min-max   686.146-  721.085  n=8  | paired vs base: median   -0.1%  min-max   -5.7..  +1.3%
+       abort: median    680.276  min-max   660.610-  710.194  n=8  | paired vs base: median   -3.3%  min-max   -9.9..  -0.3%
+         pgo: median    673.526  min-max   660.871-  694.369  n=8  | paired vs base: median   -5.0%  min-max   -8.1..  -2.9%
+
+== fetch: cpu_ns_10000
+        base: median    716.200  min-max   699.300-  756.300  n=8
+     base-aa: median    724.275  min-max   695.100-  739.050  n=8  | paired vs base: median   +0.9%  min-max   -3.2..  +4.9%
+    mimalloc: median    711.725  min-max   689.650-  725.950  n=8  | paired vs base: median   -0.1%  min-max   -5.8..  +1.4%
+       abort: median    684.600  min-max   664.650-  716.600  n=8  | paired vs base: median   -3.3%  min-max  -10.0..  +0.1%
+         pgo: median    677.075  min-max   664.300-  698.900  n=8  | paired vs base: median   -5.0%  min-max   -8.1..  -2.9%
+
+== writes: fastpg execute_many (tuples) 10000
+        base: median    582.977  min-max   567.225-  613.487  n=8
+     base-aa: median    584.892  min-max   562.425-  602.037  n=8  | paired vs base: median   -1.3%  min-max   -3.4..  +1.9%
+    mimalloc: median    587.404  min-max   562.650-  648.633  n=8  | paired vs base: median   -0.0%  min-max   -3.2..  +9.1%
+       abort: median    575.969  min-max   564.846-  591.575  n=8  | paired vs base: median   -0.5%  min-max   -5.4..  +1.5%
+         pgo: median    464.644  min-max   452.808-  487.829  n=8  | paired vs base: median  -20.5%  min-max  -23.8.. -15.8%
+
+== writes: fastpg execute_many (tuples) 100000
+        base: median    560.578  min-max   541.190-  680.100  n=8
+     base-aa: median    550.818  min-max   536.700-  650.231  n=8  | paired vs base: median   -1.6%  min-max  -14.1.. +13.0%
+    mimalloc: median    545.824  min-max   528.943-  591.038  n=8  | paired vs base: median   -1.5%  min-max  -22.2..  +9.1%
+       abort: median    539.669  min-max   537.368-  625.624  n=8  | paired vs base: median   -2.5%  min-max  -20.8.. +15.5%
+         pgo: median    448.611  min-max   442.652-  497.137  n=8  | paired vs base: median  -18.3%  min-max  -34.7..  -9.2%
+
+== writes: fastpg copy_in (Structs) 10000
+        base: median    343.467  min-max   334.725-  359.758  n=8
+     base-aa: median    351.381  min-max   337.446-  355.637  n=8  | paired vs base: median   +1.1%  min-max   -2.3..  +5.8%
+    mimalloc: median    385.148  min-max   370.158-  401.367  n=8  | paired vs base: median  +13.3%  min-max   +6.3.. +14.8%
+       abort: median    343.565  min-max   335.038-  360.950  n=8  | paired vs base: median   -0.8%  min-max   -4.7..  +7.1%
+         pgo: median    266.146  min-max   254.150-  284.033  n=8  | paired vs base: median  -24.3%  min-max  -26.4.. -15.7%
+
+== writes: fastpg copy_in (Structs) 100000
+        base: median    279.762  min-max   271.448-  288.698  n=8
+     base-aa: median    287.370  min-max   281.763-  297.707  n=8  | paired vs base: median   +2.2%  min-max   -0.2..  +6.7%
+    mimalloc: median    295.714  min-max   283.934-  307.387  n=8  | paired vs base: median   +4.3%  min-max   +1.2.. +10.0%
+       abort: median    284.437  min-max   274.069-  292.793  n=8  | paired vs base: median   +0.6%  min-max   -2.4..  +6.3%
+         pgo: median    207.041  min-max   187.087-  228.364  n=8  | paired vs base: median  -26.0%  min-max  -35.2.. -20.9%
+
+== writes: fastpg copy_in (tuples) 10000
+        base: median    349.365  min-max   343.508-  356.029  n=8
+     base-aa: median    352.131  min-max   339.408-  357.437  n=8  | paired vs base: median   +0.4%  min-max   -3.7..  +3.4%
+    mimalloc: median    360.869  min-max   348.929-  368.312  n=8  | paired vs base: median   +3.2%  min-max   -1.0..  +5.9%
+       abort: median    348.065  min-max   340.779-  350.746  n=8  | paired vs base: median   -0.5%  min-max   -3.8..  +1.4%
+         pgo: median    282.967  min-max   262.567-  288.446  n=8  | paired vs base: median  -19.0%  min-max  -25.5.. -16.0%
+
+== writes: fastpg copy_in (tuples) 100000
+        base: median    287.814  min-max   273.160-  299.665  n=8
+     base-aa: median    289.615  min-max   280.087-  307.364  n=8  | paired vs base: median   +0.5%  min-max   -4.4.. +12.5%
+    mimalloc: median    293.935  min-max   286.518-  309.946  n=8  | paired vs base: median   +1.3%  min-max   -1.3.. +10.2%
+       abort: median    285.971  min-max   272.514-  292.773  n=8  | paired vs base: median   -1.4%  min-max   -4.4..  +3.0%
+         pgo: median    208.333  min-max   196.233-  224.521  n=8  | paired vs base: median  -27.7%  min-max  -30.4.. -22.7%
+
+== w16: user_us
+         pgo: median      4.626  min-max     4.492-    4.734  n=7  | paired vs base: median   -5.5%  min-max   -7.6..  -3.6%
+       abort: median      4.693  min-max     4.476-    4.743  n=7  | paired vs base: median   -4.6%  min-max   -5.4..  -3.0%
+    mimalloc: median      4.628  min-max     4.367-    4.698  n=7  | paired vs base: median   -5.1%  min-max   -8.9..  -4.8%
+     base-aa: median      4.918  min-max     4.826-    5.038  n=7  | paired vs base: median   +2.0%  min-max   -0.9..  +3.2%
+        base: median      4.888  min-max     4.691-    4.938  n=7
+
+== w16: sys_us
+         pgo: median      2.485  min-max     2.350-    2.643  n=7  | paired vs base: median   +2.3%  min-max   -1.4.. +10.9%
+       abort: median      2.544  min-max     2.347-    2.759  n=7  | paired vs base: median   +7.0%  min-max   -1.9.. +16.2%
+    mimalloc: median      2.477  min-max     2.386-    2.711  n=7  | paired vs base: median   +3.9%  min-max   +1.9.. +15.8%
+     base-aa: median      2.332  min-max     2.262-    2.596  n=7  | paired vs base: median   -0.4%  min-max   -3.6..  +2.3%
+        base: median      2.374  min-max     2.325-    2.539  n=7
+
+== w128: user_us
+         pgo: median      3.305  min-max     3.267-    3.334  n=7  | paired vs base: median   -2.5%  min-max   -5.1..  -1.2%
+       abort: median      3.265  min-max     3.219-    3.289  n=7  | paired vs base: median   -3.3%  min-max   -5.8..  -2.4%
+    mimalloc: median      3.308  min-max     3.288-    3.401  n=7  | paired vs base: median   -2.3%  min-max   -3.4..  +0.7%
+     base-aa: median      3.402  min-max     3.348-    3.442  n=7  | paired vs base: median   -0.1%  min-max   -1.7..  +2.0%
+        base: median      3.396  min-max     3.344-    3.481  n=7
+
+== w128: sys_us
+         pgo: median      0.293  min-max     0.247-    0.319  n=7  | paired vs base: median   -7.5%  min-max  -27.0.. +25.4%
+       abort: median      0.268  min-max     0.239-    0.303  n=7  | paired vs base: median  -10.2%  min-max  -32.9..  +5.7%
+    mimalloc: median      0.271  min-max     0.248-    0.354  n=7  | paired vs base: median   -0.6%  min-max  -29.4.. +10.7%
+     base-aa: median      0.284  min-max     0.244-    0.351  n=7  | paired vs base: median   -2.5%  min-max  -25.5.. +21.8%
+        base: median      0.291  min-max     0.234-    0.369  n=7

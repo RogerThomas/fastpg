@@ -1,0 +1,19 @@
+execute_many / insert_many after one Sync per chunk (78ef8e3), people-shaped table (not
+TEMP), median of 5 interleaved rounds, macOS host.
+
+    FASTPG_DSN=postgresql://fastpg:fastpg@localhost:55432/fastpg uv run yeet ./bench/writes.py -m 'fastpg execute*' -m 'fastpg insert_many (tuples)' -m 'asyncpg exec*' -r 1000 -r 10000 -r 100000 --repeat 5
+│ fastpg execute_many (tuples) │   1,000 │ 156,730 │  59,170-169,995 │     6.4 │         750 │            0.8 │
+│ fastpg execute_many (tuples) │  10,000 │ 208,367 │ 183,533-255,565 │    48.0 │         581 │            5.8 │
+│ fastpg execute_many (tuples) │ 100,000 │ 266,211 │ 260,873-272,032 │   375.6 │         559 │           55.9 │
+│ fastpg insert_many (tuples)  │   1,000 │ 207,814 │ 159,088-212,906 │     4.8 │         723 │            0.7 │
+│ fastpg insert_many (tuples)  │  10,000 │ 319,708 │ 256,570-433,727 │    31.3 │         425 │            4.2 │
+│ fastpg insert_many (tuples)  │ 100,000 │ 477,837 │ 413,165-491,552 │   209.3 │         394 │           39.4 │
+│ asyncpg executemany          │   1,000 │ 149,425 │ 127,879-152,966 │     6.7 │       2,178 │            2.2 │
+│ asyncpg executemany          │  10,000 │ 207,875 │ 199,330-240,649 │    48.1 │       2,003 │           20.0 │
+│ asyncpg executemany          │ 100,000 │ 271,489 │ 265,069-273,521 │   368.3 │       2,037 │          203.7 │
+(columns: method, rows, rows/s median, min-max, wall ms, loop ns/row, process CPU ms)
+
+Throwaway experiment before the tap existed (exp_batch.diff: one-way binds, wrong counts),
+FASTPG_EXP_BATCH=1 vs per-row Sync, median of 3:
+fastpg execute_many 100k: per-row Sync  92,213 rows/s, 7,878 ns/row
+                          one Sync/chunk 254,788 rows/s,   833 ns/row  (asyncpg 253,601, 2,080)

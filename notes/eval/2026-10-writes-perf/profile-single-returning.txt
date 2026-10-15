@@ -1,0 +1,60 @@
+995 Thread_11001760   DispatchQueue_1: com.apple.main-thread  (serial)
+  995 start
+    995 main
+      995 pymain_main.llvm.13388862887264858933
+        982 Py_RunMain
+          982 pymain_run_file
+            982 pymain_run_file_obj
+              982 _PyRun_AnyFile
+                982 _PyRun_SimpleFile
+                  982 _PyRun_File
+                    982 run_mod.llvm.2516320461367693794
+                      982 PyEval_EvalCode
+                        982 _PyEval_Vector
+                          982 _TAIL_CALL_CALL.llvm.17169884233875524264
+                            982 __pyx_pw_6uvloop_4loop_4Loop_45run_until_complete
+                              982 PyObject_VectorcallMethod
+                                982 __pyx_pw_6uvloop_4loop_4Loop_25run_forever
+                                  982 __pyx_f_6uvloop_4loop_4Loop__run
+                                    982 __pyx_f_6uvloop_4loop_4Loop__Loop__run
+                                      869 uv_run
+                                        806 uv__io_poll
+                                          806 kevent
+                                        61 uv__io_poll
+                                          59 __pyx_f_6uvloop_4loop___on_uvpoll_event
+                                            57 __pyx_f_6uvloop_4loop_6Handle__run
+                                              57 __Pyx_PyObject_FastCallDict
+                                                57 pyo3::impl_::trampoline::noargs
+                                                  55 pyo3::impl_::trampoline::trampoline
+                                                    55 _native::connection::Connection::__pymethod_on_readable__
+                                                      45 _native::connection::Shared::pump
+                                                        40 _native::connection::Connection::attach::_{{closure}}
+                                                          38 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                            37 _<_native::net::EofWatch<Io> as std::io::Read>::read
+                                                              37 _<_native::event_loop::LoopSocket as std::io::Read>::read
+                                                                35 __recvfrom
+                                      112 uv_run
+                                        112 uv__run_idle
+                                          112 __pyx_f_6uvloop_4loop_cb_idle_callback
+                                            111 __pyx_f_6uvloop_4loop_6Handle__run
+                                              107 __pyx_f_6uvloop_4loop_4Loop__on_idle
+                                                104 __pyx_f_6uvloop_4loop_6Handle__run
+                                                  104 task_wakeup_lock_held
+                                                    104 task_step
+                                                      103 task_step_impl
+                                                        103 gen_send_ex2
+                                                          102 _PyEval_EvalFrameDefault
+                                                            58 _TAIL_CALL_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS.llvm.17169884233875524264
+                                                              58 pyo3::impl_::trampoline::fastcall_cfunction_with_keywords
+                                                                57 pyo3::impl_::trampoline::trampoline
+                                                                  57 _native::connection::Connection::__pymethod_fetch__
+                                                                    52 _native::connection::Connection::submit
+                                                                      52 _native::connection::Shared::pump
+                                                                        49 _native::connection::Connection::attach::_{{closure}}
+                                                                          47 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                                            47 _<_native::net::EofWatch<Io> as std::io::Write>::write
+                                                                              47 _<_native::event_loop::LoopSocket as std::io::Write>::write
+                                                                                47 __sendto
+                                                            28 _TAIL_CALL_RETURN_VALUE.llvm.17169884233875524264
+                                                              27 _PyFrame_ClearExceptCode
+                                                                26 list_dealloc

@@ -1,0 +1,5 @@
+target     rows variant                  n ns/row med           IQR       min-max  rows/s med gc ns/row vs first
+tuple      1000 structgc                 7        760    753-762       753-771        528,701        84    +0.0%
+tuple      1000 tuplegc                  7        683    675-687       672-688        550,417         6   -10.1%
+tuple     10000 structgc                 7        624    620-631       607-634      1,113,999        64    +0.0%
+tuple     10000 tuplegc                  7        575    572-577       568-580      1,194,821         8    -7.9%

@@ -1,0 +1,124 @@
+# Reproducible PostgreSQL for tests and benchmarks.
+# Data lives on tmpfs: every `docker compose up` starts from the same schema + seed.
+name: fastpg
+
+services:
+  postgres:
+    # Latest stable PostgreSQL (19 is beta-only as of 2026-10). glibc (Debian) image rather
+    # than Alpine/musl so the server is never the slow part of a client benchmark.
+    image: postgres:18.6-trixie
+    environment:
+      POSTGRES_USER: fastpg
+      POSTGRES_PASSWORD: fastpg
+      POSTGRES_DB: fastpg
+    ports:
+      - "127.0.0.1:55432:5432"
+    # Sized so the server is not the bottleneck: the whole dataset (~30 MB) lives in
+    # shared_buffers, plenty of connections/backends, no resource caps on the container.
+    shm_size: 2gb
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    command:
+      - postgres
+      - -c
+      - max_connections=1000
+      - -c
+      - superuser_reserved_connections=5
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=6GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - max_worker_processes=16
+      - -c
+      - max_parallel_workers=8
+      # JIT compilation adds multi-ms jitter to some plans; irrelevant work for these queries.
+      - -c
+      - jit=off
+      # Durability is irrelevant for a throwaway benchmark/test database.
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
+      - -c
+      - max_wal_size=4GB
+    tmpfs:
+      - /var/lib/postgresql:size=4g
+    volumes:
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP check: the init-time server only listens on the unix socket, so this
+      # only passes once schema + seed are loaded.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U fastpg -d fastpg"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  # TLS-only PostgreSQL for tests/test_tls.py (plaintext TCP connections are rejected). The
+  # first start generates a throwaway CA plus server and client certificates into
+  # docker/tls/certs (gitignored). Test with
+  #   FASTPG_TLS_DSN=postgresql://fastpg:fastpg@localhost:55433/fastpg
+  #   FASTPG_TLS_CA=docker/tls/certs/ca.crt
+  postgres-tls:
+    profiles: ["tls"]
+    image: postgres:18.6-trixie
+    environment:
+      POSTGRES_USER: fastpg
+      POSTGRES_PASSWORD: fastpg
+      POSTGRES_DB: fastpg
+    ports:
+      - "127.0.0.1:55433:5432"
+    entrypoint: ["/tls/entrypoint.sh"]
+    tmpfs:
+      - /var/lib/postgresql:size=1g
+    volumes:
+      - ./docker/tls:/tls:ro
+      - ./docker/tls/initdb:/docker-entrypoint-initdb.d:ro
+      - ./docker/tls/certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U fastpg -d fastpg"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  # Builds fastpg on Linux and runs the Rust + Python test suites against `postgres`.
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    environment:
+      FASTPG_DSN: postgresql://fastpg:fastpg@postgres:5432/fastpg
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Runs the benchmark suite on Linux next to `postgres` (container-to-container network),
+  # avoiding Docker Desktop's macOS port-forwarding hop that dominates point-query latency.
+  # Results land in ./bench/results. Extra args go to bench/run.py.
+  bench:
+    profiles: ["bench"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    environment:
+      FASTPG_DSN: postgresql://fastpg:fastpg@postgres:5432/fastpg
+    volumes:
+      - ./bench/results:/src/bench/results
+    entrypoint: ["uv", "run", "--no-sync", "yeet"]
+    command: ["./bench/run.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy

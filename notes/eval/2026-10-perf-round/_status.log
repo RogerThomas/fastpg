@@ -1,0 +1,143 @@
+18:25:26 load 7.77 ok (r1 conc16)
+18:25:40 r1-conc16-base rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:25:53 r1-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:25:53 load 9.14 > 8, waiting
+18:26:23 load 11.90 > 8, waiting
+18:26:53 load 8.66 > 8, waiting
+18:27:23 load 7.31 ok (r1 conc100)
+18:27:39 r1-conc100-base rc=0 16s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:27:55 r1-conc100-new rc=0 16s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:27:55 load 9.99 > 8, waiting
+18:28:25 load 12.86 > 8, waiting
+18:28:55 load 10.49 > 8, waiting
+18:29:25 load 8.04 > 8, waiting
+18:29:55 load 8.66 > 8, waiting
+18:30:25 load 8.04 > 8, waiting
+18:30:55 load 8.03 > 8, waiting
+18:31:25 load 6.75 ok (r1 pipe16)
+18:31:39 r1-pipe16-base rc=0 14s :: ./bench/run.py -s concurrent -d fastpg-pipelined -d asyncpg-struct -c 16 -o /src/bench/results
+18:31:52 r1-pipe16-new rc=0 13s :: ./bench/run.py -s concurrent -d fastpg-pipelined -d asyncpg-struct -c 16 -o /src/bench/results
+18:31:52 load 7.65 ok (r1 point-cpus1)
+18:31:59 r1-point-cpus1-base rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:32:06 r1-point-cpus1-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:32:06 load 7.31 ok (r1 point-nolimit)
+18:32:14 r1-point-nolimit-base rc=0 8s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:32:21 r1-point-nolimit-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:32:21 load 7.47 ok (r1 cpureq)
+18:32:22 r1-cpureq-base rc=0 1s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:32:24 r1-cpureq-new rc=0 2s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:32:24 load 7.47 ok (r1 range)
+18:32:49 r1-range-base rc=0 25s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:33:14 r1-range-new rc=0 25s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:33:14 load 7.94 ok (r1 writes)
+18:33:26 r1-writes-base rc=0 12s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many (Structs) -m fastpg copy_in* -m asyncpg*
+18:33:49 r1-writes-new rc=0 23s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many* -m fastpg copy_in* -m asyncpg* --json /src/bench/results/writes.json
+18:33:49 load 11.56 > 8, waiting
+18:34:19 load 10.10 > 8, waiting
+18:34:50 load 8.79 > 8, waiting
+18:35:20 load 8.19 > 8, waiting
+18:35:50 load 8.21 > 8, waiting
+18:36:20 load 7.12 ok (r1 mixed)
+18:36:57 r1-mixed-base rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:37:34 r1-mixed-new rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:37:34 load 5.69 ok (r1 openloop)
+18:37:53 r1-openloop-base rc=0 19s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:38:12 r1-openloop-new rc=0 19s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:38:12 load 5.04 ok (r2 conc16)
+18:38:26 r2-conc16-base rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:38:39 r2-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:38:39 load 5.96 ok (r2 conc100)
+18:38:53 r2-conc100-base rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:39:07 r2-conc100-new rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:39:07 load 6.60 ok (r2 pipe16)
+18:39:14 r2-pipe16-base rc=0 7s :: ./bench/run.py -s concurrent -d fastpg-pipelined -c 16 -o /src/bench/results
+18:39:21 r2-pipe16-new rc=0 7s :: ./bench/run.py -s concurrent -d fastpg-pipelined -c 16 -o /src/bench/results
+18:39:21 load 6.61 ok (r2 point-cpus1)
+18:39:28 r2-point-cpus1-base rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:39:35 r2-point-cpus1-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:39:35 load 6.06 ok (r2 point-nolimit)
+18:39:42 r2-point-nolimit-base rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:39:49 r2-point-nolimit-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:39:49 load 5.82 ok (r2 cpureq)
+18:39:51 r2-cpureq-base rc=0 2s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:39:52 r2-cpureq-new rc=0 1s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:39:52 load 5.68 ok (r2 range)
+18:40:18 r2-range-base rc=0 26s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:40:43 r2-range-new rc=0 25s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:40:43 load 7.40 ok (r2 writes)
+18:40:55 r2-writes-base rc=0 12s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many (Structs) -m fastpg copy_in* -m asyncpg*
+18:41:17 r2-writes-new rc=0 22s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many* -m fastpg copy_in* -m asyncpg* --json /src/bench/results/writes.json
+18:41:17 load 6.66 ok (r2 mixed)
+18:41:54 r2-mixed-base rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:42:31 r2-mixed-new rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:42:31 load 7.31 ok (r2 openloop)
+18:42:50 r2-openloop-base rc=0 19s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:43:10 r2-openloop-new rc=0 20s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:43:10 load 9.84 > 8, waiting
+18:43:40 load 10.16 > 8, waiting
+18:44:10 load 7.78 ok (r3 conc16)
+18:44:23 r3-conc16-base rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:44:36 r3-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:44:36 load 7.16 ok (r3 conc100)
+18:44:50 r3-conc100-base rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:45:04 r3-conc100-new rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 100 -o /src/bench/results
+18:45:04 load 6.83 ok (r3 pipe16)
+18:45:11 r3-pipe16-base rc=0 7s :: ./bench/run.py -s concurrent -d fastpg-pipelined -c 16 -o /src/bench/results
+18:45:18 r3-pipe16-new rc=0 7s :: ./bench/run.py -s concurrent -d fastpg-pipelined -c 16 -o /src/bench/results
+18:45:18 load 6.27 ok (r3 point-cpus1)
+18:45:25 r3-point-cpus1-base rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:45:32 r3-point-cpus1-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:45:32 load 5.98 ok (r3 point-nolimit)
+18:45:39 r3-point-nolimit-base rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:45:46 r3-point-nolimit-new rc=0 7s :: ./bench/run.py -s point -d fastpg-struct -o /src/bench/results
+18:45:46 load 5.37 ok (r3 cpureq)
+18:45:48 r3-cpureq-base rc=0 2s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:45:49 r3-cpureq-new rc=0 1s :: ./bench/cpu_per_request.py -d fastpg-struct
+18:45:49 load 5.37 ok (r3 range)
+18:46:15 r3-range-base rc=0 26s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:46:40 r3-range-new rc=0 25s :: ./bench/run.py -s range-1k -s range-10k -d fastpg-struct -d fastpg-pydantic -o /src/bench/results
+18:46:40 load 5.77 ok (r3 writes)
+18:46:51 r3-writes-base rc=0 11s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many (Structs) -m fastpg copy_in* -m asyncpg*
+18:47:13 r3-writes-new rc=0 22s :: ./bench/writes.py --repeat 3 -m fastpg execute_many* -m fastpg insert_many* -m fastpg copy_in* -m asyncpg* --json /src/bench/results/writes.json
+18:47:13 load 5.73 ok (r3 mixed)
+18:47:50 r3-mixed-base rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:48:27 r3-mixed-new rc=0 37s :: ./bench/mixed.py -p 16 -p 100 -k 8 -o fastpg-pool* -r 5000 -r 10000 -r 20000 -t 5
+18:48:27 load 4.86 ok (r3 openloop)
+18:48:46 r3-openloop-base rc=0 19s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:49:06 r3-openloop-new rc=0 20s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -r 5000 -r 10000
+18:49:06 ALL DONE
+18:49:22 load 4.19 ok (r1 cpureq50k)
+18:49:26 r1-cpureq50k-base rc=0 4s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:31 r1-cpureq50k-new rc=0 5s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:31 load 4.02 ok (r2 cpureq50k)
+18:49:35 r2-cpureq50k-base rc=0 4s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:39 r2-cpureq50k-new rc=0 4s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:39 load 4.01 ok (r3 cpureq50k)
+18:49:43 r3-cpureq50k-base rc=0 4s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:46 r3-cpureq50k-new rc=0 3s :: ./bench/cpu_per_request.py -d fastpg-struct -n 50000
+18:49:46 load 4.96 ok (r4 conc16)
+18:50:00 r4-conc16-base rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:50:13 r4-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:50:13 load 5.69 ok (r5 conc16)
+18:50:27 r5-conc16-base rc=0 14s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:50:40 r5-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:50:40 load 6.52 ok (r6 conc16)
+18:50:53 r6-conc16-base rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:51:06 r6-conc16-new rc=0 13s :: ./bench/run.py -s concurrent -s concurrent-pinned -d fastpg-struct -c 16 -o /src/bench/results
+18:51:06 SUPP DONE
+18:51:21 load 4.74 ok (r1 ol1k)
+18:51:33 r1-ol1k-base rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:51:45 r1-ol1k-new rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:51:45 load 4.09 ok (r2 ol1k)
+18:51:57 r2-ol1k-base rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:10 r2-ol1k-new rc=0 13s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:10 load 4.53 ok (r3 ol1k)
+18:52:22 r3-ol1k-base rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:34 r3-ol1k-new rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:34 load 4.13 ok (r4 ol1k)
+18:52:46 r4-ol1k-base rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:58 r4-ol1k-new rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:52:58 load 4.81 ok (r5 ol1k)
+18:53:10 r5-ol1k-base rc=0 12s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:53:23 r5-ol1k-new rc=0 13s :: ./bench/open_loop.py -d fastpg-struct -r 1000 -t 10
+18:53:23 SUPP2 DONE

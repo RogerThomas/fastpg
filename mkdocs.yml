@@ -1,0 +1,82 @@
+site_name: fastpg
+site_description: >-
+  Fast async PostgreSQL for Python, written in Rust: rows straight into msgspec Structs and
+  pydantic models.
+site_author: Roger Thomas
+copyright: Maintained by Roger Thomas.
+# No git remote yet. Once there is one, add `repo_url`, `repo_name` and `edit_uri` here (and
+# `theme.icon.repo`, plus a GitHub link under `extra.social`), and `site_url` once the docs
+# have a published home, as yeetr does.
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Getting started: guide/getting-started.md
+      - Queries and results: guide/queries.md
+      - Structs and decoding: guide/structs.md
+      - Pydantic models: guide/pydantic.md
+      - Connection pool: guide/pool.md
+      - Writes, bulk and COPY: guide/writes.md
+      - Transactions: guide/transactions.md
+      - TLS: guide/tls.md
+      - Errors: guide/errors.md
+  - Performance: performance.md
+  - Architecture: architecture.md
+  - API reference: api.md
+  - Limitations: limitations.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src"]
+
+theme:
+  name: material
+  # overrides/partials/logo.html renders this and assets/logo-dark.svg, and
+  # docs/stylesheets/extra.css shows the one for the colour scheme. overrides/main.html adds
+  # the .ico and Apple touch icon fallbacks to the scheme-aware SVG favicon.
+  custom_dir: overrides
+  logo: assets/logo-light.svg
+  favicon: assets/favicon.svg
+  features:
+    - navigation.top
+    - navigation.sections
+    - navigation.instant
+    - toc.follow
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true

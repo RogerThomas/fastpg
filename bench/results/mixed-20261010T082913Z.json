@@ -1,0 +1,35 @@
+[
+  {
+    "config": "fastpg x1",
+    "rate": 1000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 1032.278007213029,
+    "fast_p50_us": 675.208,
+    "fast_p99_us": 23165.125,
+    "fast_p999_us": 31732.875,
+    "slow_p50_us": 24768.625,
+    "slow_p99_us": 32481.541
+  },
+  {
+    "config": "fastpg x4",
+    "rate": 1000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 1032.288709722875,
+    "fast_p50_us": 600.709,
+    "fast_p99_us": 1584.792,
+    "fast_p999_us": 9900.291,
+    "slow_p50_us": 21816.542,
+    "slow_p99_us": 23882.208
+  },
+  {
+    "config": "asyncpg x8",
+    "rate": 1000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 1030.7491870150384,
+    "fast_p50_us": 987.458,
+    "fast_p99_us": 1903.834,
+    "fast_p999_us": 2269.75,
+    "slow_p50_us": 23198.625,
+    "slow_p99_us": 24275.25
+  }
+]

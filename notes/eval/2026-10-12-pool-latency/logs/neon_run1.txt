@@ -1,0 +1,55 @@
+
+=== round 0 ===
+conn (warmup incl.)          median  35.72 ms  min  33.72  slots cccccccccc
+                             times [109.2 35.3 41.0 34.4 36.1 36.6 34.4 35.3 39.3 33.7]
+                             rx 251 KB/25 pkts, srtt 17 ms, rcvbuf 1005 KB, rcv_wnd KB after each [446,446,1005,1005,1005,1005,1005,1005,1005,1005]
+                             cached statements: 2
+conn, idle 0.1s before       median  38.82 ms  min  35.58  slots ccccc
+                             times [46.6 36.7 38.8 42.3 35.6]
+                             rx 251 KB/29 pkts, srtt 17 ms, rcvbuf 1005 KB, rcv_wnd KB after each [1005,1005,1005,1005,1005]
+conn, idle 0.25s before      median  40.81 ms  min  33.47  slots ccccc
+                             times [42.3 40.8 33.5 33.7 41.6]
+                             rx 251 KB/33 pkts, srtt 17 ms, rcvbuf 1005 KB, rcv_wnd KB after each [1005,1005,1005,1005,1005]
+conn, idle 0.5s before       median  48.88 ms  min  46.62  slots ccccc
+                             times [48.9 46.6 47.6 59.2 65.9]
+                             rx 251 KB/38 pkts, srtt 18 ms, rcvbuf 1005 KB, rcv_wnd KB after each [1005,1005,1005,1005,1005]
+conn, idle 1.0s before       median  91.05 ms  min  74.45  slots ccccc
+                             times [74.4 91.5 82.9 107.9 91.1]
+                             rx 251 KB/34 pkts, srtt 20 ms, rcvbuf 1005 KB, rcv_wnd KB after each [1005,1005,1005,1005,1005]
+fresh conn (warmup incl.)    median  35.91 ms  min  31.75  slots cccccccccc
+                             times [143.8 31.7 33.8 40.3 33.2 34.3 38.8 41.2 35.2 36.6]
+                             rx 251 KB/30 pkts, srtt 24 ms, rcvbuf 1005 KB, rcv_wnd KB after each [455,455,1006,1006,1006,1006,1006,1006,1006,1006]
+pool 4/4 (warmup incl.)      median  36.49 ms  min  32.15  slots 3333333333
+                             times [110.9 37.3 32.1 35.7 36.5 36.5 34.2 38.9 36.3 48.4]
+                             rx 251 KB/30 pkts, srtt 19 ms, rcvbuf 1005 KB, rcv_wnd KB after each [435,435,1005,1005,1005,1005,1005,1005,1005,0]
+                             cached statements per conn: [0, 0, 0, 1]
+pool 1/1 (warmup incl.)      median  44.27 ms  min  36.72  slots 0000000000
+                             times [108.8 49.9 43.3 36.7 61.5 57.5 45.1 39.9 42.4 43.4]
+                             rx 252 KB/41 pkts, srtt 17 ms, rcvbuf 879 KB, rcv_wnd KB after each [417,879,879,879,879,879,879,879,879,879]
+=== round 1 ===
+conn (warmup incl.)          median  43.57 ms  min  38.11  slots cccccccccc
+                             times [110.8 51.1 47.0 50.9 46.8 40.1 38.1 40.4 39.4 39.1]
+                             rx 252 KB/36 pkts, srtt 16 ms, rcvbuf 475 KB, rcv_wnd KB after each [438,438,438,438,438,438,438,459,475,475]
+                             cached statements: 2
+conn, idle 0.1s before       median  37.06 ms  min  34.11  slots ccccc
+                             times [37.1 36.7 34.1 37.7 46.8]
+                             rx 251 KB/33 pkts, srtt 17 ms, rcvbuf 521 KB, rcv_wnd KB after each [475,521,521,521,521]
+conn, idle 0.25s before      median  55.78 ms  min  46.14  slots ccccc
+                             times [46.1 55.8 50.7 79.1 87.1]
+                             rx 251 KB/27 pkts, srtt 18 ms, rcvbuf 521 KB, rcv_wnd KB after each [521,521,521,521,521]
+conn, idle 0.5s before       median  59.37 ms  min  56.61  slots ccccc
+                             times [60.4 58.5 59.4 56.6 69.6]
+                             rx 251 KB/26 pkts, srtt 17 ms, rcvbuf 521 KB, rcv_wnd KB after each [521,521,521,521,521]
+conn, idle 1.0s before       median 104.51 ms  min  99.81  slots ccccc
+                             times [127.0 99.8 110.6 104.5 101.4]
+                             rx 252 KB/27 pkts, srtt 17 ms, rcvbuf 521 KB, rcv_wnd KB after each [521,521,521,521,521]
+fresh conn (warmup incl.)    median  38.41 ms  min  34.91  slots cccccccccc
+                             times [121.9 40.2 38.2 38.7 44.3 38.6 36.1 34.9 36.0 36.9]
+                             rx 252 KB/32 pkts, srtt 19 ms, rcvbuf 942 KB, rcv_wnd KB after each [452,942,942,942,942,942,942,942,942,942]
+pool 4/4 (warmup incl.)      median  36.24 ms  min  32.73  slots 3333333333
+                             times [117.7 38.0 37.2 36.4 32.7 35.8 33.5 37.1 35.9 36.1]
+                             rx 251 KB/25 pkts, srtt 20 ms, rcvbuf 964 KB, rcv_wnd KB after each [452,452,964,964,964,964,964,964,964,964]
+                             cached statements per conn: [0, 0, 0, 1]
+pool 1/1 (warmup incl.)      median  35.28 ms  min  33.76  slots 0000000000
+                             times [122.0 35.5 37.4 34.1 38.5 33.8 34.0 38.8 35.1 34.6]
+                             rx 251 KB/31 pkts, srtt 19 ms, rcvbuf 982 KB, rcv_wnd KB after each [429,982,982,982,982,982,982,982,982,982]

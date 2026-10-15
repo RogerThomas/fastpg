@@ -1,0 +1,82 @@
+{
+  "started_at": "2026-10-11T16:53:19.970891Z",
+  "python": "3.14.7",
+  "platform": "macOS-26.7.1",
+  "event_loop": "uvloop",
+  "plan": {
+    "dsn": "postgresql://fastpg:***@127.0.0.1:55432/fastpg",
+    "scenarios": [
+      "range-1k",
+      "range-10k"
+    ],
+    "duration_s": 3.0,
+    "iterations": null,
+    "warmup_s": 1.0,
+    "concurrency": 16,
+    "alloc_iterations": 200,
+    "seed": 42
+  },
+  "versions": {
+    "fastpg": "0.1.0",
+    "msgspec": "0.22.0",
+    "uvloop": "0.23.0"
+  },
+  "results": [
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "range-1k",
+      "rows_per_op": 1000,
+      "ops": 1789,
+      "seconds": 3.0,
+      "ops_per_s": 596.3,
+      "rows_per_s": 596256.5,
+      "p50_us": 1544.4,
+      "p90_us": 2081.9,
+      "p99_us": 3044.3
+    },
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "range-10k",
+      "rows_per_op": 10000,
+      "ops": 403,
+      "seconds": 3.005,
+      "ops_per_s": 134.1,
+      "rows_per_s": 1341003.1,
+      "p50_us": 6579.2,
+      "p90_us": 7662.6,
+      "p99_us": 8333.5
+    },
+    {
+      "driver": "fastpg-pydantic",
+      "kind": "async",
+      "rows": "pydantic",
+      "scenario": "range-1k",
+      "rows_per_op": 1000,
+      "ops": 1637,
+      "seconds": 3.0,
+      "ops_per_s": 545.7,
+      "rows_per_s": 545665.4,
+      "p50_us": 1349.4,
+      "p90_us": 1726.7,
+      "p99_us": 2425.3
+    },
+    {
+      "driver": "fastpg-pydantic",
+      "kind": "async",
+      "rows": "pydantic",
+      "scenario": "range-10k",
+      "rows_per_op": 10000,
+      "ops": 266,
+      "seconds": 3.007,
+      "ops_per_s": 88.5,
+      "rows_per_s": 884747.2,
+      "p50_us": 7238.2,
+      "p90_us": 8608.8,
+      "p99_us": 10281.9
+    }
+  ]
+}

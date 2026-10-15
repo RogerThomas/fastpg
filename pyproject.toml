@@ -1,0 +1,156 @@
+[project]
+name = "fastpg"
+dynamic = ["version"] # from native/Cargo.toml, by maturin
+description = "Async PostgreSQL client for Python, written in Rust (xitca-postgres + PyO3), decoding rows straight into msgspec Structs"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Roger Thomas", email = "roger.thomas87@gmail.com" }]
+requires-python = ">=3.14.3"
+dependencies = [
+    "asyncpg>=0.32.0",
+    "msgspec>=0.22.0",
+]
+keywords = [
+    "postgresql",
+    "postgres",
+    "database",
+    "asyncio",
+    "async",
+    "msgspec",
+    "pydantic",
+    "rust",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+# into=<pydantic.BaseModel> support (strategies "direct" and "json").
+pydantic = ["pydantic>=2.14"]
+
+[build-system]
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+module-name = "fastpg._native"
+python-source = "src"
+# The sdist builds with the pinned toolchain too.
+include = [{ path = "rust-toolchain.toml", format = "sdist" }]
+
+[tool.uv]
+# Rebuild the extension whenever the Rust sources change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "native/Cargo.toml" },
+    { file = "native/Cargo.lock" },
+    { file = "rust-toolchain.toml" },
+    { file = "native/src/**/*.rs" },
+]
+
+[dependency-groups]
+bench = [
+    "asyncpg>=0.32.0",
+    "asyncpg-stubs>=0.32.0",
+    "pg8000>=1.31.5",
+    "psqlpy>=0.12.1",
+    "psycopg2-binary>=2.9.13",
+    "psycopg[binary,pool]>=3.3.6",
+    "types-psycopg2>=2.9.21.20261008",
+]
+dev = [
+    "pydantic>=2.14.0",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-timeout>=2.4.0",
+    "rich>=15.0.0",
+    "ruff>=0.17.0",
+    "uvloop>=0.23.0",
+    "yeetr>=2026.9.18",
+]
+docs = ["mkdocstrings[python]>=1.0.7", "zensical>=0.0.69"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+# A hung test (e.g. a query whose response never arrives) fails instead of stalling the suite.
+timeout = 30
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+# Archived scripts kept verbatim next to the measurements they produced.
+extend-exclude = ["notes/eval"]
+
+[tool.ruff.lint]
+select = [
+    "A",   # builtins shadowing
+    "ANN", # type annotations
+    "ARG", # unused arguments
+    "B",   # bugbear (common bugs & bad patterns)
+    "BLE", # blind excepts
+    "C4",  # comprehensions
+    "C90", # mccabe complexity
+    "COM", # commas
+    "DTZ", # datetime timezone
+    "E",   # pycodestyle errors
+    "ERA", # eradicate commented-out code
+    "F",   # pyflakes
+    "FA",  # future annotations
+    "FBT", # boolean trap
+    "I",   # import sorting
+    "ICN", # import conventions
+    "ISC", # implicit str concat
+    "N",   # naming conventions
+    "NPY", # numpy rules
+    "PGH", # pygrep-hooks
+    "PT",  # pytest style
+    "PTH", # pathlib
+    "RET", # return statements
+    "RUF", # Ruff extra rules
+    "S",   # security
+    "SIM", # simplifications
+    "T10", # debugger statements
+    "TC",  # typing under TYPE_CHECKING
+    "TD",  # TODOs must be annotated
+    "TID", # tidy imports
+    "TRY", # tryceratops
+    "UP",  # pyupgrade / newer syntax
+    "W",   # pycodestyle warnings
+    "YTT", # flake8-2020
+]
+ignore = [
+    "D211",  # no-blank-line-before-class
+    "D213",  # multi-line-summary-second-line
+    "TC006", # allow unquoted types in typing.cast()
+]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+exclude = ["notes/eval", "faster", "tmp_*.py", "**/.*", "**/node_modules", "**/__pycache__"]
+
+[tool.ruff.lint.flake8-type-checking]
+# msgspec and pydantic resolve field annotations at runtime, so their imports must stay real.
+runtime-evaluated-base-classes = ["msgspec.Struct", "pydantic.BaseModel"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"] # pytest asserts
+"bench/**" = ["S311"] # non-crypto RNG for picking benchmark ids

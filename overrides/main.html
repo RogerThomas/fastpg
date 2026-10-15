@@ -1,0 +1,11 @@
+{#-
+  The theme links theme.favicon (the scheme-aware SVG). Add the raster fallbacks: the
+  .ico for browsers without SVG favicons (sizes="32x32" keeps Chrome on the SVG), and the
+  Apple touch icon.
+-#}
+{% extends "base.html" %}
+{% block extrahead %}
+  {{ super() }}
+  <link rel="icon" href="{{ 'assets/favicon.ico' | url }}" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ 'assets/apple-touch-icon.png' | url }}">
+{% endblock %}

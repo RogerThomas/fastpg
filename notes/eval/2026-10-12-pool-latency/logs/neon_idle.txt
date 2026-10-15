@@ -1,0 +1,13 @@
+--- run 1
+
+idle 0.00s                           median   40.0 ms  (+  0.0)  min   36.3  max   47.4
+idle 0.05s                           median   39.8 ms  (+ -0.2)  min   36.0  max   48.3
+idle 0.10s                           median   44.8 ms  (+  4.8)  min   33.5  max   50.2
+idle 0.20s                           median   42.5 ms  (+  2.5)  min   38.2  max   59.9
+idle 0.30s                           median   49.3 ms  (+  9.3)  min   45.9  max   59.9
+idle 0.50s                           median   59.3 ms  (+ 19.3)  min   47.7  max   71.0
+idle 0.75s                           median   78.9 ms  (+ 38.9)  min   72.6  max  135.9
+idle 1.00s                           median   95.6 ms  (+ 55.6)  min   85.8  max  109.7
+idle 2.00s                           median   89.2 ms  (+ 49.2)  min   80.5  max   96.3
+idle 0.50s + SELECT 1 every 0.1s     median   46.5 ms  (+  6.5)  min   36.3  max  112.5
+idle 1.00s + SELECT 1 every 0.1s     median   42.1 ms  (+  2.1)  min   38.1  max   69.8

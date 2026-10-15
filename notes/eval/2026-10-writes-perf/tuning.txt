@@ -1,0 +1,27 @@
+BulkSettings sweeps (patched per run), 100,000 people-shaped rows into a TEMP table, median
+of 5 interleaved rounds (min-max), loop CPU per row; macOS host, at 78ef8e3.
+
+    uv run yeet notes/eval/2026-10-writes-perf/tune.py execute_many "in_flight=2;in_flight=1;in_flight=4;execute_chunk=256;execute_chunk=4096;execute_chunk=4096,in_flight=4"
+execute_many  in_flight=2                                  291,093 rows/s  (289,999-300,551)     547 ns/row
+execute_many  in_flight=1                                  226,562 rows/s  (210,791-228,755)     536 ns/row
+execute_many  in_flight=4                                  297,303 rows/s  (284,512-300,545)     530 ns/row
+execute_many  execute_chunk=256                            277,256 rows/s  (255,422-287,113)     620 ns/row
+execute_many  execute_chunk=4096                           299,042 rows/s  (285,462-302,470)     512 ns/row
+execute_many  execute_chunk=4096,in_flight=4               301,532 rows/s  (293,546-309,737)     510 ns/row
+
+    uv run yeet notes/eval/2026-10-writes-perf/tune.py insert_many "insert_group=64;insert_group=1;insert_group=16;insert_group=256;insert_group=1024;execute_chunk=4096,insert_group=256;in_flight=4"
+insert_many   insert_group=64                              563,050 rows/s  (547,867-583,424)     377 ns/row
+insert_many   insert_group=1                               293,461 rows/s  (281,067-303,651)     530 ns/row
+insert_many   insert_group=16                              535,906 rows/s  (521,378-552,291)     390 ns/row
+insert_many   insert_group=256                             575,367 rows/s  (451,227-599,694)     380 ns/row
+insert_many   insert_group=1024                            554,253 rows/s  (539,889-579,366)     390 ns/row
+insert_many   execute_chunk=4096,insert_group=256          588,928 rows/s  (564,021-608,295)     344 ns/row
+insert_many   in_flight=4                                  579,894 rows/s  (557,820-600,713)     382 ns/row
+
+    uv run yeet notes/eval/2026-10-writes-perf/tune.py copy_in "copy_chunk=4096;copy_chunk=1024;copy_chunk=16384;in_flight=1;in_flight=4;copy_chunk=16384,in_flight=4"
+copy_in       copy_chunk=4096                            1,273,220 rows/s  (1,266,028-1,291,345)     302 ns/row
+copy_in       copy_chunk=1024                            1,321,678 rows/s  (1,309,526-1,323,900)     346 ns/row
+copy_in       copy_chunk=16384                           1,168,333 rows/s  (1,138,087-1,187,686)     281 ns/row
+copy_in       in_flight=1                                1,285,465 rows/s  (1,268,821-1,295,947)     295 ns/row
+copy_in       in_flight=4                                1,279,076 rows/s  (1,258,909-1,330,096)     295 ns/row
+copy_in       copy_chunk=16384,in_flight=4               1,175,905 rows/s  (1,145,773-1,243,405)     276 ns/row

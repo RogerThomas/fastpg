@@ -1,0 +1,32 @@
+[
+  {
+    "driver": "asyncpg-struct",
+    "target_rps": 1000,
+    "achieved_rps": 1054.3661949971677,
+    "requests": 1053,
+    "p50_us": 1161.197,
+    "p90_us": 2019.807,
+    "p99_us": 2690.252,
+    "p999_us": 3319.842,
+    "max_us": 3784.941,
+    "peak_inflight": 9,
+    "loop_busy_pct": 18.66525210040911,
+    "overloaded": false,
+    "errors": 0
+  },
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 1000,
+    "achieved_rps": 1054.7244745158334,
+    "requests": 1053,
+    "p50_us": 839.3,
+    "p90_us": 1676.613,
+    "p99_us": 2284.531,
+    "p999_us": 2615.443,
+    "max_us": 2661.906,
+    "peak_inflight": 7,
+    "loop_busy_pct": 7.443975099287338,
+    "overloaded": false,
+    "errors": 0
+  }
+]

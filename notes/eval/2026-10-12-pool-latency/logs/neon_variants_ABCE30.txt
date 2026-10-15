@@ -1,0 +1,6 @@
+--- run 1
+
+A conn +10 ping    block-median median  35.89 (p25  35.35 p75  38.95)  warmup  106.8  by position [ 36.9  37.6  36.4  36.6  37.6  36.0  36.5  35.4  36.8]
+B conn             block-median median  36.28 (p25  34.77 p75  37.96)  warmup  112.3  by position [ 36.9  36.8  35.9  36.2  35.7  36.8  36.5  35.3  35.8]
+C pool4            block-median median  36.85 (p25  35.18 p75  38.79)  warmup  112.8  by position [ 37.8  38.3  37.9  37.1  36.2  35.6  35.1  36.1  36.1]
+E pool1            block-median median  35.99 (p25  34.54 p75  37.21)  warmup  111.2  by position [ 35.9  35.6  37.3  35.2  37.1  35.3  36.3  36.8  36.2]

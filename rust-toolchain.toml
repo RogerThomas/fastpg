@@ -1,0 +1,6 @@
+# The Rust toolchain for local dev and the wheel builds. At the repo root, so rustup finds it
+# from here and from native/ (it looks in the working directory and its parents).
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

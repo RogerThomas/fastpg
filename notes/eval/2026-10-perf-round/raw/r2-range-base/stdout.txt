@@ -1,0 +1,26 @@
+
+2026-10-11 17:39:53,710 [INFO]: 2 drivers x range-1k, range-10k on    run.py:198
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-11 17:39:53,746 [INFO]: fastpg-struct          range-1k   harness.py:454
+2026-10-11 17:39:59,776 [INFO]: fastpg-struct          range-10k  harness.py:454
+2026-10-11 17:40:05,860 [INFO]: fastpg-pydantic        range-1k   harness.py:454
+2026-10-11 17:40:11,884 [INFO]: fastpg-pydantic        range-10k  harness.py:454
+2026-10-11 17:39:53 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Range fetch: 1,000 rows, sequential on one connection                                           
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver          ┃ kind  ┃ rows     ┃ ops/s ┃  rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct   │ async │ struct   │   800 │ 799,990 │   874.7 │ 1,102.1 │ 1,683.6 │   1.00x │
+│ fastpg-pydantic │ async │ pydantic │   616 │ 615,856 │ 1,051.3 │ 1,271.0 │ 2,175.3 │   0.77x │
+└─────────────────┴───────┴──────────┴───────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+Large fetch: 10,000 rows, sequential on one connection                                            
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver          ┃ kind  ┃ rows     ┃ ops/s ┃    rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct   │ async │ struct   │   127 │ 1,271,394 │ 5,199.0 │ 6,225.1 │ 7,457.6 │   1.00x │
+│ fastpg-pydantic │ async │ pydantic │    86 │   859,840 │ 6,615.4 │ 7,408.7 │ 8,993.0 │   0.68x │
+└─────────────────┴───────┴──────────┴───────┴───────────┴─────────┴─────────┴─────────┴─────────┘
+2026-10-11 17:40:17,943 [INFO]: wrote                                 run.py:220
+/src/bench/results/20261011T173953Z.json and                                    
+/src/bench/results/20261011T173953Z.md                                          

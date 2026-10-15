@@ -1,0 +1,16 @@
+
+2026-10-11 17:45:12,248 [INFO]: 1 drivers x concurrent on             run.py:198
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-11 17:45:12,262 [INFO]: fastpg-pipelined       concurrent harness.py:469
+(x16, pool 16)                                                                  
+2026-10-11 17:45:12 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Concurrent point lookups: 16 tasks sharing the driver's pool of 16                            
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver           ┃ kind  ┃ rows   ┃   ops/s ┃  rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-pipelined │ async │ struct │ 140,034 │ 140,034 │  108.7 │  132.9 │  174.3 │   1.00x │
+└──────────────────┴───────┴────────┴─────────┴─────────┴────────┴────────┴────────┴─────────┘
+2026-10-11 17:45:18,367 [INFO]: wrote                                 run.py:220
+/src/bench/results/20261011T174512Z.json and                                    
+/src/bench/results/20261011T174512Z.md                                          

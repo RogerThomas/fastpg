@@ -1,0 +1,10 @@
+--- run 1
+
+conn                   n=300 median   8.01  mean   7.81  p25   6.61  p75   8.59  min   5.22
+fresh conn             n=300 median   6.48  mean   6.63  p25   5.92  p75   7.25  min   5.34
+pool 4/4               n=300 median   6.46  mean   6.65  p25   5.93  p75   7.34  min   5.19
+pool 1/1               n=300 median   6.44  mean   6.65  p25   5.92  p75   7.32  min   5.23
+fresh conn - conn      paired median  -1.17 ms, slower in 79/300
+pool 4/4 - conn        paired median  -1.27 ms, slower in 73/300
+pool 1/1 - conn        paired median  -1.11 ms, slower in 80/300
+pool 4/4 stats: PoolStats(size=4, opening=0, idle=4, acquired=0, in_flight=0, waiting=0, waiting_acquire=0)

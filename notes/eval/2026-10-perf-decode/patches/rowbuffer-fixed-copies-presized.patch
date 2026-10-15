@@ -1,0 +1,78 @@
+diff --git a/native/src/connection.rs b/native/src/connection.rs
+index 10dc78f..5339394 100644
+--- a/native/src/connection.rs
++++ b/native/src/connection.rs
+@@ -718,7 +718,8 @@ async fn run_once(
+                     rows.push_row(&row)?;
+                 }
+                 if stream_chunks && shape == Shape::All && rows.nrows() == CHUNK_ROWS {
+-                    let chunk = std::mem::replace(&mut rows, RowBuffer::new(ncols));
++                    let next = rows.next_chunk();
++                    let chunk = std::mem::replace(&mut rows, next);
+                     *delivered = true;
+                     shared.post(
+                         req.clone(),
+diff --git a/native/src/rows.rs b/native/src/rows.rs
+index 7c2de7b..8efebed 100644
+--- a/native/src/rows.rs
++++ b/native/src/rows.rs
+@@ -31,6 +31,26 @@ impl<'a> FromSql<'a> for RawCell<'a> {
+ 
+ const NULL: u32 = u32::MAX;
+ 
++/// Append a cell's bytes. The fixed-width binary formats (bool; int4, float4, date; int8,
++/// float8, timestamps; uuid) get a constant-size copy that compiles to plain loads and
++/// stores instead of a `memcpy` call per cell.
++#[inline(always)]
++fn copy_cell(data: &mut Vec<u8>, bytes: &[u8]) {
++    match bytes.len() {
++        1 => data.push(bytes[0]),
++        4 => copy_fixed::<4>(data, bytes),
++        8 => copy_fixed::<8>(data, bytes),
++        16 => copy_fixed::<16>(data, bytes),
++        _ => data.extend_from_slice(bytes),
++    }
++}
++
++#[inline(always)]
++fn copy_fixed<const N: usize>(data: &mut Vec<u8>, bytes: &[u8]) {
++    let array: &[u8; N] = bytes.try_into().expect("length checked by the caller");
++    data.extend_from_slice(array);
++}
++
+ pub struct RowBuffer {
+     ncols: usize,
+     nrows: usize,
+@@ -49,11 +69,23 @@ impl RowBuffer {
+         }
+     }
+ 
++    /// An empty buffer for the next chunk of the same result, sized like this one, so a
++    /// streamed result doesn't regrow (and re-copy) its arena chunk after chunk.
++    pub fn next_chunk(&self) -> Self {
++        Self {
++            ncols: self.ncols,
++            nrows: 0,
++            data: Vec::with_capacity(self.data.len()),
++            cells: Vec::with_capacity(self.cells.len()),
++        }
++    }
++
+     pub fn nrows(&self) -> usize {
+         self.nrows
+     }
+ 
+     pub fn push_row(&mut self, row: &Row<'_>) -> Result<(), QueryError> {
++        self.cells.reserve(self.ncols);
+         for i in 0..self.ncols {
+             let RawCell(value) = row.try_get::<RawCell<'_>>(i)?;
+             let cell = match value {
+@@ -66,7 +98,7 @@ impl RowBuffer {
+                             "result set exceeds 4 GiB; fetch it in smaller batches".into(),
+                         ));
+                     }
+-                    self.data.extend_from_slice(bytes);
++                    copy_cell(&mut self.data, bytes);
+                     (start as u32, bytes.len() as u32)
+                 }
+             };

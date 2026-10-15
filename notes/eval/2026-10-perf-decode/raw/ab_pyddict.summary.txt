@@ -1,0 +1,5 @@
+target     rows variant                  n ns/row med           IQR       min-max  rows/s med gc ns/row vs first
+pydantic   1000 chunk512_commit          9       1189   1170-1201     1163-1221       585,229       220    +0.0%
+pydantic   1000 pyddict                  9       1162   1157-1179     1147-1270       604,898       220    -2.2%
+pydantic  10000 chunk512_commit          9       1077   1067-1091     1059-1108       909,682       230    +0.0%
+pydantic  10000 pyddict                  9       1057   1043-1062     1030-1072       920,700       232    -1.9%

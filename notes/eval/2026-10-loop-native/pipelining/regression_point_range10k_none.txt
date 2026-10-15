@@ -1,0 +1,31 @@
+ Container fastpg-bench-run-6c3506ec90ea Creating 
+ Container fastpg-bench-run-6c3506ec90ea Created 
+
+2026-10-10 13:38:17,111 [INFO]: 3 drivers x point, range-10k on       run.py:189
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-10 13:38:17,135 [INFO]: asyncpg-struct         point      harness.py:447
+2026-10-10 13:38:23,156 [INFO]: asyncpg-struct         range-10k  harness.py:447
+2026-10-10 13:38:29,199 [INFO]: fastpg-struct          point      harness.py:447
+2026-10-10 13:38:35,221 [INFO]: fastpg-struct          range-10k  harness.py:447
+2026-10-10 13:38:41,269 [INFO]: fastpg-thread-struct   point      harness.py:447
+2026-10-10 13:38:47,291 [INFO]: fastpg-thread-struct   range-10k  harness.py:447
+2026-10-10 13:38:17 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Point lookup: 1 row by primary key, sequential on one connection                                
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver               ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct        │ async │ struct │ 15,267 │ 15,267 │   65.2 │   72.3 │   87.2 │   1.00x │
+│ asyncpg-struct       │ async │ struct │ 13,570 │ 13,570 │   72.2 │   79.0 │   98.7 │   0.89x │
+│ fastpg-thread-struct │ async │ struct │  9,810 │  9,810 │   99.7 │  112.2 │  144.8 │   0.64x │
+└──────────────────────┴───────┴────────┴────────┴────────┴────────┴────────┴────────┴─────────┘
+Large fetch: 10,000 rows, sequential on one connection                                                  
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃ driver               ┃ kind  ┃ rows   ┃ ops/s ┃    rows/s ┃   p50 µs ┃   p90 µs ┃   p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct        │ async │ struct │   158 │ 1,577,470 │  4,332.9 │  4,571.4 │  5,216.4 │   1.00x │
+│ fastpg-thread-struct │ async │ struct │   140 │ 1,401,363 │  4,832.5 │  5,230.9 │  6,281.8 │   0.89x │
+│ asyncpg-struct       │ async │ struct │    74 │   737,619 │ 12,005.3 │ 14,082.2 │ 27,005.0 │   0.47x │
+└──────────────────────┴───────┴────────┴───────┴───────────┴──────────┴──────────┴──────────┴─────────┘
+2026-10-10 13:38:53,351 [INFO]: wrote /out/20261010T133817Z.json and  run.py:211
+/out/20261010T133817Z.md                                                        

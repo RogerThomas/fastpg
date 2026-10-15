@@ -1,0 +1,14 @@
+
+rep 0 (conn first): conn  36.53  pool  40.08  pool-conn  +3.55 ms
+rep 1 (pool first): conn  39.04  pool  47.80  pool-conn  +8.75 ms
+rep 2 (conn first): conn  37.33  pool  37.16  pool-conn  -0.18 ms
+rep 3 (pool first): conn  36.95  pool  34.91  pool-conn  -2.04 ms
+rep 4 (conn first): conn  40.48  pool  44.77  pool-conn  +4.29 ms
+rep 5 (pool first): conn  40.99  pool  41.44  pool-conn  +0.46 ms
+rep 6 (conn first): conn  40.37  pool  49.68  pool-conn  +9.31 ms
+rep 7 (pool first): conn  36.96  pool  38.76  pool-conn  +1.80 ms
+rep 8 (conn first): conn  36.24  pool  37.30  pool-conn  +1.06 ms
+rep 9 (pool first): conn  35.23  pool  39.92  pool-conn  +4.69 ms
+conn block medians     n= 10 median  37.15  mean  38.01  p25  36.46  p75  40.39  min  35.23
+pool block medians     n= 10 median  40.00  mean  41.18  p25  37.26  p75  45.52  min  34.91
+pool-conn per rep: median +2.68, range -2.04..+9.31 ms

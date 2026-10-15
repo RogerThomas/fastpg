@@ -1,0 +1,50 @@
+[
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 1000,
+    "achieved_rps": 1011.7291024761065,
+    "requests": 5059,
+    "p50_us": 246.875,
+    "p90_us": 486.375,
+    "p99_us": 1480.25,
+    "p999_us": 3113.542,
+    "lag_p99_us": 1549.401,
+    "max_us": 4647.667,
+    "peak_inflight": 13,
+    "loop_busy_pct": 19.920316251886458,
+    "overloaded": false,
+    "errors": 0
+  },
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 5000,
+    "achieved_rps": 5071.119226327572,
+    "requests": 25357,
+    "p50_us": 54.5,
+    "p90_us": 142.792,
+    "p99_us": 300.958,
+    "p999_us": 513.25,
+    "lag_p99_us": 779.591,
+    "max_us": 934.333,
+    "peak_inflight": 17,
+    "loop_busy_pct": 64.22057548655292,
+    "overloaded": false,
+    "errors": 0
+  },
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 10000,
+    "achieved_rps": 10057.978286836475,
+    "requests": 50290,
+    "p50_us": 48.583,
+    "p90_us": 75.375,
+    "p99_us": 344.0,
+    "p999_us": 623.959,
+    "lag_p99_us": 581.413,
+    "max_us": 988.541,
+    "peak_inflight": 30,
+    "loop_busy_pct": 93.81807704553528,
+    "overloaded": false,
+    "errors": 0
+  }
+]

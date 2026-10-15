@@ -1,0 +1,6 @@
+
+          base: cpu median  27.84  IQR  26.40- 28.30  min  26.20 | user median   5.58  IQR   5.39-  5.76  min   5.20 | sys median  22.38  IQR  20.76- 23.01  min  20.30
+                ops/s median 27,505  IQR 23,386-29,302
+        nodone: cpu median  26.63  IQR  25.24- 27.65  min  25.02 | user median   5.32  IQR   5.01-  5.46  min   4.84 | sys median  21.42  IQR  19.69- 22.65  min  19.52
+                ops/s median 26,192  IQR 20,459-29,561
+                paired cpu delta vs base: median  -0.71  IQR  -1.28- -0.43  min  -3.84 | user delta median  -0.31  IQR  -0.48- -0.28  min  -0.62

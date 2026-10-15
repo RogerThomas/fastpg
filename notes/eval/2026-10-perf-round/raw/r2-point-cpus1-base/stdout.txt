@@ -1,0 +1,15 @@
+
+2026-10-11 17:39:22,271 [INFO]: 1 drivers x point on                  run.py:198
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-11 17:39:22,296 [INFO]: fastpg-struct          point      harness.py:454
+2026-10-11 17:39:22 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Point lookup: 1 row by primary key, sequential on one connection                         
+┏━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver        ┃ kind  ┃ rows   ┃  ops/s ┃ rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-struct │ async │ struct │ 14,785 │ 14,785 │   64.2 │   76.7 │  106.7 │   1.00x │
+└───────────────┴───────┴────────┴────────┴────────┴────────┴────────┴────────┴─────────┘
+2026-10-11 17:39:28,351 [INFO]: wrote                                 run.py:220
+/src/bench/results/20261011T173922Z.json and                                    
+/src/bench/results/20261011T173922Z.md                                          

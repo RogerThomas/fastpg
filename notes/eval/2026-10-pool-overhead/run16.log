@@ -1,0 +1,16 @@
+base     rep0 concurrent-pinned      21239 ops/s p50   730.2
+base     rep0 concurrent             21199 ops/s p50   729.9
+router   rep0 concurrent-pinned      21180 ops/s p50   734.0
+router   rep0 concurrent             20924 ops/s p50   741.2
+base     rep1 concurrent-pinned      21453 ops/s p50   724.4
+base     rep1 concurrent             20994 ops/s p50   739.0
+router   rep1 concurrent-pinned      22245 ops/s p50   698.3
+router   rep1 concurrent             21705 ops/s p50   716.8
+base     rep2 concurrent-pinned      20340 ops/s p50   717.8
+base     rep2 concurrent             21650 ops/s p50   716.5
+router   rep2 concurrent-pinned      21996 ops/s p50   706.8
+router   rep2 concurrent             21518 ops/s p50   720.6
+base     concurrent         median     21199 [20994..21650]
+base     concurrent-pinned  median     21239 [20340..21453]
+router   concurrent         median     21518 [20924..21705]
+router   concurrent-pinned  median     21996 [21180..22245]

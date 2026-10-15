@@ -1,0 +1,29 @@
+ Container fastpg-bench-run-5def7ddb3b09 Creating 
+ Container fastpg-bench-run-5def7ddb3b09 Created 
+
+2026-10-10 13:30:41,545 [INFO]: 5 drivers x concurrent on             run.py:189
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-10 13:30:41,558 [INFO]: asyncpg-struct         concurrent harness.py:461
+(x100)                                                                          
+2026-10-10 13:30:47,705 [INFO]: fastpg-struct          concurrent harness.py:461
+(x100)                                                                          
+2026-10-10 13:30:54,084 [INFO]: fastpg-pipelined       concurrent harness.py:461
+(x100)                                                                          
+2026-10-10 13:31:00,203 [INFO]: fastpg-thread-struct   concurrent harness.py:461
+(x100)                                                                          
+2026-10-10 13:31:06,612 [INFO]: fastpg-thread-pipelined           harness.py:461
+concurrent (x100)                                                               
+2026-10-10 13:30:41 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Concurrent point lookups: 100 tasks over the driver's pool of 100                                       
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ driver                  ┃ kind  ┃ rows   ┃   ops/s ┃  rows/s ┃  p50 µs ┃  p90 µs ┃  p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-pipelined        │ async │ struct │ 156,837 │ 156,837 │   620.8 │   680.9 │   926.4 │   1.00x │
+│ fastpg-thread-pipelined │ async │ struct │ 127,800 │ 127,800 │   768.8 │   866.7 │ 1,050.5 │   0.81x │
+│ fastpg-thread-struct    │ async │ struct │  71,144 │  71,144 │ 1,331.6 │ 1,858.8 │ 2,356.1 │   0.45x │
+│ fastpg-struct           │ async │ struct │  61,758 │  61,758 │ 1,498.2 │ 2,554.8 │ 3,189.8 │   0.39x │
+│ asyncpg-struct          │ async │ struct │  23,914 │  23,914 │ 4,055.1 │ 4,658.2 │ 5,628.2 │   0.15x │
+└─────────────────────────┴───────┴────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+2026-10-10 13:31:12,723 [INFO]: wrote /out/20261010T133041Z.json and  run.py:211
+/out/20261010T133041Z.md                                                        

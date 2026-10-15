@@ -1,0 +1,80 @@
+
+== w128: cpu_us
+        base: median      3.573  min-max     3.539-    3.581  n=4
+         pgo: median      3.489  min-max     3.459-    3.556  n=4  | paired vs base: median   -2.0%  min-max   -3.0..  -0.6%
+  pgo-recipe: median      3.430  min-max     3.410-    3.493  n=4  | paired vs base: median   -3.5%  min-max   -4.6..  -2.4%
+
+== w128: user_us
+        base: median      3.343  min-max     3.319-    3.359  n=4
+         pgo: median      3.256  min-max     3.234-    3.313  n=4  | paired vs base: median   -2.3%  min-max   -3.2..  -1.4%
+  pgo-recipe: median      3.202  min-max     3.184-    3.258  n=4  | paired vs base: median   -3.8%  min-max   -4.8..  -3.0%
+
+== w128: sys_us
+        base: median      0.222  min-max     0.220-    0.237  n=4
+         pgo: median      0.232  min-max     0.225-    0.243  n=4  | paired vs base: median   +4.5%  min-max   -4.8.. +10.5%
+  pgo-recipe: median      0.229  min-max     0.224-    0.235  n=4  | paired vs base: median   +1.2%  min-max   -1.9..  +6.8%
+
+== w128: rate
+        base: median 279783.893  min-max 279145.413-282461.460  n=4
+         pgo: median 286500.519  min-max 281062.310-288974.367  n=4  | paired vs base: median   +2.0%  min-max   +0.6..  +3.1%
+  pgo-recipe: median 291407.748  min-max 286147.738-293094.156  n=4  | paired vs base: median   +3.7%  min-max   +2.5..  +4.8%
+
+== w128: p50_us
+        base: median    421.041  min-max   416.750-  421.833  n=4
+         pgo: median    411.188  min-max   407.875-  419.000  n=4  | paired vs base: median   -1.9%  min-max   -3.0..  -0.7%
+  pgo-recipe: median    405.042  min-max   402.166-  411.834  n=4  | paired vs base: median   -3.4%  min-max   -4.4..  -2.4%
+
+== w128: p99_us
+        base: median    891.687  min-max   882.000-  907.541  n=4
+         pgo: median    877.771  min-max   867.875-  890.375  n=4  | paired vs base: median   -1.4%  min-max   -3.5..  -0.2%
+  pgo-recipe: median    856.520  min-max   850.166-  881.083  n=4  | paired vs base: median   -3.4%  min-max   -6.3..  -1.3%
+
+== fetch: loop_ns_1000
+        base: median    630.250  min-max   621.812-  637.062  n=4
+         pgo: median    595.208  min-max   590.250-  613.708  n=4  | paired vs base: median   -5.8%  min-max   -6.8..  -1.3%
+  pgo-recipe: median    589.886  min-max   582.750-  616.458  n=4  | paired vs base: median   -6.0%  min-max   -8.5..  -1.7%
+
+== fetch: cpu_ns_1000
+        base: median    631.000  min-max   623.000-  638.000  n=4
+         pgo: median    596.000  min-max   591.000-  614.500  n=4  | paired vs base: median   -5.8%  min-max   -6.8..  -1.4%
+  pgo-recipe: median    590.500  min-max   583.000-  617.000  n=4  | paired vs base: median   -6.0%  min-max   -8.6..  -1.8%
+
+== fetch: loop_ns_10000
+        base: median    698.419  min-max   695.194-  736.294  n=4
+         pgo: median    667.747  min-max   659.958-  668.623  n=4  | paired vs base: median   -4.9%  min-max   -9.3..  -3.9%
+  pgo-recipe: median    653.573  min-max   651.094-  660.260  n=4  | paired vs base: median   -6.5%  min-max  -10.3..  -6.3%
+
+== fetch: cpu_ns_10000
+        base: median    701.700  min-max   698.600-  741.950  n=4
+         pgo: median    671.525  min-max   663.950-  672.550  n=4  | paired vs base: median   -4.8%  min-max   -9.5..  -3.9%
+  pgo-recipe: median    657.150  min-max   654.700-  664.900  n=4  | paired vs base: median   -6.4%  min-max  -10.4..  -6.2%
+
+== writes: fastpg execute_many (tuples) 10000
+        base: median    562.969  min-max   554.929-  569.592  n=4
+         pgo: median    469.860  min-max   459.592-  473.429  n=4  | paired vs base: median  -16.4%  min-max  -18.7.. -15.5%
+  pgo-recipe: median    458.379  min-max   448.800-  470.842  n=4  | paired vs base: median  -18.2%  min-max  -21.2.. -16.0%
+
+== writes: fastpg execute_many (tuples) 100000
+        base: median    528.931  min-max   526.252-  569.405  n=4
+         pgo: median    435.548  min-max   429.336-  453.213  n=4  | paired vs base: median  -17.5%  min-max  -24.6.. -14.1%
+  pgo-recipe: median    435.885  min-max   429.462-  474.461  n=4  | paired vs base: median  -17.5%  min-max  -18.6.. -16.7%
+
+== writes: fastpg copy_in (Structs) 10000
+        base: median    339.406  min-max   335.808-  341.175  n=4
+         pgo: median    274.148  min-max   270.521-  276.475  n=4  | paired vs base: median  -19.2%  min-max  -20.7.. -17.7%
+  pgo-recipe: median    267.100  min-max   261.417-  283.225  n=4  | paired vs base: median  -20.8%  min-max  -23.1.. -17.0%
+
+== writes: fastpg copy_in (Structs) 100000
+        base: median    283.392  min-max   279.494-  298.554  n=4
+         pgo: median    212.708  min-max   208.804-  220.831  n=4  | paired vs base: median  -25.4%  min-max  -27.2.. -23.1%
+  pgo-recipe: median    213.806  min-max   211.464-  222.698  n=4  | paired vs base: median  -24.9%  min-max  -25.5.. -23.6%
+
+== writes: fastpg copy_in (tuples) 10000
+        base: median    343.165  min-max   334.504-  352.846  n=4
+         pgo: median    274.831  min-max   270.913-  277.313  n=4  | paired vs base: median  -20.0%  min-max  -21.4.. -18.7%
+  pgo-recipe: median    279.367  min-max   255.021-  284.613  n=4  | paired vs base: median  -19.7%  min-max  -23.8.. -17.1%
+
+== writes: fastpg copy_in (tuples) 100000
+        base: median    282.700  min-max   278.974-  287.896  n=4
+         pgo: median    215.764  min-max   209.820-  222.109  n=4  | paired vs base: median  -23.7%  min-max  -25.5.. -22.1%
+  pgo-recipe: median    214.896  min-max   211.339-  218.544  n=4  | paired vs base: median  -23.4%  min-max  -26.6.. -22.8%

@@ -1,0 +1,37 @@
+Sun 11 Oct 2026 18:01:24 IST
+18:01  up 8 days, 19:49, 11 users, load averages: 12.10 13.27 12.33
+== hot.py sequential struct
+
+          base: cpu median  46.24  IQR  42.93- 49.39  min  34.97 | user median  14.65  IQR  13.42- 16.54  min   9.36 | sys median  31.49  IQR  29.49- 33.10  min  25.61
+                ops/s median 2,330  IQR 2,009-2,801
+      coalesce: cpu median  44.19  IQR  41.65- 47.55  min  36.81 | user median  13.62  IQR  12.41- 15.67  min  10.10 | sys median  30.72  IQR  29.11- 31.92  min  26.70
+                ops/s median 2,440  IQR 2,252-2,806
+                paired cpu delta vs base: median  -2.49  IQR  -5.18-  4.55  min -13.75 | user delta median  -1.39  IQR  -2.51-  2.25  min  -7.23
+== hot.py sequential tuple
+
+          base: cpu median  42.29  IQR  41.31- 44.49  min  40.88 | user median  12.41  IQR  11.92- 12.92  min  11.69 | sys median  29.91  IQR  29.21- 31.62  min  28.96
+                ops/s median 2,660  IQR 2,370-2,852
+      coalesce: cpu median  43.87  IQR  41.87- 46.13  min  34.84 | user median  12.82  IQR  12.22- 14.10  min   8.87 | sys median  31.13  IQR  29.48- 32.48  min  25.97
+                ops/s median 2,389  IQR 2,056-2,762
+                paired cpu delta vs base: median   2.31  IQR  -1.71-  3.59  min  -6.56 | user delta median   0.68  IQR  -0.33-  1.67  min  -3.11
+== hot.py pipe16
+
+          base: cpu median  26.55  IQR  26.06- 27.44  min  25.43 | user median   5.71  IQR   5.60-  5.78  min   5.47 | sys median  20.84  IQR  20.21- 21.88  min  19.66
+                ops/s median 24,364  IQR 21,632-26,890
+      coalesce: cpu median  13.29  IQR  13.00- 14.74  min  12.50 | user median   4.75  IQR   4.69-  4.82  min   4.58 | sys median   8.50  IQR   8.34- 10.00  min   7.81
+                ops/s median 28,789  IQR 27,823-31,098
+                paired cpu delta vs base: median -13.03  IQR -13.35--12.73  min -13.59 | user delta median  -1.00  IQR  -1.04- -0.74  min  -1.33
+== cpu_per_request sequential fastpg-struct
+
+        base: process CPU µs/req median 45.5 (min 41.9, max 50.4) | req/s median 2,364 (min 1,702, max 2,813)
+    coalesce: process CPU µs/req median 43.7 (min 41.2, max 51.0) | req/s median 2,520 (min 1,876, max 2,892)
+== cpu_per_request -t 16 fastpg-pipelined
+
+        base: process CPU µs/req median 26.4 (min 25.9, max 27.4) | req/s median 20,990 (min 18,505, max 26,413)
+    coalesce: process CPU µs/req median 13.7 (min 12.3, max 16.1) | req/s median 27,998 (min 23,330, max 34,355)
+== cpu_per_request -t 16 fastpg-struct (pool of 1)
+
+        base: process CPU µs/req median 38.0 (min 37.7, max 38.2) | req/s median 13,020 (min 11,936, max 14,821)
+    coalesce: process CPU µs/req median 35.8 (min 35.4, max 36.1) | req/s median 13,600 (min 12,119, max 15,211)
+Sun 11 Oct 2026 18:06:24 IST
+18:06  up 8 days, 19:54, 11 users, load averages: 10.18 11.20 11.61

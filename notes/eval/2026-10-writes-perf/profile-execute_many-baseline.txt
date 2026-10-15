@@ -1,0 +1,66 @@
+3064 Thread_10865006   DispatchQueue_1: com.apple.main-thread  (serial)
+  3064 start
+    3064 main
+      3064 pymain_main.llvm.13388862887264858933
+        3054 Py_RunMain
+          3054 pymain_run_file
+            3054 pymain_run_file_obj
+              3054 _PyRun_AnyFile
+                3054 _PyRun_SimpleFile
+                  3054 _PyRun_File
+                    3054 run_mod.llvm.2516320461367693794
+                      3054 PyEval_EvalCode
+                        3054 _PyEval_Vector
+                          3054 _TAIL_CALL_CALL.llvm.17169884233875524264
+                            3054 __pyx_pw_6uvloop_4loop_4Loop_45run_until_complete
+                              3054 PyObject_VectorcallMethod
+                                3054 __pyx_pw_6uvloop_4loop_4Loop_25run_forever
+                                  3054 __pyx_f_6uvloop_4loop_4Loop__run
+                                    3054 __pyx_f_6uvloop_4loop_4Loop__Loop__run
+                                      2801 uv_run
+                                        1699 uv__io_poll
+                                          1689 __pyx_f_6uvloop_4loop___on_uvpoll_event
+                                            1681 __pyx_f_6uvloop_4loop_6Handle__run
+                                              1680 __Pyx_PyObject_FastCallDict
+                                                1680 pyo3::impl_::trampoline::noargs
+                                                  1678 pyo3::impl_::trampoline::trampoline
+                                                    1676 _native::connection::Connection::__pymethod_on_readable__
+                                                      1657 _native::connection::Shared::pump
+                                                        1565 _native::connection::Connection::attach::_{{closure}}
+                                                          1514 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                            1512 _<_native::net::EofWatch<Io> as std::io::Read>::read
+                                                              1510 _<_native::event_loop::LoopSocket as std::io::Read>::read
+                                                                1507 __recvfrom
+                                                          25 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                        87 _native::bulk::DeadWatch::run::_{{closure}}
+                                                          50 _native::bulk::execute_many_task::_{{closure}}
+                                                          29 _native::bulk::execute_many_task::_{{closure}}
+                                        1083 uv__io_poll
+                                          1083 kevent
+                                      246 uv_run
+                                        246 uv__run_idle
+                                          246 __pyx_f_6uvloop_4loop_cb_idle_callback
+                                            246 __pyx_f_6uvloop_4loop_6Handle__run
+                                              245 __pyx_f_6uvloop_4loop_4Loop__on_idle
+                                                245 __pyx_f_6uvloop_4loop_6Handle__run
+                                                  242 task_wakeup_lock_held
+                                                    242 task_step
+                                                      242 task_step_impl
+                                                        241 gen_send_ex2
+                                                          241 _PyEval_EvalFrameDefault
+                                                            217 _TAIL_CALL_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS.llvm.17169884233875524264
+                                                              217 pyo3::impl_::trampoline::fastcall_cfunction_with_keywords
+                                                                217 pyo3::impl_::trampoline::trampoline
+                                                                  216 _native::bulk::Bulk::__pymethod_feed__
+                                                                    143 _native::bulk::Bulk::feed
+                                                                      97 _native::bulk::ColumnCodec::encode
+                                                                        33 _native::params::convert
+                                                                          31 _<pyo3::instance::Bound<pyo3::types::any::PyAny> as pyo3::types::any::PyAnyMethods>::call_method0
+                                                                    65 _native::bulk::Bulk::feed
+                                                                      65 _native::connection::Shared::pump
+                                                                        39 _native::bulk::DeadWatch::run::_{{closure}}
+                                                                        26 _native::connection::Connection::attach::_{{closure}}
+                                                                          26 _<xitca_postgres::driver::Driver as core::future::into_future::IntoFuture>::into_future::_{{closure}}
+                                                                            26 _<_native::net::EofWatch<Io> as std::io::Write>::write
+                                                                              26 _<_native::event_loop::LoopSocket as std::io::Write>::write
+                                                                                26 __sendto

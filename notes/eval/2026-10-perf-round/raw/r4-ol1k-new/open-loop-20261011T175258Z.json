@@ -1,0 +1,18 @@
+[
+  {
+    "driver": "fastpg-struct",
+    "target_rps": 1000,
+    "achieved_rps": 1014.0735029883097,
+    "requests": 10140,
+    "p50_us": 135.542,
+    "p90_us": 361.5,
+    "p99_us": 1354.125,
+    "p999_us": 2652.833,
+    "lag_p99_us": 1531.612,
+    "max_us": 4638.125,
+    "peak_inflight": 23,
+    "loop_busy_pct": 15.590202533091187,
+    "overloaded": false,
+    "errors": 0
+  }
+]

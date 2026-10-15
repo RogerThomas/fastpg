@@ -1,0 +1,14 @@
+.git
+.venv
+native/target
+bench/results
+**/__pycache__
+.env
+src/fastpg/*.so
+.pytest_cache
+.ruff_cache
+.claude
+.DS_Store
+.in
+.out
+docker/tls/certs

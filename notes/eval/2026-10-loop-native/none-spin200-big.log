@@ -1,0 +1,37 @@
+
+2026-10-10 12:26:53,775 [INFO]: 4 drivers x range-10k, concurrent on  run.py:189
+postgresql://fastpg:***@postgres:5432/fastpg (event loop: uvloop)               
+2026-10-10 12:26:53,798 [INFO]: asyncpg-struct         range-10k  harness.py:447
+2026-10-10 12:26:59,846 [INFO]: asyncpg-struct         concurrent harness.py:461
+(x16)                                                                           
+2026-10-10 12:27:05,918 [INFO]: fastpg-struct          range-10k  harness.py:447
+2026-10-10 12:27:11,949 [INFO]: fastpg-struct          concurrent harness.py:461
+(x16)                                                                           
+2026-10-10 12:27:18,073 [INFO]: fastpg-pipelined       range-10k  harness.py:447
+2026-10-10 12:27:24,103 [INFO]: fastpg-pipelined       concurrent harness.py:461
+(x16)                                                                           
+2026-10-10 12:27:30,208 [INFO]: fastpg-inline          range-10k  harness.py:447
+2026-10-10 12:27:36,237 [INFO]: fastpg-inline          concurrent harness.py:461
+(x16)                                                                           
+2026-10-10 12:26:53 UTC · Python 3.14.7 · Linux-7.0.14-linuxkit-aarch64-with-glibc2.41 · loop=uvloop · 5s per scenario after 1s warmup · 
+seed=42
+Large fetch: 10,000 rows, sequential on one connection                                              
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┓
+┃ driver           ┃ kind  ┃ rows   ┃ ops/s ┃    rows/s ┃   p50 µs ┃   p90 µs ┃   p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-inline    │ async │ struct │   160 │ 1,599,255 │  4,295.2 │  4,421.0 │  4,919.5 │   1.00x │
+│ fastpg-pipelined │ async │ struct │   151 │ 1,508,402 │  4,683.7 │  4,788.7 │  5,133.6 │   0.94x │
+│ fastpg-struct    │ async │ struct │   150 │ 1,502,372 │  4,705.5 │  4,795.3 │  5,246.3 │   0.94x │
+│ asyncpg-struct   │ async │ struct │    74 │   742,888 │ 11,688.9 │ 13,869.4 │ 26,218.2 │   0.46x │
+└──────────────────┴───────┴────────┴───────┴───────────┴──────────┴──────────┴──────────┴─────────┘
+Concurrent point lookups: 16 tasks over the driver's pool of 16                               
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ driver           ┃ kind  ┃ rows   ┃   ops/s ┃  rows/s ┃ p50 µs ┃ p90 µs ┃ p99 µs ┃ vs best ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ fastpg-pipelined │ async │ struct │ 138,582 │ 138,582 │  121.7 │  137.0 │  165.6 │   1.00x │
+│ fastpg-struct    │ async │ struct │  80,139 │  80,139 │  191.8 │  240.2 │  330.0 │   0.58x │
+│ fastpg-inline    │ async │ struct │  72,783 │  72,783 │  209.8 │  350.1 │  417.8 │   0.53x │
+│ asyncpg-struct   │ async │ struct │  25,570 │  25,570 │  617.1 │  683.0 │  938.8 │   0.18x │
+└──────────────────┴───────┴────────┴─────────┴─────────┴────────┴────────┴────────┴─────────┘
+2026-10-10 12:27:42,363 [INFO]: wrote /tmp/20261010T122653Z.json and  run.py:211
+/tmp/20261010T122653Z.md                                                        

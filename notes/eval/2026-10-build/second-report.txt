@@ -1,0 +1,155 @@
+
+
+== w16: cpu_us
+        base: median      7.258  min-max     7.237-    7.355  n=6
+         pgo: median      6.989  min-max     6.900-    7.038  n=6  | paired vs base: median   -4.1%  min-max   -4.7..  -3.0%
+   pgo-reads: median      7.057  min-max     6.836-    7.078  n=6  | paired vs base: median   -3.0%  min-max   -7.1..  -2.3%
+    mimalloc: median      7.079  min-max     6.963-    7.129  n=6  | paired vs base: median   -2.5%  min-max   -5.3..  -2.0%
+   mimalloc2: median      7.138  min-max     7.058-    7.203  n=6  | paired vs base: median   -1.7%  min-max   -2.8..  -1.3%
+
+== w16: user_us
+        base: median      4.923  min-max     4.820-    4.981  n=6
+         pgo: median      4.621  min-max     4.595-    4.646  n=6  | paired vs base: median   -6.1%  min-max   -7.4..  -4.1%
+   pgo-reads: median      4.621  min-max     4.576-    4.740  n=6  | paired vs base: median   -5.4%  min-max   -7.4..  -4.4%
+    mimalloc: median      4.673  min-max     4.488-    4.709  n=6  | paired vs base: median   -5.4%  min-max   -8.2..  -2.9%
+   mimalloc2: median      4.690  min-max     4.666-    4.733  n=6  | paired vs base: median   -4.6%  min-max   -5.6..  -2.9%
+
+== w16: sys_us
+        base: median      2.347  min-max     2.276-    2.490  n=6
+         pgo: median      2.368  min-max     2.275-    2.416  n=6  | paired vs base: median   +1.3%  min-max   -5.9..  +4.5%
+   pgo-reads: median      2.395  min-max     2.239-    2.484  n=6  | paired vs base: median   +2.5%  min-max  -10.1..  +5.8%
+    mimalloc: median      2.417  min-max     2.331-    2.558  n=6  | paired vs base: median   +1.0%  min-max   -1.5..  +9.8%
+   mimalloc2: median      2.451  min-max     2.361-    2.492  n=6  | paired vs base: median   +2.1%  min-max   -0.4..  +7.2%
+
+== w16: rate
+        base: median 137569.301  min-max 135827.128-138072.743  n=6
+         pgo: median 142958.974  min-max 142002.545-144799.223  n=6  | paired vs base: median   +4.2%  min-max   +3.0..  +5.3%
+   pgo-reads: median 141548.619  min-max 141191.336-146204.694  n=6  | paired vs base: median   +3.1%  min-max   +2.4..  +7.6%
+    mimalloc: median 141167.370  min-max 140101.442-143093.097  n=6  | paired vs base: median   +2.5%  min-max   +2.0..  +5.3%
+   mimalloc2: median 139892.345  min-max 138683.566-141570.091  n=6  | paired vs base: median   +1.7%  min-max   +1.4..  +2.9%
+
+== w16: p50_us
+        base: median     99.728  min-max    99.209-  100.666  n=6
+         pgo: median     95.979  min-max    94.750-   96.167  n=6  | paired vs base: median   -4.5%  min-max   -5.1..  -3.1%
+   pgo-reads: median     96.895  min-max    95.459-   97.667  n=6  | paired vs base: median   -2.8%  min-max   -5.2..  -2.3%
+    mimalloc: median     96.896  min-max    95.875-   98.250  n=6  | paired vs base: median   -2.7%  min-max   -3.8..  -2.2%
+   mimalloc2: median     97.750  min-max    96.959-   98.584  n=6  | paired vs base: median   -2.0%  min-max   -2.5..  -1.8%
+
+== w16: p99_us
+        base: median    217.021  min-max   215.083-  221.791  n=6
+         pgo: median    207.917  min-max   206.333-  209.833  n=6  | paired vs base: median   -4.5%  min-max   -5.4..  -3.3%
+   pgo-reads: median    210.834  min-max   208.375-  213.250  n=6  | paired vs base: median   -2.9%  min-max   -6.0..  -2.0%
+    mimalloc: median    210.417  min-max   207.833-  214.917  n=6  | paired vs base: median   -3.0%  min-max   -4.0..  -1.2%
+   mimalloc2: median    212.583  min-max   210.375-  215.834  n=6  | paired vs base: median   -2.3%  min-max   -3.7..  -0.8%
+
+== w128: cpu_us
+        base: median      3.661  min-max     3.576-    3.738  n=6
+         pgo: median      3.574  min-max     3.542-    3.604  n=6  | paired vs base: median   -1.9%  min-max   -5.2..  -0.1%
+   pgo-reads: median      3.556  min-max     3.494-    3.699  n=6  | paired vs base: median   -1.7%  min-max   -6.1..  +1.2%
+    mimalloc: median      3.604  min-max     3.513-    3.792  n=6  | paired vs base: median   -1.1%  min-max   -5.6..  +1.4%
+   mimalloc2: median      3.561  min-max     3.519-    3.613  n=6  | paired vs base: median   -3.3%  min-max   -5.2..  -0.2%
+
+== w128: user_us
+        base: median      3.388  min-max     3.332-    3.424  n=6
+         pgo: median      3.315  min-max     3.277-    3.327  n=6  | paired vs base: median   -2.1%  min-max   -4.3..  -0.2%
+   pgo-reads: median      3.296  min-max     3.258-    3.378  n=6  | paired vs base: median   -2.1%  min-max   -4.6..  -0.1%
+    mimalloc: median      3.331  min-max     3.271-    3.450  n=6  | paired vs base: median   -1.6%  min-max   -4.4..  +0.8%
+   mimalloc2: median      3.299  min-max     3.268-    3.318  n=6  | paired vs base: median   -3.1%  min-max   -3.9..  -0.4%
+
+== w128: sys_us
+        base: median      0.273  min-max     0.243-    0.314  n=6
+         pgo: median      0.266  min-max     0.245-    0.279  n=6  | paired vs base: median   -2.3%  min-max  -15.7..  +5.5%
+   pgo-reads: median      0.260  min-max     0.232-    0.321  n=6  | paired vs base: median   +1.6%  min-max  -22.8.. +18.9%
+    mimalloc: median      0.267  min-max     0.242-    0.342  n=6  | paired vs base: median   +5.1%  min-max  -19.5.. +11.2%
+   mimalloc2: median      0.253  min-max     0.240-    0.313  n=6  | paired vs base: median   -0.7%  min-max  -20.0..  +4.3%
+
+== w128: rate
+        base: median 272939.256  min-max 267108.250-279504.468  n=6
+         pgo: median 279454.410  min-max 277257.362-282131.428  n=6  | paired vs base: median   +2.0%  min-max   -0.0..  +5.6%
+   pgo-reads: median 281072.784  min-max 269410.487-286103.751  n=6  | paired vs base: median   +1.8%  min-max   -1.2..  +6.5%
+    mimalloc: median 277285.746  min-max 262922.441-284542.378  n=6  | paired vs base: median   +1.2%  min-max   -1.6..  +5.9%
+   mimalloc2: median 280663.375  min-max 276165.845-283963.509  n=6  | paired vs base: median   +3.4%  min-max   +0.3..  +5.5%
+
+== w128: p50_us
+        base: median    431.416  min-max   421.750-  440.709  n=6
+         pgo: median    420.750  min-max   417.250-  424.500  n=6  | paired vs base: median   -2.1%  min-max   -4.7..  -0.1%
+   pgo-reads: median    419.188  min-max   413.250-  436.417  n=6  | paired vs base: median   -1.7%  min-max   -6.2..  +1.7%
+    mimalloc: median    423.063  min-max   414.500-  450.834  n=6  | paired vs base: median   -1.1%  min-max   -5.9..  +2.9%
+   mimalloc2: median    419.021  min-max   414.666-  422.666  n=6  | paired vs base: median   -3.3%  min-max   -5.7..  -0.2%
+
+== w128: p99_us
+        base: median    930.271  min-max   898.750-  956.166  n=6
+         pgo: median    905.729  min-max   893.291-  917.334  n=6  | paired vs base: median   -2.0%  min-max   -6.6..  +0.4%
+   pgo-reads: median    898.854  min-max   870.833-  943.625  n=6  | paired vs base: median   -2.0%  min-max   -8.1..  +1.6%
+    mimalloc: median    918.042  min-max   880.250-  965.083  n=6  | paired vs base: median   -0.9%  min-max   -7.1..  +3.8%
+   mimalloc2: median    902.271  min-max   889.709-  919.708  n=6  | paired vs base: median   -3.6%  min-max   -5.6..  +0.2%
+
+== fetch: loop_ns_1000
+        base: median    631.958  min-max   628.125-  636.021  n=6
+         pgo: median    597.229  min-max   591.083-  602.646  n=6  | paired vs base: median   -5.4%  min-max   -6.7..  -4.1%
+   pgo-reads: median    601.823  min-max   591.666-  610.979  n=6  | paired vs base: median   -4.5%  min-max   -6.5..  -3.2%
+    mimalloc: median    633.292  min-max   628.459-  783.312  n=6  | paired vs base: median   +0.1%  min-max   -1.1.. +24.1%
+   mimalloc2: median    632.521  min-max   624.312-  686.667  n=6  | paired vs base: median   +0.2%  min-max   -1.8..  +8.8%
+
+== fetch: cpu_ns_1000
+        base: median    633.000  min-max   629.000-  637.000  n=6
+         pgo: median    598.000  min-max   592.000-  603.000  n=6  | paired vs base: median   -5.5%  min-max   -6.6..  -4.1%
+   pgo-reads: median    603.000  min-max   592.000-  612.000  n=6  | paired vs base: median   -4.5%  min-max   -6.6..  -3.2%
+    mimalloc: median    634.000  min-max   629.000-  785.000  n=6  | paired vs base: median   +0.0%  min-max   -1.1.. +24.2%
+   mimalloc2: median    633.500  min-max   625.000-  687.000  n=6  | paired vs base: median   +0.2%  min-max   -1.9..  +8.7%
+
+== fetch: loop_ns_10000
+        base: median    699.532  min-max   697.894-  704.979  n=6
+         pgo: median    668.895  min-max   662.194-  676.969  n=6  | paired vs base: median   -4.4%  min-max   -6.0..  -3.3%
+   pgo-reads: median    666.255  min-max   662.269-  794.156  n=6  | paired vs base: median   -4.8%  min-max   -6.0.. +13.8%
+    mimalloc: median    707.872  min-max   692.371-  758.725  n=6  | paired vs base: median   +0.8%  min-max   -1.8..  +8.7%
+   mimalloc2: median    697.785  min-max   685.883-  715.456  n=6  | paired vs base: median   -0.2%  min-max   -1.9..  +2.4%
+
+== fetch: cpu_ns_10000
+        base: median    703.450  min-max   701.500-  709.350  n=6
+         pgo: median    672.975  min-max   665.600-  681.700  n=6  | paired vs base: median   -4.3%  min-max   -6.1..  -3.2%
+   pgo-reads: median    669.850  min-max   665.800-  800.000  n=6  | paired vs base: median   -4.8%  min-max   -6.0.. +14.0%
+    mimalloc: median    712.000  min-max   697.000-  763.950  n=6  | paired vs base: median   +0.8%  min-max   -1.7..  +8.9%
+   mimalloc2: median    701.775  min-max   689.500-  720.000  n=6  | paired vs base: median   -0.1%  min-max   -1.9..  +2.5%
+
+== writes: fastpg execute_many (tuples) 10000
+        base: median    573.846  min-max   565.617-  599.663  n=6
+         pgo: median    472.683  min-max   464.879-  496.217  n=6  | paired vs base: median  -17.7%  min-max  -17.9.. -17.3%
+   pgo-reads: median    643.765  min-max   637.946-  661.379  n=6  | paired vs base: median  +12.4%  min-max   +8.0.. +13.9%
+    mimalloc: median    577.965  min-max   569.721-  604.175  n=6  | paired vs base: median   +1.0%  min-max   -1.6..  +3.8%
+   mimalloc2: median    569.231  min-max   556.579-  586.783  n=6  | paired vs base: median   -1.6%  min-max   -4.9..  +3.1%
+
+== writes: fastpg execute_many (tuples) 100000
+        base: median    544.524  min-max   538.407-  557.722  n=6
+         pgo: median    452.168  min-max   441.833-  467.778  n=6  | paired vs base: median  -17.0%  min-max  -18.3.. -16.0%
+   pgo-reads: median    613.399  min-max   608.787-  813.019  n=6  | paired vs base: median  +12.7%  min-max   +9.7.. +50.4%
+    mimalloc: median    547.233  min-max   536.457-  698.729  n=6  | paired vs base: median   -0.8%  min-max   -2.7.. +29.3%
+   mimalloc2: median    536.320  min-max   529.787-  707.562  n=6  | paired vs base: median   -1.8%  min-max   -5.0.. +30.9%
+
+== writes: fastpg copy_in (Structs) 10000
+        base: median    346.515  min-max   336.583-  351.858  n=6
+         pgo: median    272.044  min-max   249.862-  282.479  n=6  | paired vs base: median  -21.6%  min-max  -28.7.. -16.1%
+   pgo-reads: median    394.669  min-max   344.517-  403.442  n=6  | paired vs base: median  +14.2%  min-max   -0.4.. +15.6%
+    mimalloc: median    382.956  min-max   350.329-  395.433  n=6  | paired vs base: median  +11.7%  min-max   +1.3.. +12.9%
+   mimalloc2: median    355.023  min-max   339.542-  360.250  n=6  | paired vs base: median   +3.0%  min-max   -1.9..  +3.8%
+
+== writes: fastpg copy_in (Structs) 100000
+        base: median    287.029  min-max   278.743-  299.996  n=6
+         pgo: median    209.398  min-max   202.018-  220.900  n=6  | paired vs base: median  -27.4%  min-max  -30.7.. -22.5%
+   pgo-reads: median    332.874  min-max   315.394-  345.450  n=6  | paired vs base: median  +14.1%  min-max  +12.2.. +19.5%
+    mimalloc: median    300.707  min-max   290.652-  307.234  n=6  | paired vs base: median   +5.9%  min-max   -1.5..  +6.8%
+   mimalloc2: median    285.924  min-max   280.478-  291.444  n=6  | paired vs base: median   -1.1%  min-max   -2.9..  +3.0%
+
+== writes: fastpg copy_in (tuples) 10000
+        base: median    344.508  min-max   334.996-  365.767  n=6
+         pgo: median    277.640  min-max   271.708-  288.550  n=6  | paired vs base: median  -18.6%  min-max  -22.0.. -17.1%
+   pgo-reads: median    400.594  min-max   389.358-  414.463  n=6  | paired vs base: median  +16.6%  min-max  +10.1.. +21.7%
+    mimalloc: median    353.183  min-max   349.529-  358.425  n=6  | paired vs base: median   +2.8%  min-max   -3.6..  +6.7%
+   mimalloc2: median    345.823  min-max   335.279-  361.683  n=6  | paired vs base: median   -0.1%  min-max   -5.0..  +8.0%
+
+== writes: fastpg copy_in (tuples) 100000
+        base: median    283.709  min-max   272.956-  292.715  n=6
+         pgo: median    215.511  min-max   202.187-  231.768  n=6  | paired vs base: median  -25.0%  min-max  -26.3.. -17.9%
+   pgo-reads: median    339.001  min-max   324.149-  347.461  n=6  | paired vs base: median  +18.0%  min-max  +12.2.. +27.0%
+    mimalloc: median    296.566  min-max   291.106-  304.645  n=6  | paired vs base: median   +5.1%  min-max   +1.8..  +6.6%
+   mimalloc2: median    296.435  min-max   291.569-  305.033  n=6  | paired vs base: median   +4.5%  min-max   +0.0..  +9.3%

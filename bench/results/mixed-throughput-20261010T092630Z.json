@@ -1,0 +1,122 @@
+[
+  {
+    "config": "fastpg x1",
+    "tasks": 16,
+    "ops_per_s": 28135.982028377948
+  },
+  {
+    "config": "fastpg x1",
+    "tasks": 64,
+    "ops_per_s": 42650.81139510844
+  },
+  {
+    "config": "fastpg x1",
+    "tasks": 256,
+    "ops_per_s": 44107.30236956743
+  },
+  {
+    "config": "fastpg-pool x8 cap 1",
+    "tasks": 16,
+    "ops_per_s": 14814.525812303878
+  },
+  {
+    "config": "fastpg-pool x8 cap 1",
+    "tasks": 64,
+    "ops_per_s": 14755.772269426583
+  },
+  {
+    "config": "fastpg-pool x8 cap 1",
+    "tasks": 256,
+    "ops_per_s": 14824.327326577324
+  },
+  {
+    "config": "fastpg-pool x8 cap 2",
+    "tasks": 16,
+    "ops_per_s": 25096.310842306182
+  },
+  {
+    "config": "fastpg-pool x8 cap 2",
+    "tasks": 64,
+    "ops_per_s": 24669.914522035124
+  },
+  {
+    "config": "fastpg-pool x8 cap 2",
+    "tasks": 256,
+    "ops_per_s": 24373.699608939198
+  },
+  {
+    "config": "fastpg-pool x8 cap 4",
+    "tasks": 16,
+    "ops_per_s": 24300.836587511272
+  },
+  {
+    "config": "fastpg-pool x8 cap 4",
+    "tasks": 64,
+    "ops_per_s": 38101.81403111103
+  },
+  {
+    "config": "fastpg-pool x8 cap 4",
+    "tasks": 256,
+    "ops_per_s": 38142.68427959966
+  },
+  {
+    "config": "fastpg-pool x8 cap 8",
+    "tasks": 16,
+    "ops_per_s": 24358.83885490927
+  },
+  {
+    "config": "fastpg-pool x8 cap 8",
+    "tasks": 64,
+    "ops_per_s": 50802.82741669563
+  },
+  {
+    "config": "fastpg-pool x8 cap 8",
+    "tasks": 256,
+    "ops_per_s": 50228.433743506925
+  },
+  {
+    "config": "fastpg-pool x8 cap 16",
+    "tasks": 16,
+    "ops_per_s": 24177.52403547475
+  },
+  {
+    "config": "fastpg-pool x8 cap 16",
+    "tasks": 64,
+    "ops_per_s": 51298.59324945051
+  },
+  {
+    "config": "fastpg-pool x8 cap 16",
+    "tasks": 256,
+    "ops_per_s": 56650.33935411098
+  },
+  {
+    "config": "fastpg-pool x8 cap 64",
+    "tasks": 16,
+    "ops_per_s": 24219.86619490122
+  },
+  {
+    "config": "fastpg-pool x8 cap 64",
+    "tasks": 64,
+    "ops_per_s": 51173.91515000747
+  },
+  {
+    "config": "fastpg-pool x8 cap 64",
+    "tasks": 256,
+    "ops_per_s": 57090.071430031494
+  },
+  {
+    "config": "asyncpg x16",
+    "tasks": 16,
+    "ops_per_s": 10125.924715570733
+  },
+  {
+    "config": "asyncpg x16",
+    "tasks": 64,
+    "ops_per_s": 10255.958799569597
+  },
+  {
+    "config": "asyncpg x16",
+    "tasks": 256,
+    "ops_per_s": 10286.503659058357
+  }
+]

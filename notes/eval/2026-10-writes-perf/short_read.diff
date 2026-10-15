@@ -1,0 +1,50 @@
+diff --git a/native/src/event_loop.rs b/native/src/event_loop.rs
+index ed1785f..2a22e3e 100644
+--- a/native/src/event_loop.rs
++++ b/native/src/event_loop.rs
+@@ -190,6 +190,11 @@ struct Flags {
+ #[derive(Default)]
+ pub struct IoState {
+     flags: Mutex<Flags>,
++    /// The last read returned less than asked for, so the socket is (almost certainly)
++    /// empty: the next read skips the `recv` that would only fail with `EAGAIN`, until the
++    /// loop reports the socket readable again. Safe because asyncio's readers are
++    /// level-triggered: data that arrives meanwhile still makes the loop call `on_readable`.
++    drained: AtomicBool,
+ }
+ 
+ impl IoState {
+@@ -199,6 +204,7 @@ impl IoState {
+ 
+     /// `loop.add_reader` callback.
+     pub fn on_readable(&self) {
++        self.drained.store(false, Ordering::Release);
+         let mut flags = self.lock();
+         flags.readable = true;
+         if let Some(w) = flags.read_waker.take() {
+@@ -255,14 +261,21 @@ impl LoopSocket {
+ 
+ impl Read for LoopSocket {
+     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        if self.state.drained.load(Ordering::Acquire) {
++            return Err(io::ErrorKind::WouldBlock.into());
++        }
+         let result = match &mut self.sock {
+             Sock::Tcp(s) => s.read(buf),
+             Sock::Unix(s) => s.read(buf),
+         };
+-        if let Err(e) = &result
+-            && e.kind() == io::ErrorKind::WouldBlock
+-        {
+-            self.state.lock().readable = false;
++        match &result {
++            Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.state.lock().readable = false,
++            // A short read: see `IoState::drained`.
++            Ok(n) if *n > 0 && *n < buf.len() && std::env::var_os("FASTPG_EXP_NOSHORT").is_none() => {
++                self.state.lock().readable = false;
++                self.state.drained.store(true, Ordering::Release);
++            }
++            _ => {}
+         }
+         result
+     }

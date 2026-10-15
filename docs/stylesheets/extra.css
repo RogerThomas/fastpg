@@ -1,0 +1,26 @@
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.8rem;
+}
+
+/* overrides/partials/logo.html renders both logo variants, in the header and in the
+   navigation drawer; show the one for the colour scheme. `!important` beats the theme's
+   own `display: block` on logo images, whose selectors are more specific. */
+.fastpg-logo--dark {
+  display: none !important;
+}
+
+[data-md-color-scheme="slate"] .fastpg-logo--dark {
+  display: block !important;
+}
+
+[data-md-color-scheme="slate"] .fastpg-logo--light {
+  display: none !important;
+}
+
+/* Option and key names in a table's first column stay on one line (the theme lets inline
+   code break anywhere). */
+.md-typeset table td:first-child > code:only-child {
+  white-space: nowrap;
+  word-break: normal;
+}

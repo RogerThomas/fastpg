@@ -1,0 +1,96 @@
+{
+  "started_at": "2026-10-10T13:36:04.749512Z",
+  "python": "3.14.7",
+  "platform": "Linux-7.0.14-linuxkit-aarch64-with-glibc2.41",
+  "event_loop": "uvloop",
+  "plan": {
+    "dsn": "postgresql://fastpg:***@postgres:5432/fastpg",
+    "scenarios": [
+      "concurrent"
+    ],
+    "duration_s": 5.0,
+    "iterations": null,
+    "warmup_s": 1.0,
+    "concurrency": 16,
+    "alloc_iterations": 200,
+    "seed": 42
+  },
+  "versions": {
+    "asyncpg": "0.32.0",
+    "fastpg": "0.1.0",
+    "msgspec": "0.22.0",
+    "uvloop": "0.23.0"
+  },
+  "results": [
+    {
+      "driver": "asyncpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 59636,
+      "seconds": 5.0,
+      "ops_per_s": 11926.5,
+      "rows_per_s": 11926.5,
+      "p50_us": 649.8,
+      "p90_us": 779.3,
+      "p99_us": 49543.8
+    },
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 164707,
+      "seconds": 5.0,
+      "ops_per_s": 32940.7,
+      "rows_per_s": 32940.7,
+      "p50_us": 228.0,
+      "p90_us": 385.8,
+      "p99_us": 607.9
+    },
+    {
+      "driver": "fastpg-pipelined",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 338965,
+      "seconds": 5.0,
+      "ops_per_s": 67791.4,
+      "rows_per_s": 67791.4,
+      "p50_us": 113.9,
+      "p90_us": 137.6,
+      "p99_us": 185.4
+    },
+    {
+      "driver": "fastpg-thread-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 105375,
+      "seconds": 5.0,
+      "ops_per_s": 21074.4,
+      "rows_per_s": 21074.4,
+      "p50_us": 247.3,
+      "p90_us": 359.5,
+      "p99_us": 726.7
+    },
+    {
+      "driver": "fastpg-thread-pipelined",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 173302,
+      "seconds": 5.0,
+      "ops_per_s": 34659.3,
+      "rows_per_s": 34659.3,
+      "p50_us": 158.1,
+      "p90_us": 212.3,
+      "p99_us": 351.4
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+[
+  {
+    "config": "fastpg x1",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4379.920850118197,
+    "fast_p50_us": 560380.958,
+    "fast_p99_us": 775994.459,
+    "fast_p999_us": 800616.626,
+    "slow_p50_us": 554723.667,
+    "slow_p99_us": 783986.417
+  },
+  {
+    "config": "fastpg x1",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 3878.516362417558,
+    "fast_p50_us": 3506985.918,
+    "fast_p99_us": 7890412.254,
+    "fast_p999_us": 7906511.837,
+    "slow_p50_us": 3699754.919,
+    "slow_p99_us": 7846266.337
+  },
+  {
+    "config": "fastpg x2",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4982.595545069693,
+    "fast_p50_us": 88.542,
+    "fast_p99_us": 58201.083,
+    "fast_p999_us": 73346.292,
+    "slow_p50_us": 24894.041,
+    "slow_p99_us": 75460.5
+  },
+  {
+    "config": "fastpg x2",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 7909.280522359877,
+    "fast_p50_us": 438029.875,
+    "fast_p99_us": 1329615.043,
+    "fast_p999_us": 1363837.042,
+    "slow_p50_us": 474123.917,
+    "slow_p99_us": 1317559.626
+  },
+  {
+    "config": "fastpg x4",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4987.27144170616,
+    "fast_p50_us": 65.459,
+    "fast_p99_us": 18151.25,
+    "fast_p999_us": 23052.584,
+    "slow_p50_us": 20873.667,
+    "slow_p99_us": 38415.0
+  },
+  {
+    "config": "fastpg x4",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9973.549230474926,
+    "fast_p50_us": 47.666,
+    "fast_p99_us": 43788.625,
+    "fast_p999_us": 62495.583,
+    "slow_p50_us": 22942.042,
+    "slow_p99_us": 63650.0
+  },
+  {
+    "config": "fastpg x8",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4985.912272371466,
+    "fast_p50_us": 69.958,
+    "fast_p99_us": 245.0,
+    "fast_p999_us": 17218.0,
+    "slow_p50_us": 21031.167,
+    "slow_p99_us": 25107.542
+  },
+  {
+    "config": "fastpg x8",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9979.91061414464,
+    "fast_p50_us": 46.708,
+    "fast_p99_us": 5501.417,
+    "fast_p999_us": 20040.75,
+    "slow_p50_us": 20895.833,
+    "slow_p99_us": 25127.583
+  },
+  {
+    "config": "fastpg-aware x2",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4982.756522800291,
+    "fast_p50_us": 91.041,
+    "fast_p99_us": 57738.708,
+    "fast_p999_us": 69345.917,
+    "slow_p50_us": 22231.834,
+    "slow_p99_us": 68700.916
+  },
+  {
+    "config": "fastpg-aware x2",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 7474.659002976655,
+    "fast_p50_us": 300154.208,
+    "fast_p99_us": 1691966.626,
+    "fast_p999_us": 1707905.251,
+    "slow_p50_us": 318680.084,
+    "slow_p99_us": 1667028.167
+  },
+  {
+    "config": "fastpg-aware x4",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4985.074580242595,
+    "fast_p50_us": 67.625,
+    "fast_p99_us": 18553.75,
+    "fast_p999_us": 24731.584,
+    "slow_p50_us": 21112.208,
+    "slow_p99_us": 25171.5
+  },
+  {
+    "config": "fastpg-aware x4",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9978.3919678744,
+    "fast_p50_us": 51.666,
+    "fast_p99_us": 63189.333,
+    "fast_p999_us": 90668.542,
+    "slow_p50_us": 22338.375,
+    "slow_p99_us": 81269.042
+  },
+  {
+    "config": "fastpg-aware x8",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4982.4049172005325,
+    "fast_p50_us": 78.333,
+    "fast_p99_us": 370.75,
+    "fast_p999_us": 1395.75,
+    "slow_p50_us": 21097.708,
+    "slow_p99_us": 25154.625
+  },
+  {
+    "config": "fastpg-aware x8",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9973.481272908026,
+    "fast_p50_us": 46.334,
+    "fast_p99_us": 222.625,
+    "fast_p999_us": 19309.0,
+    "slow_p50_us": 20762.959,
+    "slow_p99_us": 25125.458
+  },
+  {
+    "config": "asyncpg x8",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4986.009540190853,
+    "fast_p50_us": 109.416,
+    "fast_p99_us": 431.041,
+    "fast_p999_us": 1092.0,
+    "slow_p50_us": 20991.25,
+    "slow_p99_us": 25179.5
+  },
+  {
+    "config": "asyncpg x8",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9973.866401902113,
+    "fast_p50_us": 112.125,
+    "fast_p99_us": 672.583,
+    "fast_p999_us": 4776.791,
+    "slow_p50_us": 20579.708,
+    "slow_p99_us": 25074.25
+  },
+  {
+    "config": "asyncpg x16",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4983.139046616419,
+    "fast_p50_us": 108.542,
+    "fast_p99_us": 491.708,
+    "fast_p999_us": 786.417,
+    "slow_p50_us": 20861.917,
+    "slow_p99_us": 25076.542
+  },
+  {
+    "config": "asyncpg x16",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9973.689373131734,
+    "fast_p50_us": 111.375,
+    "fast_p99_us": 666.459,
+    "fast_p999_us": 1015.583,
+    "slow_p50_us": 20501.542,
+    "slow_p99_us": 25140.875
+  },
+  {
+    "config": "asyncpg x32",
+    "rate": 5000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 4982.368389800456,
+    "fast_p50_us": 115.834,
+    "fast_p99_us": 546.75,
+    "fast_p999_us": 3024.042,
+    "slow_p50_us": 21025.208,
+    "slow_p99_us": 25142.792
+  },
+  {
+    "config": "asyncpg x32",
+    "rate": 10000,
+    "slow_fraction": 0.01,
+    "achieved_rps": 9976.689600700332,
+    "fast_p50_us": 111.0,
+    "fast_p99_us": 663.041,
+    "fast_p999_us": 1108.167,
+    "slow_p50_us": 20489.542,
+    "slow_p99_us": 25095.625
+  }
+]

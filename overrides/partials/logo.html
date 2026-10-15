@@ -1,0 +1,6 @@
+{#-
+  Overrides the theme's partials/logo.html: renders both logo variants, and
+  docs/stylesheets/extra.css shows the one matching the colour scheme.
+-#}
+<img class="fastpg-logo fastpg-logo--light" src="{{ config.theme.logo | url }}" alt="{{ config.site_name }}">
+<img class="fastpg-logo fastpg-logo--dark" src="{{ 'assets/logo-dark.svg' | url }}" alt="{{ config.site_name }}">

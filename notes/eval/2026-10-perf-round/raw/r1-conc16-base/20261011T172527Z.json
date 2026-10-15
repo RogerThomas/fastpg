@@ -1,0 +1,55 @@
+{
+  "started_at": "2026-10-11T17:25:27.161565Z",
+  "python": "3.14.7",
+  "platform": "Linux-7.0.14-linuxkit-aarch64-with-glibc2.41",
+  "event_loop": "uvloop",
+  "plan": {
+    "dsn": "postgresql://fastpg:***@postgres:5432/fastpg",
+    "scenarios": [
+      "concurrent",
+      "concurrent-pinned"
+    ],
+    "duration_s": 5.0,
+    "iterations": null,
+    "warmup_s": 1.0,
+    "concurrency": 16,
+    "pool_size": 16,
+    "alloc_iterations": 200,
+    "seed": 42
+  },
+  "versions": {
+    "fastpg": "0.1.0",
+    "msgspec": "0.22.0",
+    "uvloop": "0.23.0"
+  },
+  "results": [
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent-pinned",
+      "rows_per_op": 1,
+      "ops": 343691,
+      "seconds": 5.0,
+      "ops_per_s": 68737.3,
+      "rows_per_s": 68737.3,
+      "p50_us": 190.9,
+      "p90_us": 374.1,
+      "p99_us": 467.5
+    },
+    {
+      "driver": "fastpg-struct",
+      "kind": "async",
+      "rows": "struct",
+      "scenario": "concurrent",
+      "rows_per_op": 1,
+      "ops": 303075,
+      "seconds": 5.0,
+      "ops_per_s": 60614.0,
+      "rows_per_s": 60614.0,
+      "p50_us": 218.3,
+      "p90_us": 425.6,
+      "p99_us": 576.3
+    }
+  ]
+}
