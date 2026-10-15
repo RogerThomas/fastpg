@@ -776,6 +776,16 @@ class Pool:
         )
 
     @overload
+    async def select_one(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> dict[str, Any]: ...
+    @overload
     async def select_one[T](
         self,
         query: str | Template,
@@ -808,6 +818,16 @@ class Pool:
         return await self._query(self._ONE, query, args, into, strategy)
 
     @overload
+    async def select_one_or_none(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> dict[str, Any] | None: ...
+    @overload
     async def select_one_or_none[T](
         self,
         query: str | Template,
@@ -839,6 +859,16 @@ class Pool:
             query, args = self._named.bind(query, args, params)
         return await self._query(self._ONE_OR_NONE, query, args, into, strategy)
 
+    @overload
+    async def select_many(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> list[dict[str, Any]]: ...
     @overload
     async def select_many[T](
         self,

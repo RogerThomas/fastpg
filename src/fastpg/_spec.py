@@ -1,6 +1,7 @@
-"""Row-target planning: what the native decoder needs for a `msgspec.Struct` or pydantic model.
+"""Row-target planning: what the native decoder needs for an `into=` type.
 
-Each target type is inspected once (cached) and yields a `Plan`:
+Targets are msgspec Structs, `NamedTuple`s, pydantic models and `dict`. Each target type is
+inspected once (cached) and yields a `Plan`:
 
 * `spec`: the native spec for **direct** construction, or None when the type can't be built
   directly (with the reason in `direct_error`).
@@ -14,13 +15,19 @@ column with a cached `msgspec.json.Decoder(<annotation>)`, or something only msg
 validation produces correctly (`Meta` constraints, enums, literals, non-optional unions,
 tz-constrained datetimes). Such Structs can't be built directly; strategy "auto" routes them
 through msgpack instead. Pydantic models are analysed in `fastpg._pydantic`.
+
+`NamedTuple` fields are classified like Struct fields. `dict` rows have no fields: every
+column is a key. Both are only built directly: the msgpack/json routes encode rows as maps,
+which msgspec decodes into a NamedTuple only from arrays, and a dict built from them would
+lose the column types (dates as strings, ...).
 """
 
 import inspect
 import sys
+import typing
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeIs
 
 import msgspec
 import msgspec.inspect as mi
@@ -79,7 +86,7 @@ class Plan[T]:
 
 
 class StructPlanner:
-    """Builds `Plan`s for msgspec Structs (see the module docstring)."""
+    """Builds `Plan`s for msgspec Structs and NamedTuples (see the module docstring)."""
 
     _SCALARS: ClassVar[dict[type[mi.Type], Kind]] = {
         mi.AnyType: Kind.ANY,
@@ -145,6 +152,43 @@ class StructPlanner:
         raise NeedsValidationError(msg)
 
     @classmethod
+    def _field_args(
+        cls,
+        owner: type[object],
+        info_fields: tuple[mi.Field, ...],
+        annotations: dict[str, Any],
+        attr_names: dict[str, str],
+    ) -> tuple[list[FieldArg], str | None]:
+        """`StructSpec` fields, or why direct construction is unavailable."""
+        fields: list[FieldArg] = []
+        for field in info_fields:
+            try:
+                kind, nullable = cls._classify(field.type)
+            except NeedsValidationError as e:
+                return fields, f"{owner.__qualname__}.{field.name}: {e}"
+            decoder: Any = None
+            if kind is Kind.JSON:
+                decoder = msgspec.json.Decoder(annotations[field.name]).decode
+            attr = attr_names[field.name]
+            fields.append((attr, field.encode_name, kind, nullable, field.required, decoder))
+        return fields, None
+
+    @staticmethod
+    def _untrackable_named_tuple(target: type[tuple[Any, ...]]) -> bool:
+        """Whether instances can only reference their items: no `__dict__`, and no class
+        between `target` and the namedtuple class (whose `_fields` it defines, and whose
+        `__new__` typing.NamedTuple doesn't let a class body replace) overrides `__new__`,
+        which could store other values than the arguments."""
+        if target.__dictoffset__ != 0:
+            return False
+        for klass in target.__mro__:
+            if "_fields" in klass.__dict__:
+                return True
+            if "__new__" in klass.__dict__:
+                return False
+        return False
+
+    @classmethod
     def plan(cls, struct: type[msgspec.Struct]) -> Plan[msgspec.Struct]:
         info = mi.type_info(struct)
         if not isinstance(info, mi.StructType):  # guaranteed for Struct types
@@ -152,19 +196,7 @@ class StructPlanner:
             raise TypeError(msg)
         annotations = {f.name: f.type for f in msgspec.structs.fields(struct)}
         attr_names = {name: name for name in struct.__struct_fields__}  # interned names
-        fields: list[FieldArg] = []
-        direct_error = None
-        for field in info.fields:
-            try:
-                kind, nullable = cls._classify(field.type)
-            except NeedsValidationError as e:
-                direct_error = f"{struct.__qualname__}.{field.name}: {e}"
-                break
-            decoder: Any = None
-            if kind is Kind.JSON:
-                decoder = msgspec.json.Decoder(annotations[field.name]).decode
-            attr = attr_names[field.name]
-            fields.append((attr, field.encode_name, kind, nullable, field.required, decoder))
+        fields, direct_error = cls._field_args(struct, info.fields, annotations, attr_names)
         # kw_only fields can't be passed positionally; msgspec only exposes this via the
         # signature.
         positional = sum(
@@ -203,30 +235,105 @@ class StructPlanner:
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
         )
 
+    @classmethod
+    def plan_named_tuple(cls, target: type[tuple[Any, ...]]) -> Plan[tuple[Any, ...]]:
+        """A `NamedTuple` (typing's or collections'): fields are classified as for Structs;
+        instances are built by calling the class positionally with every field."""
+        info = mi.type_info(target)
+        if not isinstance(info, mi.NamedTupleType):  # guaranteed for namedtuple classes
+            msg = f"msgspec does not describe {target!r} as a NamedTuple"
+            raise TypeError(msg)
+        annotations = typing.get_type_hints(target)
+        attr_names = {f.name: f.name for f in info.fields}
+        fields, direct_error = cls._field_args(target, info.fields, annotations, attr_names)
+        spec = None
+        if direct_error is None:
+            spec = StructSpec(
+                target,
+                fields,
+                forbid_unknown_fields=False,
+                positional_fields=len(fields),
+                named_tuple_defaults=[
+                    (False, None) if f.required else (True, f.default) for f in info.fields
+                ],
+                untrackable=cls._untrackable_named_tuple(target),
+            )
+        route_error = (
+            f"{target.__qualname__} is a NamedTuple, which is only built directly (the default"
+            " strategy): rows are encoded as maps, and msgspec decodes NamedTuples from arrays"
+        )
+        return Plan(
+            spec=spec,
+            direct_error=direct_error,
+            fallback="msgpack",
+            msgpack_one=None,
+            msgpack_many=None,
+            msgpack_error=route_error,
+            json_one=None,
+            json_many=None,
+            json_error=route_error,
+            validation_error=msgspec.ValidationError,
+            text_columns=(),
+        )
+
 
 class Planner:
-    """One cached `Plan` per `into=` type: msgspec Structs or pydantic models."""
+    """One cached `Plan` per `into=` type: dict, NamedTuples, msgspec Structs or pydantic
+    models."""
 
     _plans: ClassVar[dict[type[object], Plan[Any]]] = {}
+    _EXPECTED: ClassVar[str] = (
+        "into= must be dict, a NamedTuple, or a msgspec.Struct or pydantic.BaseModel subclass"
+    )
 
     @staticmethod
-    def _build(target: type[object]) -> Plan[Any]:
+    def _dict_plan() -> Plan[dict[str, Any]]:
+        """Rows as dicts keyed by column name, built directly."""
+        route_error = (
+            "dict rows are only built directly (the default strategy): through msgpack or"
+            " JSON, values would lose their column types"
+        )
+        return Plan(
+            spec=StructSpec.for_dict(),
+            direct_error=None,
+            fallback="msgpack",
+            msgpack_one=None,
+            msgpack_many=None,
+            msgpack_error=route_error,
+            json_one=None,
+            json_many=None,
+            json_error=route_error,
+            validation_error=msgspec.ValidationError,
+            text_columns=(),
+        )
+
+    @staticmethod
+    def _is_named_tuple(target: type[object]) -> TypeIs[type[tuple[Any, ...]]]:
+        """Whether `target` is a namedtuple class (typing's `NamedTuple` or collections')."""
+        return hasattr(target, "_fields") and issubclass(target, tuple)
+
+    @classmethod
+    def _build(cls, target: type[object]) -> Plan[Any]:
+        if target is dict:
+            return cls._dict_plan()
         if issubclass(target, msgspec.Struct):
             return StructPlanner.plan(target)
+        if cls._is_named_tuple(target):
+            return StructPlanner.plan_named_tuple(target)
         # Only consult pydantic if the application already imported it.
         if "pydantic" in sys.modules:
             from fastpg._pydantic import ModelPlanner
 
             if ModelPlanner.accepts(target):
                 return ModelPlanner.plan(target)
-        msg = f"into= must be a msgspec.Struct or pydantic.BaseModel subclass, got {target!r}"
+        msg = f"{cls._EXPECTED}, got {target!r}"
         raise TypeError(msg)
 
     @classmethod
     def plan_for(cls, target: object) -> Plan[Any]:
         """The plan for `target`; raises TypeError for anything else (untyped callers)."""
         if not isinstance(target, type):
-            msg = f"into= must be a msgspec.Struct or pydantic.BaseModel subclass, got {target!r}"
+            msg = f"{cls._EXPECTED}, got {target!r}"
             raise TypeError(msg)
         known: type[object] = target
         plan = cls._plans.get(known)  # absent: first use of this type

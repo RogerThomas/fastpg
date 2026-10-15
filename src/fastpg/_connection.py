@@ -51,6 +51,9 @@ type Strategy = Literal["auto", "direct", "msgpack", "json"]
   ``validate_json`` builds and fully validates them.
 * ``"auto"`` (default): ``"direct"`` when possible, otherwise ``"msgpack"`` (msgspec) or
   ``"json"`` (pydantic).
+
+``into=dict`` and ``into=`` a ``NamedTuple`` are always built directly; ``"msgpack"`` and
+``"json"`` raise ``UnsupportedTypeError`` for them.
 """
 
 type IsolationLevel = Literal[
@@ -138,6 +141,16 @@ class _Queries:
         return self._decoded(future, many if shape == _ALL else one, plan.validation_error)
 
     @overload
+    async def select_one(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> dict[str, Any]: ...
+    @overload
     async def select_one[T](
         self,
         query: str | Template,
@@ -173,6 +186,16 @@ class _Queries:
         return await self._fetch(query, args, _ONE, into, strategy)
 
     @overload
+    async def select_one_or_none(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> dict[str, Any] | None: ...
+    @overload
     async def select_one_or_none[T](
         self,
         query: str | Template,
@@ -204,6 +227,16 @@ class _Queries:
             query, args = self._named.bind(query, args, params)
         return await self._fetch(query, args, _ONE_OR_NONE, into, strategy)
 
+    @overload
+    async def select_many(
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[dict[Any, Any]],
+        strategy: Strategy = "auto",
+    ) -> list[dict[str, Any]]: ...
     @overload
     async def select_many[T](
         self,

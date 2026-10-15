@@ -352,7 +352,7 @@ async def test_select_one_or_none_into(conn: fastpg.Connection) -> None:
 
 
 async def test_into_must_be_struct_or_model(conn: fastpg.Connection) -> None:
-    untyped_caller: Any = dict  # what an untyped caller could pass
+    untyped_caller: Any = int  # what an untyped caller could pass
     with pytest.raises(TypeError, match=r"msgspec\.Struct"):
         await conn.select_one("SELECT 1", into=untyped_caller)
 
