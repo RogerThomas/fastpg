@@ -21,8 +21,9 @@ print(await conn.execute("INSERT INTO notes VALUES ($1, $2)", 1, "first"))  # 1
 | `execute(query, *args)` | `int`: the rows affected, from the command tag (0 for DDL) |
 | `execute_script(query)` | `None`: `;`-separated statements, no parameters, one implicit transaction |
 
-* Without `into=`, rows are tuples; with it, [Structs](structs.md) or
-  [pydantic models](pydantic.md), typed accordingly.
+* Without `into=`, rows are tuples; with it, [Structs](structs.md),
+  [pydantic models](pydantic.md), or [dicts and NamedTuples](structs.md#dicts-and-namedtuples),
+  typed accordingly.
 
 ## Passing values
 

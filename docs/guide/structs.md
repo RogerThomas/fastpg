@@ -96,6 +96,40 @@ print(await conn.select_many(query, 2, into=Contact))
 #  Contact(display_name='person-2', verified=False)]
 ```
 
+## Dicts and NamedTuples
+
+`into=dict` makes each row a `dict[str, Any]` keyed by column name, in column order, with
+the values a tuple row would hold. Column names must be distinct: a name that appears twice
+(`SELECT 1, 2` names both `?column?`) raises `TypeMismatchError` rather than keeping only
+one of the values, as `dict(record)` does in asyncpg.
+
+```python
+row = await conn.select_one("SELECT id, name, email FROM people WHERE id = $1", 7, into=dict)
+print(row)  # {'id': 7, 'name': 'person-7', 'email': None}
+```
+
+A `typing.NamedTuple` binds like a Struct: by field name, with the same type checks, NULL
+rules and defaults, and extra columns ignored. Each row calls the class positionally with
+every field.
+
+```python
+from typing import NamedTuple
+
+
+class NameAge(NamedTuple):
+    name: str
+    age: int
+    verified: bool = False
+
+
+query = "SELECT age, name FROM people WHERE id = $1"
+print(await conn.select_one(query, 3, into=NameAge))
+# NameAge(name='person-3', age=21, verified=False)
+```
+
+Both are built directly only: `strategy="msgpack"` or `"json"` raises
+`UnsupportedTypeError`, as does a NamedTuple field that needs msgspec validation.
+
 ## Gotchas
 
 * A `str` field fed from a `json`/`jsonb` column gets the raw JSON text, under every strategy.

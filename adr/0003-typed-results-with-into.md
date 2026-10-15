@@ -20,9 +20,13 @@ tuples, with the same results msgspec or pydantic validation would give.
   - `auto` (default): `direct` when provably equivalent to validation (no `Meta`
     constraints, enums, `Literal` or non-optional unions; for models, no validators,
     constraints or mutable defaults), otherwise `msgpack` for Structs and `json` for models.
+- `into=dict` (keyed by column name; duplicate names raise rather than drop a value) and
+  `into=` a `NamedTuple` (bound like a Struct, called positionally) are built directly
+  only; `msgpack` and `json` raise `UnsupportedTypeError` for them.
 - A json/jsonb column feeding a `str` field gives its raw text in every mode.
-- Tuples and Structs holding only scalars, and UUID and Decimal values, are untracked by the
-  cyclic GC.
+- Tuples, Structs and NamedTuples holding only scalars, and UUID and Decimal values, are
+  untracked by the cyclic GC. Dict rows stay tracked: CPython 3.14 wouldn't re-track one
+  given a container later.
 - `select_many` decodes in 512-row chunks while later rows arrive.
 
 ## Consequences
