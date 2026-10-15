@@ -653,6 +653,19 @@ async def test_large_copy_streams_from_a_generator(
     )
 
 
+async def test_execute_many_in_a_transaction_block_then_copy_in(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+) -> None:
+    table = await make_table("id int, v text")
+    async with conn.transaction() as tx:
+        assert (
+            await tx.execute_many(f"INSERT INTO {table} VALUES ($1, $2)", [(1, "a"), (2, "b")]) == 2
+        )
+    assert await conn.copy_in(table, [(i, str(i)) for i in range(3, 10_003)]) == 10_000
+    assert await conn.select_one(f"SELECT count(*), max(id) FROM {table}") == (10_002, 10_002)
+
+
 async def test_inside_an_open_transaction(
     conn: fastpg.Connection,
     make_table: TableMaker,

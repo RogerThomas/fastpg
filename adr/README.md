@@ -20,4 +20,3 @@ Each record describes one significant decision in fastpg's current design: its c
 
 - An intermittent 35-68 s connect stall, seen only on connects through Docker Desktop's host port forward on macOS (TCP retransmission times; the connect then succeeds). It is not TLS-related (see [notes/tls.md](../notes/tls.md), section 6) and does not reproduce container to container.
 - No test covers a pool over TLS; `tests/test_tls.py` covers single connections only.
-- `tests/test_loop_io.py` largely duplicates `tests/test_connection.py`; the two could be consolidated.

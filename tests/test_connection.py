@@ -2,7 +2,9 @@
 
 import asyncio
 import datetime as dt
+import gc
 import time
+import warnings
 
 import pytest
 import uvloop
@@ -109,6 +111,52 @@ async def test_concurrent_queries_are_pipelined(conn: fastpg.Connection) -> None
     assert results == [(i, f"person-{i}") for i in ids]
 
 
+@pytest.mark.parametrize("width", [15, 16, 17, 40])
+async def test_rows_of_any_width_with_nulls(conn: fastpg.Connection, width: int) -> None:
+    # Rows of up to 16 columns are buffered in one pass, wider ones in two; 600 rows are
+    # streamed in two chunks.
+    nulls = [i % 3 == 0 for i in range(width)]
+    columns = ", ".join(
+        f"NULL::int4 AS c{i}" if null else f"n + {i} AS c{i}" for i, null in enumerate(nulls)
+    )
+    sql = f"SELECT {columns} FROM generate_series(1, $1) AS n"  # noqa: S608 - fixed text
+    rows = await conn.select_many(sql, 600)
+    assert len(rows) == 600
+    assert rows[-1] == tuple(None if null else 600 + i for i, null in enumerate(nulls))
+    one = await conn.select_one(sql, 1)
+    assert one == tuple(None if null else 1 + i for i, null in enumerate(nulls))
+
+
+async def test_results_of_different_shapes_on_one_connection(conn: fastpg.Connection) -> None:
+    # Each result's row buffer is reused by the next ones.
+    sql = "SELECT n, repeat('é', n % 7), NULL::text, n::float8 FROM generate_series(1, $1) AS n"
+    first = await conn.select_many(sql, 2000)
+    assert first[-1] == (2000, "é" * (2000 % 7), None, 2000.0)
+    assert await conn.select_one("SELECT 'a', NULL::int4, 'ü✓'") == ("a", None, "ü✓")
+    assert await conn.select_one("SELECT 1") == (1,)
+    assert await conn.select_many(sql, 2000) == first
+    assert await conn.select_many(sql, 3) == first[:3]
+
+
+@pytest.mark.parametrize("size", [16_383, 16_384, 16_385, 65_536, 500_000])
+@pytest.mark.parametrize("char", ["x", "é"])
+async def test_values_around_the_socket_read_size(
+    conn: fastpg.Connection,
+    size: int,
+    char: str,
+) -> None:
+    # The socket is read 16 KiB at a time.
+    assert await conn.select_one("SELECT repeat($2, $1), $1", size, char) == (char * size, size)
+
+
+async def test_pipelined_results_of_mixed_sizes(conn: fastpg.Connection) -> None:
+    sizes = [1, 20_000, 3, 200_000, 0, 16_384, 10]
+    results = await asyncio.gather(
+        *(conn.select_one("SELECT repeat('x', $1), $1", n) for n in sizes),
+    )
+    assert results == [("x" * n, n) for n in sizes]
+
+
 async def _two_queries(conn: fastpg.Connection, task: int) -> list[object]:
     """Two queries in a row; the second divides by zero in even tasks."""
     results: list[object] = [await conn.select_one("SELECT $1::int", task)]
@@ -196,7 +244,7 @@ async def test_cancelled_query_does_not_break_connection(conn: fastpg.Connection
     assert await conn.select_one("SELECT 2") == (2,)
 
 
-async def test_close_is_graceful_and_final(dsn: str) -> None:
+async def test_close_is_graceful_final_and_releases_the_socket(dsn: str) -> None:
     conn = await fastpg.connect(dsn)
     in_flight = asyncio.create_task(conn.select_one("SELECT pg_sleep(0.1), 1"))
     await asyncio.sleep(0.01)
@@ -205,6 +253,12 @@ async def test_close_is_graceful_and_final(dsn: str) -> None:
     assert conn.closed
     with pytest.raises(fastpg.ConnectionClosedError):
         await conn.select_one("SELECT 1")
+    # The database socket was closed by fastpg (Rust detached it, then Python closed it).
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        del conn
+        gc.collect()
+    assert not [w for w in caught if "unclosed <socket" in str(w.message)]
 
 
 async def test_close_while_a_statement_is_being_prepared(dsn: str) -> None:
@@ -287,7 +341,7 @@ async def test_bad_credentials(dsn: str) -> None:
 
 
 async def test_unreachable_server() -> None:
-    with pytest.raises(fastpg.InterfaceError):
+    with pytest.raises(fastpg.InterfaceError, match="could not connect"):
         await fastpg.connect("postgresql://fastpg:fastpg@127.0.0.1:1/fastpg")
 
 
