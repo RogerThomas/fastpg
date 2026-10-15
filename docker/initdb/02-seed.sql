@@ -16,6 +16,13 @@ FROM generate_series(1, 100000) AS s(i);
 ANALYZE people;
 
 -- Load the table and its index into shared_buffers up front (the whole DB is ~20 MB), so
--- benchmarks never measure cold reads.
-CREATE EXTENSION IF NOT EXISTS pg_prewarm;
-SELECT pg_prewarm('people'), pg_prewarm('people_pkey');
+-- benchmarks never measure cold reads. Creating the extension needs a superuser: seeding
+-- another server as a plain user (`task test-against SEED=1`) skips this step.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_prewarm;
+    PERFORM pg_prewarm('people'), pg_prewarm('people_pkey');
+EXCEPTION WHEN insufficient_privilege OR undefined_file OR feature_not_supported THEN
+    RAISE NOTICE 'skipping pg_prewarm: %', SQLERRM;
+END
+$$;

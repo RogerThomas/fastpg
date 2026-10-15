@@ -57,6 +57,18 @@ tasks:
       - cargo test --manifest-path native/Cargo.toml -q
       - uv run pytest {{.CLI_ARGS}}
 
+  test-against:
+    desc: Run both test suites against existing servers, starting none (`task test-against DSN=... [TLS_DSN=... TLS_CA=...] [SEED=1]`)
+    requires:
+      vars: [DSN]
+    env:
+      FASTPG_DSN: '{{.DSN}}'
+    cmds:
+      # SEED=1 first loads docker/initdb/*.sql: the target database must be empty.
+      - '{{if eq .SEED "1"}}uv run yeet ./scripts/seed_test_db.py {{shellQuote .DSN}}{{end}}'
+      - cargo test --manifest-path native/Cargo.toml -q
+      - '{{if .TLS_DSN}}FASTPG_TLS_DSN={{shellQuote .TLS_DSN}} FASTPG_TLS_CA={{shellQuote .TLS_CA}} {{end}}uv run pytest {{.CLI_ARGS}}'
+
   test-docker:
     desc: Build and test entirely inside Docker (Postgres + Linux build of fastpg)
     cmd: docker compose --profile test run --rm --build tests
