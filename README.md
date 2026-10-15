@@ -49,11 +49,14 @@ optionally, [Task](https://taskfile.dev).
 ```sh
 task db-up            # PostgreSQL 18.6 on 127.0.0.1:55432, schema + 100k seeded rows
 task build            # uv sync: compiles the Rust extension (release) into .venv
-task test             # Rust unit tests + pytest suite
+task test             # Rust unit tests + pytest suite; starts its own PostgreSQL containers
 task example          # ./examples/basic.py
 ```
 
-Without Task: `docker compose up -d --wait postgres`, `uv sync --all-groups`, `uv run pytest`.
+Without Task: `uv sync --all-groups`, `uv run pytest`, and `docker compose up -d --wait postgres`
+for the example.
+To test against a server you already have, see `task test-against` under
+[Development](#development).
 
 To run everything inside Docker, with no local Rust or Python needed:
 
@@ -368,7 +371,8 @@ Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
 |---|---|
 | `task db-up` / `task db-down` | start / discard the PostgreSQL container |
 | `task build` | rebuild the extension into `.venv` |
-| `task test` | `cargo test` + `pytest` |
+| `task test` | `cargo test` + `pytest`, PostgreSQL (plain and TLS) in throwaway containers |
+| `task test-against DSN=… [TLS_DSN=… TLS_CA=…] [SEED=1]` | the same against existing servers, starting none; `SEED=1` first loads `docker/initdb/*.sql` into the (empty) database |
 | `task check` | ruff, ruff format, pyright (strict), clippy |
 | `task bench` / `task bench-docker` | driver benchmark suite (host / inside Linux) |
 | `task bench-open-loop` / `task bench-open-loop-docker` | API-like load at fixed request rates |
@@ -377,10 +381,12 @@ Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
 | `task db-tls-up` / `task test-tls` / `task db-tls-down` | TLS-only PostgreSQL on 55433 and `tests/test_tls.py` against it |
 
 Environment variables:
-- `FASTPG_DSN`: the DSN used by tests, benchmarks and the example. Default:
-  `postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg`.
+- `FASTPG_DSN`: the DSN used by tests, benchmarks and the example. Default for benchmarks
+  and the example: `postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg`; without it, the tests
+  start their own servers in throwaway containers (testcontainers, on ports Docker picks).
 - `FASTPG_TLS_DSN`, `FASTPG_TLS_CA`: the TLS-only test server and its CA certificate
-  (`task test-tls` sets them); without them the TLS-server tests are skipped.
+  (`task test-tls` sets them). Without them, the tests start that server too, unless
+  `FASTPG_DSN` is set: then the TLS-server tests are skipped.
 
 ## Limitations
 

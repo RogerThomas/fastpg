@@ -46,9 +46,12 @@ before any connection is opened.
 
 ## The test server
 
+`task test` starts it in a throwaway container. To keep one running:
+
 ```sh
 task db-up db-tls-up    # a TLS-only PostgreSQL on localhost:55433, plus the plain one
 task test-tls           # tests/test_tls.py
 ```
 
-It creates a throwaway CA and certificates in `docker/tls/certs/` on first start.
+It creates a throwaway CA and certificates in `docker/tls/certs/` on first start (in a
+temporary directory under `task test`).
