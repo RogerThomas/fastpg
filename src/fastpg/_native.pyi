@@ -22,8 +22,12 @@ class StructSpec:
         forbid_unknown_fields: bool,
         positional_fields: int,
         pydantic_defaults: Sequence[tuple[bool, object]] | None = None,
+        named_tuple_defaults: Sequence[tuple[bool, object]] | None = None,
         untrackable: bool = False,
     ) -> StructSpec: ...
+    @staticmethod
+    def for_dict() -> StructSpec:
+        """The spec for `into=dict`: one dict per row, keyed by column name."""
 
 @final
 class Connection:

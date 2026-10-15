@@ -1,6 +1,7 @@
-//! Direct `msgspec.Struct` construction.
+//! Direct construction of `into=` rows: msgspec Structs, `NamedTuple`s, pydantic models and
+//! dicts.
 //!
-//! `StructSpec` is a flattened description of a Struct type built once in Python from
+//! `StructSpec` is a flattened description of a target type built once in Python from
 //! `msgspec.inspect` (see `fastpg/_spec.py`). For each prepared statement we bind result
 //! columns to fields once ([`Binding`]): matching by name, type-checking the PostgreSQL
 //! column type against the field annotation, and verifying required fields are present.
@@ -9,8 +10,12 @@
 //! positional arguments when the columns line up with the field order, otherwise as keyword
 //! arguments whose names are the Struct's own interned field-name objects (msgspec matches
 //! those by identity first). No tuple, dict or other intermediate container is created.
+//!
+//! A `NamedTuple` is always called positionally, one argument per field in field order, with
+//! the field's default for a field no column feeds. A dict row (`StructSpec.for_dict()`) has
+//! no fields: every column is bound and keyed by its name, interned once per statement.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr;
 
 use pyo3::intern;
@@ -93,6 +98,25 @@ impl FieldKind {
     }
 }
 
+/// How instances are built.
+enum Mode {
+    /// msgspec Struct: call the class.
+    Struct,
+    /// `NamedTuple`: call the class positionally with every field. Holds the default for each
+    /// field (`None` = required).
+    NamedTuple(Vec<Option<Py<PyAny>>>),
+    /// Pydantic model: build instances like `model_construct` instead of calling the class.
+    Pydantic {
+        /// The default for each field (`None` = no usable default).
+        defaults: Vec<Option<Py<PyAny>>>,
+        /// Offsets of `__pydantic_fields_set__`, `__pydantic_extra__`,
+        /// `__pydantic_private__` (BaseModel's `__slots__`), when they are plain object slots.
+        slots: Option<[pyo3::ffi::Py_ssize_t; 3]>,
+    },
+    /// A `dict` keyed by column name: every column is bound, whatever its type.
+    Dict,
+}
+
 struct FieldSpec {
     attr: Py<PyString>,
     attr_name: String,
@@ -112,6 +136,14 @@ type FieldArg<'py> = (
     Option<Bound<'py, PyAny>>,
 );
 
+/// `(has_default, default)` pairs as passed from Python → the default of each field, if any.
+fn unbind_defaults(defaults: Vec<(bool, Bound<'_, PyAny>)>) -> Vec<Option<Py<PyAny>>> {
+    defaults
+        .into_iter()
+        .map(|(has, value)| has.then(|| value.unbind()))
+        .collect()
+}
+
 #[pyclass(frozen, module = "fastpg._native")]
 pub struct StructSpec {
     cls: Py<PyAny>,
@@ -122,16 +154,21 @@ pub struct StructSpec {
     forbid_unknown_fields: bool,
     /// Leading fields that may be passed positionally (the rest are `kw_only`).
     positional_fields: usize,
-    /// Set for pydantic models: build instances like `model_construct` instead of calling the
-    /// class. Holds the default for each field (`None` = no usable default).
-    pydantic_defaults: Option<Vec<Option<Py<PyAny>>>>,
-    /// Offsets of `__pydantic_fields_set__`, `__pydantic_extra__`, `__pydantic_private__`
-    /// (BaseModel's `__slots__`), when they are plain object slots.
-    pydantic_slots: Option<[pyo3::ffi::Py_ssize_t; 3]>,
-    /// A GC-tracked msgspec Struct without `__post_init__` or `__dict__`: an instance
-    /// holding only scalars can be left untracked, as msgspec itself does (see
-    /// [`Binding::untrack`]).
+    mode: Mode,
+    /// A GC-tracked msgspec Struct without `__post_init__` or `__dict__`, or a `NamedTuple`
+    /// without `__dict__` or a custom `__new__`: an instance holding only scalars can be left
+    /// untracked, as msgspec itself does (see [`Binding::untrack`]).
     untrackable: bool,
+}
+
+impl StructSpec {
+    /// The default of each field, for the modes that fill missing fields themselves.
+    fn defaults(&self) -> Option<&[Option<Py<PyAny>>]> {
+        match &self.mode {
+            Mode::NamedTuple(defaults) | Mode::Pydantic { defaults, .. } => Some(defaults),
+            Mode::Struct | Mode::Dict => None,
+        }
+    }
 }
 
 #[pymethods]
@@ -144,9 +181,13 @@ impl StructSpec {
     /// mode: instances are built by filling `__dict__` and the `__pydantic_*__` slots
     /// directly, exactly as `BaseModel.model_construct` does, without calling `__init__`.
     ///
+    /// `named_tuple_defaults` (one `(has_default, default)` per field) switches to
+    /// `NamedTuple` mode: the class is called positionally with every field, in field order,
+    /// the default standing in for a field no column feeds.
+    ///
     /// `untrackable`: the Struct type is GC-tracked (`gc=True`) and has neither
-    /// `__post_init__` nor `__dict__`, so instances built only from scalar columns may be
-    /// left untracked.
+    /// `__post_init__` nor `__dict__` (a `NamedTuple`: neither `__dict__` nor a custom
+    /// `__new__`), so instances built only from scalar columns may be left untracked.
     #[new]
     #[pyo3(signature = (
         struct_type,
@@ -155,6 +196,7 @@ impl StructSpec {
         forbid_unknown_fields,
         positional_fields,
         pydantic_defaults = None,
+        named_tuple_defaults = None,
         untrackable = false,
     ))]
     fn new(
@@ -163,6 +205,7 @@ impl StructSpec {
         forbid_unknown_fields: bool,
         positional_fields: usize,
         pydantic_defaults: Option<Vec<(bool, Bound<'_, PyAny>)>>,
+        named_tuple_defaults: Option<Vec<(bool, Bound<'_, PyAny>)>>,
         untrackable: bool,
     ) -> PyResult<Self> {
         let qualname = struct_type.getattr("__qualname__")?.extract::<String>()?;
@@ -190,35 +233,55 @@ impl StructSpec {
                 json_decoder: json_decoder.map(Bound::unbind),
             });
         }
-        let pydantic_slots = match &pydantic_defaults {
-            None => None,
-            Some(_) => {
+        let mode = match (pydantic_defaults, named_tuple_defaults) {
+            (Some(_), Some(_)) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "pydantic_defaults and named_tuple_defaults are mutually exclusive",
+                ));
+            }
+            (Some(defaults), None) => {
                 let off = |name| decode::member_offset(&struct_type, name);
-                match (
+                let slots = match (
                     off("__pydantic_fields_set__")?,
                     off("__pydantic_extra__")?,
                     off("__pydantic_private__")?,
                 ) {
                     (Some(a), Some(b), Some(c)) => Some([a, b, c]),
                     _ => None,
+                };
+                Mode::Pydantic {
+                    defaults: unbind_defaults(defaults),
+                    slots,
                 }
             }
+            (None, Some(defaults)) => Mode::NamedTuple(unbind_defaults(defaults)),
+            (None, None) => Mode::Struct,
         };
         Ok(Self {
-            pydantic_slots,
-            untrackable: untrackable && pydantic_defaults.is_none(),
+            untrackable: untrackable && !matches!(mode, Mode::Pydantic { .. }),
+            mode,
             cls: struct_type.unbind(),
             cls_name,
             fields: specs,
             by_name,
             forbid_unknown_fields,
             positional_fields,
-            pydantic_defaults: pydantic_defaults.map(|d| {
-                d.into_iter()
-                    .map(|(has, value)| has.then(|| value.unbind()))
-                    .collect()
-            }),
         })
+    }
+
+    /// The spec for `into=dict`: one dict per row, keyed by column name.
+    #[staticmethod]
+    fn for_dict(py: Python<'_>) -> Self {
+        Self {
+            cls: py.get_type::<PyDict>().into_any().unbind(),
+            cls_name: "dict".to_owned(),
+            fields: Vec::new(),
+            by_name: HashMap::new(),
+            forbid_unknown_fields: false,
+            positional_fields: 0,
+            mode: Mode::Dict,
+            untrackable: false,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -249,14 +312,38 @@ struct PydanticPlan {
     fields_set: Py<PyFrozenSet>,
 }
 
-/// How a statement's result columns map onto one Struct type.
+/// One argument of a `NamedTuple` call.
+enum Arg {
+    /// The value of `Binding::columns[i]`.
+    Column(usize),
+    /// The field's default: no column feeds it.
+    Default(Py<PyAny>),
+}
+
+/// How a row's decoded values become an instance.
+enum Make {
+    /// Call the class with the values: positionally (`None`: the columns are its leading
+    /// fields, in order) or named by these keyword names.
+    Call(Option<Py<PyTuple>>),
+    /// Call the class positionally with one argument per field, in field order
+    /// (`NamedTuple`s whose columns are not exactly their fields, in order).
+    Fields(Vec<Arg>),
+    Pydantic(PydanticPlan),
+    /// A dict keyed by column name: the interned names, one per column.
+    Dict(Vec<Py<PyString>>),
+}
+
+/// How a statement's result columns map onto one target type.
 pub struct Binding {
     columns: Vec<BoundColumn>,
-    /// `None`: columns are the Struct's leading fields in order → positional call.
-    kwnames: Option<Py<PyTuple>>,
-    pydantic: Option<PydanticPlan>,
+    make: Make,
     /// Every field comes from a scalar column (no JSON, no defaults) of an `untrackable`
-    /// Struct, so no instance can hold a reference that could form a cycle.
+    /// Struct or `NamedTuple`, so no instance can hold a reference that could form a cycle.
+    /// (A `NamedTuple` is immutable and, being `untrackable`, has no `__dict__`.)
+    ///
+    /// Dict rows are never untracked: CPython 3.14 tracks every dict and doesn't re-track
+    /// an untracked one when a container is stored in it later, so a row given one
+    /// (`row["k"] = row`) could form a cycle the GC would never see.
     ///
     /// msgspec untracks such instances itself only when every value's type lacks GC
     /// support; `uuid.UUID` and `decimal.Decimal` have it, so a row holding one stayed
@@ -266,15 +353,98 @@ pub struct Binding {
     untrack: bool,
 }
 
+fn unsupported_column(py: Python<'_>, column: &Column) -> PyErr {
+    py_err(
+        py,
+        "UnsupportedTypeError",
+        format!(
+            "column {:?} has PostgreSQL type {}, which fastpg cannot decode",
+            column.name(),
+            column.r#type().name()
+        ),
+    )
+}
+
 impl Binding {
+    /// Every column, keyed by its name; a name appearing twice raises `TypeMismatchError`
+    /// (one value would silently replace the other).
+    fn build_dict(py: Python<'_>, columns: &[Column]) -> PyResult<Self> {
+        let mut bound = Vec::with_capacity(columns.len());
+        let mut keys = Vec::with_capacity(columns.len());
+        let mut names = HashSet::with_capacity(columns.len());
+        for (col, column) in columns.iter().enumerate() {
+            if !names.insert(column.name()) {
+                return Err(py_err(
+                    py,
+                    "TypeMismatchError",
+                    format!(
+                        "column {:?} appears more than once in the result; dict rows need \
+                         distinct column names (rename one with AS)",
+                        column.name()
+                    ),
+                ));
+            }
+            let Some(codec) = Codec::for_type(column.r#type()) else {
+                return Err(unsupported_column(py, column));
+            };
+            keys.push(PyString::intern(py, column.name()).unbind());
+            bound.push(BoundColumn {
+                col,
+                field: col,
+                codec,
+                int_as_float: false,
+                json_as_text: false,
+                nullable: true,
+            });
+        }
+        Ok(Self {
+            columns: bound,
+            make: Make::Dict(keys),
+            untrack: false,
+        })
+    }
+
+    /// The arguments of a `NamedTuple` call: each field's column value, or its default.
+    fn named_tuple_args(
+        py: Python<'_>,
+        spec: &StructSpec,
+        bound: &[BoundColumn],
+        defaults: &[Option<Py<PyAny>>],
+    ) -> PyResult<Vec<Arg>> {
+        let mut args = Vec::with_capacity(defaults.len());
+        for (field, default) in defaults.iter().enumerate() {
+            let arg = match (bound.iter().position(|b| b.field == field), default) {
+                (Some(i), _) => Arg::Column(i),
+                (None, Some(default)) => Arg::Default(default.clone_ref(py)),
+                // Ruled out by the missing-field check in `build`.
+                (None, None) => {
+                    let name = spec.fields.get(field).map_or("?", |f| f.attr_name.as_str());
+                    return Err(py_err(
+                        py,
+                        "MissingColumnError",
+                        format!(
+                            "{} requires field(s) {name} but the query does not return them",
+                            spec.cls_name
+                        ),
+                    ));
+                }
+            };
+            args.push(arg);
+        }
+        Ok(args)
+    }
+
     pub fn build(py: Python<'_>, spec: &StructSpec, columns: &[Column]) -> PyResult<Self> {
+        if matches!(spec.mode, Mode::Dict) {
+            return Self::build_dict(py, columns);
+        }
         let mut bound: Vec<BoundColumn> = Vec::with_capacity(columns.len());
         let mut seen = vec![false; spec.fields.len()];
         for (col, column) in columns.iter().enumerate() {
             let Some(&field) = spec.by_name.get(column.name()) else {
                 if spec.forbid_unknown_fields {
                     // Name the setting the user wrote: pydantic's, or msgspec's.
-                    let setting = if spec.pydantic_defaults.is_some() {
+                    let setting = if matches!(spec.mode, Mode::Pydantic { .. }) {
                         "extra=\"forbid\""
                     } else {
                         "forbid_unknown_fields=True"
@@ -304,15 +474,7 @@ impl Binding {
             }
             let ty = column.r#type();
             let Some(codec) = Codec::for_type(ty) else {
-                return Err(py_err(
-                    py,
-                    "UnsupportedTypeError",
-                    format!(
-                        "column {:?} has PostgreSQL type {}, which fastpg cannot decode",
-                        column.name(),
-                        ty.name()
-                    ),
-                ));
+                return Err(unsupported_column(py, column));
             };
             let Some(int_as_float) = f.kind.accepts(codec) else {
                 return Err(py_err(
@@ -344,11 +506,11 @@ impl Binding {
             .enumerate()
             .zip(&seen)
             .filter(|((i, f), seen)| {
-                // Pydantic mode can only fill a missing field from a known default.
+                // Pydantic and NamedTuple modes can only fill a missing field from a known
+                // default.
                 let no_default = spec
-                    .pydantic_defaults
-                    .as_ref()
-                    .is_some_and(|d| d[*i].is_none());
+                    .defaults()
+                    .is_some_and(|d| d.get(*i).is_none_or(Option::is_none));
                 !**seen && (f.required || no_default)
             })
             .map(|((_, f), _)| f.attr_name.as_str())
@@ -364,9 +526,9 @@ impl Binding {
                 ),
             ));
         }
-        let pydantic = match &spec.pydantic_defaults {
-            None => None,
-            Some(defaults) => {
+        let in_field_order = bound.iter().enumerate().all(|(i, b)| b.field == i);
+        let make = match &spec.mode {
+            Mode::Pydantic { defaults, .. } => {
                 let template = PyDict::new(py);
                 for (field, (f, default)) in spec.fields.iter().zip(defaults).enumerate() {
                     if bound.iter().any(|b| b.field == field) {
@@ -376,20 +538,26 @@ impl Binding {
                     }
                 }
                 let names = bound.iter().map(|b| spec.fields[b.field].attr.bind(py));
-                Some(PydanticPlan {
+                Make::Pydantic(PydanticPlan {
                     template: template.unbind(),
                     fields_set: PyFrozenSet::new(py, names)?.unbind(),
                 })
             }
-        };
-        let positional = pydantic.is_none()
-            && bound.len() <= spec.positional_fields
-            && bound.iter().enumerate().all(|(i, b)| b.field == i);
-        let kwnames = if positional || pydantic.is_some() {
-            None
-        } else {
-            let names = bound.iter().map(|b| spec.fields[b.field].attr.bind(py));
-            Some(PyTuple::new(py, names)?.unbind())
+            Mode::NamedTuple(defaults) => {
+                if in_field_order && bound.len() == spec.fields.len() {
+                    Make::Call(None)
+                } else {
+                    Make::Fields(Self::named_tuple_args(py, spec, &bound, defaults)?)
+                }
+            }
+            Mode::Struct | Mode::Dict => {
+                if in_field_order && bound.len() <= spec.positional_fields {
+                    Make::Call(None)
+                } else {
+                    let names = bound.iter().map(|b| spec.fields[b.field].attr.bind(py));
+                    Make::Call(Some(PyTuple::new(py, names)?.unbind()))
+                }
+            }
         };
         let untrack = spec.untrackable
             && bound.len() == spec.fields.len()
@@ -398,8 +566,7 @@ impl Binding {
                 .all(|b| !matches!(b.codec, Codec::Json | Codec::Jsonb));
         Ok(Self {
             columns: bound,
-            kwnames,
-            pydantic,
+            make,
             untrack,
         })
     }
@@ -472,9 +639,12 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
         let py = self.py;
         self.values.clear();
         for b in &self.binding.columns {
-            let json_decoder = self.spec.fields[b.field]
-                .json_decoder
-                .as_ref()
+            // Dict rows have no fields: their columns decode to their natural Python types.
+            let json_decoder = self
+                .spec
+                .fields
+                .get(b.field)
+                .and_then(|f| f.json_decoder.as_ref())
                 .map(|d| d.bind(py));
             let value = match rows.cell(row, b.col) {
                 None if b.nullable => py.None().into_bound(py),
@@ -503,42 +673,76 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
             };
             self.values.push(value);
         }
-        if let Some(plan) = &self.binding.pydantic {
-            return self.construct_pydantic(plan);
-        }
-        let obj = self.call()?;
-        if self.binding.untrack {
+        let binding = self.binding;
+        let obj = match &binding.make {
+            Make::Pydantic(plan) => return self.construct_pydantic(plan),
+            Make::Dict(keys) => return self.dict(keys),
+            Make::Call(kwnames) => {
+                let kwnames = kwnames.as_ref().map_or(ptr::null_mut(), Py::as_ptr);
+                let args = self.values.iter().map(Bound::as_ptr);
+                // SAFETY: `values` keeps every argument alive for the duration of the call and
+                // `kwnames` (when set) has exactly one name per value.
+                unsafe { call(py, &self.cls, &mut self.args, args, kwnames)? }
+            }
+            Make::Fields(fields) => {
+                let values = &self.values;
+                let args = fields.iter().map(|arg| match arg {
+                    Arg::Column(i) => values[*i].as_ptr(),
+                    Arg::Default(default) => default.as_ptr(),
+                });
+                // SAFETY: `values` keeps the column values alive for the duration of the call,
+                // and the binding the defaults.
+                unsafe { call(py, &self.cls, &mut self.args, args, ptr::null_mut())? }
+            }
+        };
+        if binding.untrack {
             decode::gc_untrack(&obj);
         }
         Ok(obj)
     }
 }
 
-impl<'py> StructBuilder<'_, 'py> {
-    /// Call the Struct class with `values` (positionally, or named by `kwnames`).
-    fn call(&mut self) -> PyResult<Bound<'py, PyAny>> {
-        let (nargs, kwnames) = match &self.binding.kwnames {
-            None => (self.values.len(), ptr::null_mut()),
-            Some(names) => (0, names.as_ptr()),
-        };
-        let n = self.values.len();
-        // Slot 0 stays free for PY_VECTORCALL_ARGUMENTS_OFFSET.
-        if n <= STACK_ARGS {
-            let mut args = [ptr::null_mut(); STACK_ARGS + 1];
-            for (slot, value) in args[1..].iter_mut().zip(&self.values) {
-                *slot = value.as_ptr();
-            }
-            // SAFETY: `values` keeps every argument alive for the duration of the call and
-            // `kwnames` (when set) has exactly one name per value.
-            return unsafe {
-                decode::vectorcall(self.py, &self.cls, &mut args[..=n], nargs, kwnames)
-            };
+/// Call `cls` with `args`: positionally, or all named by `kwnames` when it isn't null.
+/// `spare` holds the arguments of calls wider than [`STACK_ARGS`].
+///
+/// # Safety
+/// Every pointer `args` yields must be a live object for the duration of the call, and a
+/// non-null `kwnames` must be a tuple of exactly one name per argument.
+unsafe fn call<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyAny>,
+    spare: &mut Vec<*mut pyo3::ffi::PyObject>,
+    args: impl ExactSizeIterator<Item = *mut pyo3::ffi::PyObject>,
+    kwnames: *mut pyo3::ffi::PyObject,
+) -> PyResult<Bound<'py, PyAny>> {
+    let n = args.len();
+    let nargs = if kwnames.is_null() { n } else { 0 };
+    // Slot 0 stays free for PY_VECTORCALL_ARGUMENTS_OFFSET.
+    if n <= STACK_ARGS {
+        let mut buf = [ptr::null_mut(); STACK_ARGS + 1];
+        for (slot, arg) in buf[1..].iter_mut().zip(args) {
+            *slot = arg;
         }
-        self.args.clear();
-        self.args.push(ptr::null_mut());
-        self.args.extend(self.values.iter().map(Bound::as_ptr));
-        // SAFETY: as above.
-        unsafe { decode::vectorcall(self.py, &self.cls, &mut self.args, nargs, kwnames) }
+        // SAFETY: per this function's contract.
+        return unsafe { decode::vectorcall(py, cls, &mut buf[..=n], nargs, kwnames) };
+    }
+    spare.clear();
+    spare.push(ptr::null_mut());
+    spare.extend(args);
+    // SAFETY: per this function's contract.
+    unsafe { decode::vectorcall(py, cls, spare, nargs, kwnames) }
+}
+
+impl<'py> StructBuilder<'_, 'py> {
+    /// A dict row: each column's value under its interned name. (Copying a presized template
+    /// and replacing its placeholders measured no faster for a 10-column row.)
+    fn dict(&self, keys: &[Py<PyString>]) -> PyResult<Bound<'py, PyAny>> {
+        let py = self.py;
+        let dict = PyDict::new(py);
+        for (key, value) in keys.iter().zip(&self.values) {
+            dict.set_item(key.bind(py), value)?;
+        }
+        Ok(dict.into_any())
     }
 
     /// `BaseModel.model_construct`, natively: allocate the instance without `__init__`, install
@@ -572,13 +776,16 @@ impl<'py> StructBuilder<'_, 'py> {
             }
             let fields_set =
                 Bound::from_owned_ptr_or_err(py, pyo3::ffi::PySet_New(plan.fields_set.as_ptr()))?;
-            match self.spec.pydantic_slots {
-                Some([fields_set_at, extra_at, private_at]) => {
+            match self.spec.mode {
+                Mode::Pydantic {
+                    slots: Some([fields_set_at, extra_at, private_at]),
+                    ..
+                } => {
                     decode::init_slot(obj.as_ptr(), fields_set_at, fields_set.into_ptr());
                     decode::init_slot(obj.as_ptr(), extra_at, py.None().into_ptr());
                     decode::init_slot(obj.as_ptr(), private_at, py.None().into_ptr());
                 }
-                None => {
+                _ => {
                     let none = py.None();
                     for (name, value) in [
                         (intern!(py, "__pydantic_fields_set__"), fields_set.as_ptr()),
