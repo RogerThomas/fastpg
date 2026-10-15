@@ -4,9 +4,10 @@ site_description: >-
   pydantic models.
 site_author: Roger Thomas
 copyright: Maintained by Roger Thomas.
-# No git remote yet. Once there is one, add `repo_url`, `repo_name` and `edit_uri` here (and
-# `theme.icon.repo`, plus a GitHub link under `extra.social`), and `site_url` once the docs
-# have a published home, as yeetr does.
+repo_url: https://github.com/RogerThomas/fastpg
+repo_name: RogerThomas/fastpg
+edit_uri: edit/main/docs/
+# Add `site_url` once the docs have a published home.
 
 nav:
   - Home: index.md

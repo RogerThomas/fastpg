@@ -37,6 +37,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.urls]
+Homepage = "https://github.com/RogerThomas/fastpg"
+Repository = "https://github.com/RogerThomas/fastpg"
+Issues = "https://github.com/RogerThomas/fastpg/issues"
+
 [project.optional-dependencies]
 # into=<pydantic.BaseModel> support (strategies "direct" and "json").
 pydantic = ["pydantic>=2.14"]
