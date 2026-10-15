@@ -345,9 +345,10 @@ async def test_unreachable_server() -> None:
         await fastpg.connect("postgresql://fastpg:fastpg@127.0.0.1:1/fastpg")
 
 
-def test_works_under_uvloop(dsn: str) -> None:
-    async def run() -> tuple[object, ...]:
-        async with await fastpg.connect(dsn) as conn:
-            return await conn.select_one("SELECT 'uv'")
+async def _select_uv(dsn: str) -> tuple[object, ...]:
+    async with await fastpg.connect(dsn) as conn:
+        return await conn.select_one("SELECT 'uv'")
 
-    assert uvloop.run(run()) == ("uv",)
+
+def test_works_under_uvloop(dsn: str) -> None:
+    assert uvloop.run(_select_uv(dsn)) == ("uv",)
