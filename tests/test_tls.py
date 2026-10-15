@@ -358,7 +358,8 @@ async def test_channel_binding(server: TLSServer, channel_binding: str) -> None:
 
 async def test_channel_binding_require_reports_login_errors(server: TLSServer) -> None:
     parts = urlsplit(_with(server.dsn, sslmode="require", channel_binding="require"))
-    wrong_password = parts._replace(netloc=parts.netloc.replace(":fastpg@", ":wrong@"))
+    host = parts.netloc.rpartition("@")[2]
+    wrong_password = parts._replace(netloc=f"{parts.username}:wrong@{host}")
     with pytest.raises(fastpg.DatabaseError) as exc:
         await fastpg.connect(urlunsplit(wrong_password))
     assert exc.value.sqlstate == "28P01"

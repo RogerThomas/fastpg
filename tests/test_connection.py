@@ -5,6 +5,7 @@ import datetime as dt
 import gc
 import time
 import warnings
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import uvloop
@@ -335,8 +336,10 @@ async def test_pipelined_and_racing_queries_fail_when_server_closes(
 
 
 async def test_bad_credentials(dsn: str) -> None:
+    parts = urlsplit(dsn)
+    netloc = f"{parts.username}:wrong@{parts.netloc.rpartition('@')[2]}"
     with pytest.raises(fastpg.DatabaseError) as exc:
-        await fastpg.connect(dsn.replace("fastpg:fastpg@", "fastpg:wrong@"))
+        await fastpg.connect(urlunsplit(parts._replace(netloc=netloc)))
     assert exc.value.sqlstate == "28P01"
 
 

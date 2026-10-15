@@ -8,6 +8,7 @@ like its compose service, and removed at the end of the session.
 
 import asyncio
 import os
+import secrets
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,19 +22,19 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Generator, Iterator
 
 
-def _postgres_container() -> DockerContainer:
+def _postgres_container(password: str) -> DockerContainer:
     """The compose services' image and user, data on tmpfs, on a host port Docker picks."""
     return (
         DockerContainer("postgres:18.6-trixie")
         .with_env("POSTGRES_USER", "fastpg")
-        .with_env("POSTGRES_PASSWORD", "fastpg")
+        .with_env("POSTGRES_PASSWORD", password)
         .with_env("POSTGRES_DB", "fastpg")
         .with_exposed_ports(5432)
         .with_tmpfs_mount("/var/lib/postgresql", "size=1g")
     )
 
 
-def _plain_container(docker_dir: Path) -> DockerContainer:
+def _plain_container(docker_dir: Path, password: str) -> DockerContainer:
     """The compose `postgres` service, with its server flags (some tests depend on them, e.g.
     on work_mem); keep the two in step."""
     flags = [
@@ -54,17 +55,17 @@ def _plain_container(docker_dir: Path) -> DockerContainer:
         "max_wal_size=4GB",
     ]
     return (
-        _postgres_container()
+        _postgres_container(password)
         .with_command(["postgres", *(arg for flag in flags for arg in ("-c", flag))])
         .with_kwargs(shm_size="2g")
         .with_volume_mapping(docker_dir / "initdb", "/docker-entrypoint-initdb.d")
     )
 
 
-def _tls_container(docker_dir: Path, certs: Path) -> DockerContainer:
+def _tls_container(docker_dir: Path, certs: Path, password: str) -> DockerContainer:
     """The compose `postgres-tls` service, generating its certificates into `certs`."""
     return (
-        _postgres_container()
+        _postgres_container(password)
         .with_kwargs(entrypoint=["/tls/entrypoint.sh"])
         .with_volume_mapping(docker_dir / "tls", "/tls")
         .with_volume_mapping(docker_dir / "tls" / "initdb", "/docker-entrypoint-initdb.d")
@@ -91,11 +92,12 @@ async def _wait_until_ready(dsn: str) -> None:
 
 
 @contextmanager
-def _running(container: DockerContainer) -> Generator[str]:
-    """Start `container`; yield its DSN once it answers a query; remove it."""
+def _running(container: DockerContainer, password: str) -> Generator[str]:
+    """Start `container` (whose `fastpg` role has `password`); yield its DSN once it answers a
+    query; remove it."""
     with container:
         host, port = container.get_container_host_ip(), container.get_exposed_port(5432)
-        dsn = f"postgresql://fastpg:fastpg@{host}:{port}/fastpg"
+        dsn = f"postgresql://fastpg:{password}@{host}:{port}/fastpg"
         try:
             asyncio.run(_wait_until_ready(dsn))
         except TimeoutError as error:
@@ -110,19 +112,26 @@ def docker_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
-def dsn(docker_dir: Path) -> Iterator[str]:
+def container_password() -> str:
+    # Random per session: testcontainers publishes ports on all interfaces, not 127.0.0.1 only.
+    return secrets.token_urlsafe(24)
+
+
+@pytest.fixture(scope="session")
+def dsn(docker_dir: Path, container_password: str) -> Iterator[str]:
     """``FASTPG_DSN``, or a throwaway server like the compose `postgres` service."""
     from_env = os.environ.get("FASTPG_DSN")
     if from_env is not None:
         yield from_env
         return
-    with _running(_plain_container(docker_dir)) as started:
+    with _running(_plain_container(docker_dir, container_password), container_password) as started:
         yield started
 
 
 @pytest.fixture(scope="session")
 def tls_server(
     docker_dir: Path,
+    container_password: str,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[tuple[str, Path]]:
     """The TLS-only server's DSN and CA certificate (client certificate and key next to it):
@@ -135,7 +144,10 @@ def tls_server(
     if "FASTPG_DSN" in os.environ:
         pytest.skip("FASTPG_DSN is set, but FASTPG_TLS_DSN and FASTPG_TLS_CA are not")
     certs = tmp_path_factory.mktemp("tls-certs")
-    with _running(_tls_container(docker_dir, certs)) as started:
+    with _running(
+        _tls_container(docker_dir, certs, container_password),
+        container_password,
+    ) as started:
         yield started, certs / "ca.crt"
 
 
