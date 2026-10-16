@@ -12,8 +12,10 @@ import secrets
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import pytest
+from faults import DisposableServer, FaultProxy, disposable_server, with_params
 from testcontainers.core.container import DockerContainer
 
 import fastpg
@@ -155,3 +157,36 @@ def tls_server(
 async def conn(dsn: str) -> AsyncIterator[fastpg.Connection]:
     async with await fastpg.connect(dsn) as connection:
         yield connection
+
+
+@pytest.fixture
+async def fault_proxy(dsn: str) -> AsyncIterator[FaultProxy]:
+    """A started `FaultProxy` to the test server (``fault_proxy.route(dsn)`` goes through it)."""
+    target = urlsplit(dsn)
+    proxy = FaultProxy((target.hostname or "localhost", target.port or 5432))
+    await proxy.start()
+    yield proxy
+    await proxy.close()
+
+
+@pytest.fixture
+def proxied_dsn(dsn: str, fault_proxy: FaultProxy) -> str:
+    """`dsn` through `fault_proxy`, without TLS (so the bytes on the wire are the protocol's)."""
+    return with_params(fault_proxy.route(dsn), sslmode="disable")
+
+
+@pytest.fixture(scope="session")
+def edge_server(container_password: str) -> Iterator[DisposableServer]:
+    """A server of the network tests' own, which they pause, kill and restart: never the
+    shared one (``FASTPG_DSN`` or the `dsn` container)."""
+    name = f"fastpg-edge-net-{secrets.token_hex(4)}"
+    with disposable_server(container_password, name) as server:
+        asyncio.run(server.ready(60))
+        yield server
+
+
+@pytest.fixture
+async def edge(edge_server: DisposableServer) -> DisposableServer:
+    """`edge_server`, running and answering (whatever an earlier test did to it)."""
+    await edge_server.heal()
+    return edge_server
