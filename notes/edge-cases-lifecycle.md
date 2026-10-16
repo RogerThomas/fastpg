@@ -94,8 +94,8 @@ keeps the traceback's frames alive.
 **A cancelled connect closes its socket** (`70c3849`). `close()` during the handshake
 (which is what `connect()` does when cancelled) used to only mark the connection closing:
 "closes itself once established". A server that never answered kept the handshake task,
-the socket and its loop registration around for good, and there is no connect timeout but
-`asyncio.timeout`. The handshake now races a `tokio::sync::Notify` that `close()` fires
+the socket and its loop registration around for good (without a DSN `connect_timeout`,
+`asyncio.timeout` is the only bound). The handshake now races a `tokio::sync::Notify` that `close()` fires
 (`notify_one` leaves a permit, so a close before the first poll counts too); the task then
 fails `connected`, marks the connection dead and the socket is detached and closed within
 the same `close()` call.

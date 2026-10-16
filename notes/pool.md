@@ -362,9 +362,9 @@ decode errors, `execute`, `execute_script`), `test_cancelled_waiter_keeps_its_sl
   connection stays busy until it finishes; that's deliberate, see decision 12. Cancelling
   inside `pool.transaction()` rolls back only after the running statement ends. Adding
   PostgreSQL CancelRequest support (xitca has `cancel.rs`) would fix both.
-* **No connect timeout and no backoff.** With the server down, each statement that finds
-  the pool below `max_size` starts a connect attempt (bounded by `max_size`). Use
-  `asyncio.timeout` around calls for now.
+* **No connect backoff.** With the server down, each statement that finds the pool below
+  `max_size` starts a connect attempt (bounded by `max_size`). The DSN's `connect_timeout`
+  bounds each attempt.
 * **Shared statements that change session state** (`SET`, `BEGIN`, temp tables) aren't
   detected. That's documented on `Pool`; use `acquire()`.
 * **`BEGIN` costs a round trip.** It could be pipelined with the first statement, since
