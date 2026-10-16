@@ -38,6 +38,8 @@ print(await conn.select_many("SELECT email FROM users ORDER BY email"))
 * `SerializationError` (`40001`) and `DeadlockDetectedError` (`40P01`), both
   `fastpg.errors.TransactionError`, mean the transaction should be retried from the start.
 * A connection has one transaction at a time; starting a second raises `InterfaceError`.
+* `tx`'s query methods raise `InterfaceError` outside its block (before it's entered, and
+  after the commit or rollback), rather than run outside the transaction.
 * Bulk writes inside a transaction use their own savepoint, so a failed one doesn't abort it.
 
 !!! warning "Keep a connection with an open transaction to one task"

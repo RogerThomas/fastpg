@@ -441,9 +441,13 @@ class Transaction(_Queries):
     transaction is already aborted (an error was caught inside the block and the block went
     on). PostgreSQL would turn that COMMIT into a silent ROLLBACK; here the block raises the
     server's ``DatabaseError`` (SQLSTATE 25P02) instead, after rolling back.
+
+    Its query methods raise ``InterfaceError`` outside the block (before BEGIN, after COMMIT
+    or ROLLBACK): they would run outside the transaction, and once ``Pool.transaction()``
+    has released the connection, maybe inside another caller's.
     """
 
-    __slots__ = ("_begin", "_depth", "_pre_commit", "_state")
+    __slots__ = ("_begin", "_depth", "_pre_commit", "_session", "_state")
 
     _NEW: ClassVar[int] = 0
     _ACTIVE: ClassVar[int] = 1
@@ -470,7 +474,10 @@ class Transaction(_Queries):
         ``pre_commit`` must fail inside an aborted transaction (any statement does). The pool
         passes its session-reset statements here, saving a round trip.
         """
-        super().__init__(conn._native, conn._loop)
+        # The query methods use a view of the session that refuses them unless the
+        # transaction is active; BEGIN, COMMIT, ROLLBACK and savepoints use the session.
+        super().__init__(conn._native.transaction_view(), conn._loop)
+        self._session = conn._native
         begin = ["BEGIN"]
         if isolation is not None:
             try:
@@ -489,7 +496,7 @@ class Transaction(_Queries):
 
     async def _script(self, query: str) -> None:
         future: asyncio.Future[None] = self._loop.create_future()
-        self._native.execute_script(future, query)
+        self._session.execute_script(future, query)
         await future
 
     async def _rollback(self, query: str, exc: BaseException) -> None:
@@ -545,6 +552,7 @@ class Transaction(_Queries):
             if isinstance(e, asyncio.CancelledError):  # BEGIN may still run server-side
                 await self._rollback("ROLLBACK", e)
             raise
+        self._native.set_active(True)
         return self
 
     async def __aexit__(
@@ -554,6 +562,7 @@ class Transaction(_Queries):
         tb: TracebackType | None,
     ) -> None:
         self._state = self._DONE
+        self._native.set_active(False)
         if exc is None:
             await self._commit()
         else:

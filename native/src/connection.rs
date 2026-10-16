@@ -400,6 +400,9 @@ async fn serve(
 #[pyclass(frozen, module = "fastpg._native")]
 pub struct Connection {
     shared: Arc<Shared>,
+    /// Only for a transaction's view of the session (see `transaction_view`): its
+    /// operations are refused while this is false. `None` for the connection's own handle.
+    active: Option<AtomicBool>,
 }
 
 #[pymethods]
@@ -427,7 +430,26 @@ impl Connection {
                 flush_pending: AtomicBool::new(false),
                 spare_rows: Mutex::new((Vec::new(), 0)),
             }),
+            active: None,
         })
+    }
+
+    /// A handle on the same session for a transaction's queries, refused (`InterfaceError`)
+    /// unless `set_active(True)`: before BEGIN and after COMMIT / ROLLBACK, a query through
+    /// it would run outside the transaction (on a pooled connection, maybe inside someone
+    /// else's).
+    fn transaction_view(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            active: Some(AtomicBool::new(false)),
+        }
+    }
+
+    /// Allow or refuse a transaction view's operations (no-op on the connection's own handle).
+    fn set_active(&self, active: bool) {
+        if let Some(flag) = &self.active {
+            flag.store(active, Ordering::Release);
+        }
     }
 
     /// Descriptor that becomes readable when a task was woken from another thread; the loop
@@ -706,6 +728,15 @@ impl Connection {
 
 impl Connection {
     fn require_client(&self, py: Python<'_>) -> PyResult<Arc<Client>> {
+        if let Some(active) = &self.active
+            && !active.load(Ordering::Acquire)
+        {
+            return Err(py_err(
+                py,
+                "InterfaceError",
+                "the transaction is not active: use it inside its `async with` block",
+            ));
+        }
         self.shared
             .client()
             .ok_or_else(|| QueryError::Closed.into_pyerr(py))
