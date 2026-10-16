@@ -195,6 +195,7 @@ class ModelPlanner:
             json_one=TypeAdapter(model).validate_json,
             json_many=TypeAdapter[list[BaseModel]](list_of).validate_json,
             json_error=None,
+            json_non_finite_floats=True,
             validation_error=ValidationError,
             text_columns=text_columns,
         )

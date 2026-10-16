@@ -73,7 +73,9 @@ enum Target {
     /// Rows encoded for a validating decoder. The names are the columns that feed `str`
     /// fields: a json/jsonb value there is encoded as its text (ADR 0003).
     Msgpack(Vec<String>),
-    Json(Vec<String>),
+    /// As `Msgpack`; the flag: the decoder takes `NaN`/`Infinity` tokens (pydantic does,
+    /// msgspec doesn't).
+    Json(Vec<String>, bool),
 }
 
 #[derive(Clone, Copy)]
@@ -546,7 +548,9 @@ impl Connection {
         )
     }
 
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
+    /// `non_finite_floats`: the decoder takes `NaN`/`Infinity` tokens; otherwise a non-finite
+    /// float4/float8 value fails the query with a `DecodeError`.
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), *, non_finite_floats = true))]
     fn fetch_json(
         &self,
         future: Py<PyAny>,
@@ -554,13 +558,14 @@ impl Connection {
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
+        non_finite_floats: bool,
     ) -> PyResult<()> {
         self.submit(
             future,
             query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
-            Target::Json(text_columns),
+            Target::Json(text_columns, non_finite_floats),
         )
     }
 
@@ -999,7 +1004,7 @@ fn materialize_rows<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     match &request.target {
         Target::None => Ok(py.None().into_bound(py)),
-        target @ (Target::Msgpack(text_columns) | Target::Json(text_columns)) => {
+        target @ (Target::Msgpack(text_columns) | Target::Json(text_columns, _)) => {
             let single = shape != Shape::All;
             if single && rows.nrows() == 0 {
                 return Ok(py.None().into_bound(py));
@@ -1022,7 +1027,9 @@ fn materialize_rows<'py>(
                 })
                 .collect();
             let encoded = match target {
-                Target::Json(_) => json::encode_rows(rows, &names, &codecs, &as_text, single),
+                Target::Json(_, non_finite) => {
+                    json::encode_rows(rows, &names, &codecs, &as_text, single, *non_finite)
+                }
                 _ => msgpack::encode_rows(rows, &names, &codecs, &as_text, single),
             }
             .map_err(|m| py_err(py, "DecodeError", m))?;

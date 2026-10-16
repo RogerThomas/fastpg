@@ -79,6 +79,9 @@ class Plan[T]:
     json_one: Callable[[bytes], T] | None
     json_many: Callable[[bytes], list[T]] | None
     json_error: str | None
+    json_non_finite_floats: bool
+    """The JSON decoders take `NaN`/`Infinity` tokens (pydantic's do, msgspec's don't: a
+    non-finite float then fails the query, naming its column)."""
     validation_error: type[Exception]
     """Raised by the validating decoders; re-raised as `fastpg.DecodeError`."""
     text_columns: tuple[str, ...]
@@ -272,7 +275,9 @@ class StructPlanner:
             json_one=msgspec.json.Decoder(struct).decode,
             json_many=msgspec.json.Decoder(list[struct]).decode,
             json_error=map_error,
-            validation_error=msgspec.ValidationError,
+            json_non_finite_floats=False,
+            # Its base class: malformed input becomes a fastpg error too.
+            validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
         )
 
@@ -316,6 +321,7 @@ class StructPlanner:
             json_one=None,
             json_many=None,
             json_error=route_error,
+            json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
         )
@@ -347,6 +353,7 @@ class Planner:
             json_one=None,
             json_many=None,
             json_error=route_error,
+            json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
         )

@@ -135,5 +135,8 @@ Both are built directly only: `strategy="msgpack"` or `"json"` raises
 * A `str` field fed from a `json`/`jsonb` column gets the raw JSON text, under every strategy.
 * `"msgpack"` and `"json"` encode rows as maps, so `array_like=True` Structs can only be
   built directly.
+* JSON has no form of `NaN` or `±Infinity` that msgspec accepts, so under `"json"` a
+  non-finite `float4`/`float8` value raises `DecodeError` naming its column; `"direct"`
+  and `"msgpack"` decode it.
 * A NULL in a non-optional field raises `NullValueError` only when its row is decoded. All
   decode errors are listed in [Errors](errors.md).

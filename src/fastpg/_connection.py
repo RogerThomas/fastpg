@@ -129,15 +129,23 @@ class _Queries:
             return future
         if strategy == "msgpack":
             one, many, error = plan.msgpack_one, plan.msgpack_many, plan.msgpack_error
-            self_fetch = self._native.fetch_msgpack
         else:
             one, many, error = plan.json_one, plan.json_many, plan.json_error
-            self_fetch = self._native.fetch_json
         if one is None or many is None or error is not None:
             detail = f"; direct construction unavailable: {plan.direct_error}"
             msg = f"strategy={strategy!r} unavailable: {error}{detail if plan.direct_error else ''}"
             raise UnsupportedTypeError(msg)
-        self_fetch(future, query, params, shape, plan.text_columns)
+        if strategy == "msgpack":
+            self._native.fetch_msgpack(future, query, params, shape, plan.text_columns)
+        else:
+            self._native.fetch_json(
+                future,
+                query,
+                params,
+                shape,
+                plan.text_columns,
+                non_finite_floats=plan.json_non_finite_floats,
+            )
         return self._decoded(future, many if shape == _ALL else one, plan.validation_error)
 
     @overload
