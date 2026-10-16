@@ -57,5 +57,10 @@ Each start seeds a `people` table with 100,000 rows: `id` (1 to 100,000), `name`
 
 * `fastpg.connect()` opens one connection, bound to the running event loop. For concurrent
   requests, use a [pool](pool.md).
+* Leaving `async with` (or `await conn.close()`) closes gracefully: queries in flight
+  complete, then the session ends, without waiting for the server to acknowledge it.
+  `conn.terminate()` closes at once and fails queries in flight with
+  `ConnectionClosedError`, and so does a `close()` that is cancelled (e.g. by
+  `asyncio.timeout`).
 * The other pages show the body of `main()`: `conn` is an open connection and `dsn` is the
   DSN above. Examples that write create a temporary table.

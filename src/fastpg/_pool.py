@@ -814,10 +814,23 @@ class Pool:
                 self._wakeup = self._loop.create_future()
                 await self._wakeup
 
+    def _terminate(self) -> None:
+        """Close every connection at once, checked-out ones included (a cancelled close)."""
+        for task in list(self._tasks):  # connects, and the closes of discarded connections
+            task.cancel()  # a cancelled Connection.close() terminates its connection
+        for entry in self._entries:
+            entry.conn.terminate()
+
     async def _close(self) -> None:
         if self._closing is None:
             self._closing = self._loop.create_task(self._shutdown())
-        await asyncio.shield(self._closing)
+        try:
+            await asyncio.shield(self._closing)
+        except asyncio.CancelledError:
+            # The shutdown goes on (shielded), with nothing left to wait for on the server;
+            # checked-out connections still leave the pool when released.
+            self._terminate()
+            raise
 
     # --- public API ---------------------------------------------------------------------
 
@@ -1060,6 +1073,10 @@ class Pool:
     async def close(self) -> None:
         """Close gracefully: new calls and waiters fail with ConnectionClosedError, shared
         statements in flight complete, and checked-out connections close when released.
+
+        If the call is cancelled (e.g. by ``asyncio.timeout``), every connection still open,
+        checked-out ones included, is closed at once (`Connection.terminate()`), and the
+        cancellation is raised.
         """
         await self._close()
 

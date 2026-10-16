@@ -422,7 +422,7 @@ class Connection(_Queries):
     (``t"... WHERE id = {pid}"``); see ``fastpg.Identifier`` for interpolating names.
 
     Concurrent queries from multiple tasks are pipelined over the one connection.
-    Use as an async context manager, or call `close()`.
+    Use as an async context manager, or call `close()` (`terminate()` to close at once).
     """
 
     _closed: asyncio.Future[None]
@@ -441,13 +441,25 @@ class Connection(_Queries):
             return
         self._native.close()
         try:
-            # Shielded: every close() call awaits the one future, so a caller giving up (a
-            # timeout: close() waits for queries in flight) must not cancel it for the rest.
+            # Shielded: every close() call awaits the one future, so its cancellation is
+            # this caller's alone (a later close() doesn't raise CancelledError).
             await asyncio.shield(self._closed)
+        except asyncio.CancelledError:
+            # A caller giving up (a timeout: close() waits for queries in flight) closes
+            # at once, as asyncpg does: nothing is left open.
+            self._native.terminate()
+            raise
         finally:
-            # Even then the close goes on; the mailbox reader (for wake-ups from other
-            # threads) can go, and the connection doesn't count as unclosed.
+            # The mailbox reader (for wake-ups from other threads) can go, and the
+            # connection doesn't count as unclosed.
             self._release()
+
+    def _terminate(self) -> None:
+        if self._native.inherited:  # a fork()ed child: the session is the parent's
+            self._released = True
+            return
+        self._native.terminate()
+        self._release()
 
     @property
     def closed(self) -> bool:
@@ -487,8 +499,22 @@ class Connection(_Queries):
         return self._transaction
 
     async def close(self) -> None:
-        """Close gracefully: in-flight queries complete, then the session is terminated."""
+        """Close gracefully: in-flight queries complete, then the session is terminated.
+
+        The Terminate message is sent and the socket closed without waiting for the server
+        to answer. If the call is cancelled (e.g. by ``asyncio.timeout``), the connection
+        is closed at once, as by `terminate()`.
+        """
         await self._close()
+
+    def terminate(self) -> None:
+        """Close at once: pending and in-flight queries fail with `ConnectionClosedError`.
+
+        Sends nothing to the server, which ends the session when it sees the socket close.
+        Safe to call more than once, after `close()`, or on a connection already lost. Call
+        it on the connection's event loop.
+        """
+        self._terminate()
 
     def __del__(self) -> None:
         if self._released:

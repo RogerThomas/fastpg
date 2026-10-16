@@ -83,7 +83,8 @@ async def _close_with_a_timeout(dsn: str) -> bool:
             await conn.close()
     except TimeoutError:
         timed_out = True
-    assert await slow == (None,)  # the in-flight query still completes
+    with pytest.raises(fastpg.ConnectionClosedError):  # terminated: the close gave up
+        await slow
     assert conn.closed
     return timed_out
 
@@ -163,19 +164,88 @@ async def test_a_close_that_timed_out_still_counts_as_closed(dsn: str) -> None:
     assert [str(w.message) for w in caught if w.category is ResourceWarning] == []  # quietly
 
 
-async def test_cancelling_one_close_leaves_the_others_waiting(dsn: str) -> None:
-    conn = await fastpg.connect(dsn)
-    slow = asyncio.create_task(conn.select_one("SELECT pg_sleep(0.1)"))
+async def test_cancelling_one_close_terminates_the_connection(dsn: str) -> None:
+    name = "edge_close_cancelled"
+    conn = await fastpg.connect(f"{dsn}?application_name={name}")
+    slow = asyncio.create_task(conn.select_one("SELECT pg_sleep(1)"))
     await asyncio.sleep(0.01)
     first = asyncio.create_task(conn.close())
     second = asyncio.create_task(conn.close())
     await asyncio.sleep(0.01)
     first.cancel()
-    async with asyncio.timeout(5):
-        await second  # still waits for the close, rather than raising CancelledError
-        await conn.close()  # and later calls return at once
+    async with asyncio.timeout(1):
+        await second  # returns, rather than raising CancelledError
+        await conn.close()  # and so do later calls
     assert first.cancelled()
-    assert await slow == (None,)
+    with pytest.raises(fastpg.ConnectionClosedError, match="connection is closed"):
+        await slow
+    async with await fastpg.connect(dsn) as other:
+        await _wait_for_backends(other, name, 0)
+
+
+async def test_terminate_fails_everything_in_flight(dsn: str, loop_errors: LoopErrors) -> None:
+    name = "edge_close_terminate"
+    conn = await fastpg.connect(f"{dsn}?application_name={name}")
+    # A streamed result whose first chunks arrive, then the rest a second later.
+    query = (
+        "SELECT g, pg_sleep(CASE WHEN g = 1500 THEN 1 ELSE 0 END) FROM generate_series(1, 2000) g"
+    )
+    many = asyncio.create_task(conn.select_many(query))
+    slow = [asyncio.create_task(conn.select_one("SELECT pg_sleep(1)")) for _ in range(3)]
+    await asyncio.sleep(0.05)  # all sent, the streamed result under way
+    conn.terminate()
+    assert conn.closed
+    for task in [many, *slow]:
+        with pytest.raises(fastpg.ConnectionClosedError, match="connection is closed"):
+            await task
+    with pytest.raises(fastpg.ConnectionClosedError, match="connection is closed"):
+        await conn.select_one("SELECT 1")
+    async with await fastpg.connect(dsn) as other:
+        # The server ends the session once it is past the running statement (no cancel).
+        await _wait_for_backends(other, name, 0)
+    assert loop_errors.messages() == []
+
+
+@pytest.mark.usefixtures("table")
+async def test_terminate_during_a_transaction_rolls_it_back(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
+    victim = await fastpg.connect(dsn)
+    gate = asyncio.get_running_loop().create_future()
+    block = asyncio.create_task(_insert_after(victim, gate))
+    await asyncio.sleep(0.05)  # inside the block, first row inserted
+    victim.terminate()
+    gate.set_result(None)
+    with pytest.raises(fastpg.ConnectionClosedError):
+        await block
+    assert await conn.select_one("SELECT count(*)::int FROM edge_close") == (0,)
+
+
+async def test_terminate_twice_after_close_and_on_a_lost_connection(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
+    first = await fastpg.connect(dsn)
+    first.terminate()
+    first.terminate()
+    await first.close()  # returns at once
+    assert first.closed
+    second = await fastpg.connect(dsn)
+    await second.close()
+    second.terminate()
+    assert second.closed
+    name = "edge_close_lost"
+    lost = await fastpg.connect(f"{dsn}?application_name={name}")
+    await conn.execute(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1",
+        name,
+    )
+    async with asyncio.timeout(5):
+        while not lost.closed:  # the server's FATAL, then its EOF
+            await asyncio.sleep(0.01)
+    lost.terminate()
+    assert lost.closed
 
 
 async def test_close_twice_and_concurrently(dsn: str, loop_errors: LoopErrors) -> None:
@@ -273,6 +343,28 @@ async def test_pool_close_waits_for_a_checked_out_connection(dsn: str) -> None:
     assert pool.stats().size == 0
 
 
+async def test_cancelled_pool_close_terminates_checked_out_connections(dsn: str) -> None:
+    name = "edge_close_pool_cancelled"
+    pool = await fastpg.create_pool(f"{dsn}?application_name={name}", min_size=2, max_size=2)
+    gate = asyncio.get_running_loop().create_future()
+    holder = asyncio.create_task(_hold(pool, gate))
+    shared = asyncio.create_task(pool.select_one("SELECT pg_sleep(1)"))
+    await asyncio.sleep(0.05)
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await pool.close()
+    with pytest.raises(fastpg.ConnectionClosedError):
+        await shared
+    gate.set_result(None)
+    with pytest.raises(fastpg.ConnectionClosedError, match="connection is closed"):
+        await holder  # its connection was terminated
+    async with asyncio.timeout(1):
+        await pool.close()
+    assert pool.stats().size == 0
+    async with await fastpg.connect(dsn) as other:
+        await _wait_for_backends(other, name, 0)
+
+
 @pytest.mark.usefixtures("table")
 async def test_pool_close_lets_an_open_transaction_commit(
     dsn: str,
@@ -309,7 +401,7 @@ async def test_pool_close_twice_concurrently_and_cancelled(dsn: str) -> None:
     pool = await fastpg.create_pool(dsn, min_size=2, max_size=2)
     first = asyncio.create_task(pool.close())
     await asyncio.sleep(0)
-    first.cancel()  # the shutdown itself goes on (shielded)
+    first.cancel()  # the connections are terminated; the shutdown goes on (shielded)
     with pytest.raises(asyncio.CancelledError):
         await first
     async with asyncio.timeout(5):

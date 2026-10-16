@@ -50,20 +50,101 @@ async def test_timed_out_query_leaves_the_connection_usable(
             assert await conn.select_one("SELECT 2") == (2,)
 
 
-async def test_close_completes_after_an_earlier_close_timed_out(
+async def _closed_by_client(proxy: FaultProxy, count: int) -> None:
+    """Wait until fastpg has closed `count` sockets through `proxy`."""
+    async with asyncio.timeout(2):
+        while proxy.to_server.ended < count:
+            await asyncio.sleep(0.01)
+
+
+async def test_close_returns_promptly_from_a_stalled_server(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
 ) -> None:
     conn = await fastpg.connect(proxied_dsn)
     fault_proxy.stall()
-    # Close is graceful: it waits for the server to end the session.
+    # Terminate is written, then the socket is closed: no waiting for the server's EOF.
+    async with asyncio.timeout(1):
+        await conn.close()
+    assert conn.closed
+    await _closed_by_client(fault_proxy, 1)
+
+
+async def test_async_with_exit_returns_promptly_from_a_stalled_server(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    async with asyncio.timeout(1):
+        async with await fastpg.connect(proxied_dsn) as conn:
+            await conn.select_one("SELECT 1")
+            fault_proxy.stall()
+    assert conn.closed
+    await _closed_by_client(fault_proxy, 1)
+
+
+async def test_tls_close_returns_promptly_from_a_stalled_server(
+    tls_proxied_dsn: str,
+    tls_fault_proxy: FaultProxy,
+) -> None:
+    conn = await fastpg.connect(tls_proxied_dsn)
+    tls_fault_proxy.stall()
+    async with asyncio.timeout(1):
+        await conn.close()
+    assert conn.closed
+    await _closed_by_client(tls_fault_proxy, 1)
+
+
+async def test_pool_close_returns_promptly_from_a_stalled_server(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    pool = await fastpg.create_pool(proxied_dsn, min_size=2, max_size=2)
+    fault_proxy.stall()
+    async with asyncio.timeout(1):
+        await pool.close()
+    assert pool.stats().size == 0
+    await _closed_by_client(fault_proxy, 2)
+
+
+async def test_a_timed_out_close_terminates_the_connection(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    conn = await fastpg.connect(proxied_dsn)
+    fault_proxy.stall()
+    stalled = asyncio.create_task(conn.select_one("SELECT 1"))
+    await asyncio.sleep(0.05)
+    # close() waits for the statement in flight; giving up on it closes at once.
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.2):
             await conn.close()
-    fault_proxy.resume()
-    async with asyncio.timeout(5):
-        await conn.close()
     assert conn.closed
+    with pytest.raises(fastpg.ConnectionClosedError, match="connection is closed"):
+        await stalled
+    await _closed_by_client(fault_proxy, 1)
+    async with asyncio.timeout(1):
+        await conn.close()  # returns at once, rather than raising CancelledError
+
+
+async def test_cancelled_pool_close_terminates_a_checked_out_connection(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    pool = await fastpg.create_pool(proxied_dsn, min_size=2, max_size=2)
+    async with pool.acquire() as conn:
+        fault_proxy.stall()
+        stalled = asyncio.create_task(conn.select_one("SELECT 1"))
+        await asyncio.sleep(0.05)
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await pool.close()  # waits for the checked-out connection
+        assert conn.closed
+        with pytest.raises(fastpg.ConnectionClosedError):
+            await stalled
+        await _closed_by_client(fault_proxy, 2)  # the idle connection too
+    async with asyncio.timeout(1):
+        await pool.close()
+    assert pool.stats().size == 0
 
 
 async def _insert_then_stall(tx: fastpg.Transaction | fastpg.Connection, proxy: FaultProxy) -> None:

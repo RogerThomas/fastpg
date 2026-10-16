@@ -36,11 +36,11 @@ an RST. In production this is the "lost RST" case below (half-open connection).
 |---|---|---|---|---|---|
 | 1 | 50-200 ms RTT | correct results; a cached statement costs 1 RTT; 200 pipelined statements on one connection take about 1 RTT; a pool pipelines while it grows; bulk writes take a few RTTs per chunk; 1 s RTT works (no internal timeouts) | no | - | `test_network_latency.py` |
 | 2 | server stops responding (stall, `docker pause`) | `asyncio.timeout` around a query returns on time; the connection stays usable and gets its own result after the stall; a pool recovers | yes: 4 | yes | `test_network_stall.py` |
-| 2a | | `close()` cancelled by a timeout cancelled the shared closed future: every later `close()` raised `CancelledError` | yes | yes (c83fb3f) | `test_close_completes_after_an_earlier_close_timed_out` |
+| 2a | | `close()` cancelled by a timeout cancelled the shared closed future: every later `close()` raised `CancelledError` | yes | yes (c83fb3f) | `test_a_timed_out_close_terminates_the_connection` |
 | 2b | | a timeout around `conn.transaction()`, `pool.transaction()` or `pool.acquire()` waited for the ROLLBACK / session reset behind the stalled statement: forever on a stalled server, as long as the statement on a slow one | yes | yes (027ed5b) | `test_timeout_bounds_a_*` |
 | 2c | | `pool.close()` hung forever on a connect in progress to a server that doesn't answer the startup | yes | yes (199e95e) | `test_pool_close_does_not_wait_for_a_stalled_connect` |
 | 2d | | a cancelled `connect()` left its socket open and registered until the server answered (maybe never) | yes | yes (5b8de22) | `test_cancelled_connect_to_a_stalled_server_closes_its_socket` |
-| 2e | | `close()` (and so `async with` exit, `pool.close()`) waits for the server's EOF after Terminate: forever on a stalled or partitioned server | yes | **open** (design below) | `test_close_completes_after_...` (documents it) |
+| 2e | | `close()` (and so `async with` exit, `pool.close()`) waited for the server's EOF after Terminate: forever on a stalled or partitioned server; a cancelled close left the socket open | yes | yes (7312aee, 84d75e2) | `test_*_returns_promptly_from_a_stalled_server`, `test_a_timed_out_close_terminates_the_connection`, `test_cancelled_pool_close_terminates_a_checked_out_connection` |
 | 3 | RST / FIN mid `select_many`, COPY, `execute_many`, transaction | fails at once with `ConnectionClosedError`; connection closed; nothing of the write committed; a pool replaces the connection | message only | yes (306de25): it said "connection is closed", as after the caller's own `close()`; now "connection lost: closed by the server or the network" | `test_network_drop.py` |
 | 3a | lost RST, partition (half-open) | never noticed: no TCP keepalives | yes | yes (edb7548): libpq's keepalive keys and `tcp_user_timeout`, keepalives on by default | `test_network_keepalives.py` (keys only) |
 | 4 | `docker restart` / `kill` / `stop`, `pg_terminate_backend` | statements in flight fail at once (57P01 `OperationalError`, or `ConnectionClosedError` after a kill); a pool recovers by itself, 0.27 s after `docker restart` began, 0.1 s after `docker start` returned; terminating every idle session at once is absorbed | no | - | `test_network_server.py`, plus existing `test_pool.py` / `test_connection.py` / `test_tls.py` terminate tests |
@@ -103,24 +103,30 @@ Fixed:
   a flag; the handshake task kept the socket open and registered with the loop until the
   server answered. `close()` now notifies the handshake task, which abandons the handshake,
   and the socket is detached and closed right away.
-
-Open:
-
-* **2e: `close()` waits for the server's EOF.** After the last statement, xitca's driver
+* **2e: `close()` waited for the server's EOF.** After the last statement, xitca's driver
   writes Terminate and then waits until it reads EOF. A healthy server closes at once; a
   stalled one, or one behind a partition or a lost RST (below), never does. So `close()`,
-  the exit of `async with await fastpg.connect(...)` and `pool.close()` hang. Wrapping
-  `close()` in `asyncio.timeout` works now (2a), but the socket and driver task stay until
-  the server answers. Proposed:
-  1. a native `abort()`: notify the connection's `IoWatch.eof` (the `serve` task then
-     drops the driver, marks the connection dead, fails pending operations with
-     `ConnectionClosedError` and detaches the socket). Exposed as `Connection.terminate()`
-     (asyncpg's name) and used by the pool for connections still busy after a
-     `pool.close(timeout=...)` grace period; and
-  2. don't wait for EOF after Terminate: follow the frontend messages written by
-     `EofWatch` (as `Framer` does for reads; after startup every message is tagged), and
-     once a complete `X` (Terminate) has been written and flushed, end `serve` as on EOF.
-  Both are API or behaviour decisions, so not done here.
+  the exit of `async with await fastpg.connect(...)` and `pool.close()` hung, and a
+  cancelled `close()` left the socket and driver task open. Now, as libpq's `PQfinish`
+  and pgx's `Close` do, the close doesn't wait:
+  1. `EofWatch` follows the frontend messages written after the startup (every one is
+     tagged). Once a complete `X` (Terminate) has been written and flushed, its reads
+     report EOF: the driver shuts the stream down as it did on the server's EOF
+     (`close_notify` over TLS, then the socket's write half), ends, and the socket is
+     closed. Statements in flight still complete first (the client, hence Terminate, goes
+     only when they are done). A fork()ed child still sends nothing; a server drop before
+     Terminate is flushed ends the connection as before. Cached statements are no longer
+     closed one by one on the way out: the session's end frees them, and their answers
+     would arrive at a closed socket (an RST, and a log line on the server).
+  2. `Connection.terminate()` (asyncpg's name and semantics): synchronous, closes at once
+     without Terminate, fails pending and in-flight operations with
+     `ConnectionClosedError`; idempotent, and sends nothing in a fork()ed child. A
+     cancelled `close()` (e.g. `asyncio.timeout`) terminates its connection, and a
+     cancelled `pool.close()` (or `async with pool` exit) terminates every connection still
+     open, checked-out ones included, then re-raises, as asyncpg's `Pool.close` does. No
+     `pool.close(timeout=...)`: `asyncio.timeout` around it is the bound.
+  The server ends a terminated session when it next reads or writes: a statement running
+  there (e.g. `pg_sleep`) runs to its end first (no server-side cancel, see 6).
 
 ## 3. Connection reset or closed mid-result
 
@@ -142,7 +148,7 @@ closed" means `close()` was called.
 Fixed (edb7548), half-open connections: **a lost RST or a network partition was never
 noticed.** If neither FIN nor RST arrives (a partition, a crashed host, macOS dropping an
 RST into a closed window as above), the socket stays `ESTABLISHED`: queries waited until
-the caller's timeout, and `close()` hangs (2e). fastpg set no `SO_KEEPALIVE`. It now takes
+the caller's timeout, and `close()` waited for them. fastpg set no `SO_KEEPALIVE`. It now takes
 libpq's keys, with libpq's semantics: `keepalives` (default 1, 0 turns them off),
 `keepalives_idle`, `keepalives_interval`, `keepalives_count` (`SO_KEEPALIVE`,
 `TCP_KEEPIDLE` / macOS `TCP_KEEPALIVE`, `TCP_KEEPINTVL`, `TCP_KEEPCNT`) and
@@ -282,7 +288,7 @@ and a pool replacing a terminated busy TLS session behave as without TLS.
 
 ## Running these tests
 
-`uv run pytest -q tests/test_network_*.py`: 81 tests, about 55 s (the slowest, a 1 s RTT
+`uv run pytest -q tests/test_network_*.py`: 89 tests, about 55 s (the slowest, a 1 s RTT
 startup, takes 10 s; the long ones are marked `@pytest.mark.timeout(60)`). The destructive
 ones start the tests' own container (`fastpg-edge-net-*`) on first use, removed at the end
 of the session, also when `FASTPG_DSN` is set.
