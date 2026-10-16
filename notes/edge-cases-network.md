@@ -14,8 +14,10 @@ proposed design for each. Every behaviour below is pinned by a test in
   N bytes per write, each sent on its own), `stall()` / `resume()` (bytes are held, not
   dropped), `cut_after(n, rst=...)` (drop every connection after exactly n more bytes).
   Proxy-wide: `drop(rst=...)` (FIN, or RST via `SO_LINGER` 0), `refuse` (reset new
-  connections at once), and counters (`accepted`, `forwarded`, `ended`: connections whose
-  sender closed, e.g. `to_server.ended` counts sockets fastpg closed).
+  connections at once), `unreachable()` (new connections hang: the port keeps listening,
+  nothing accepts, and its full queue makes the kernel drop new SYNs), and counters
+  (`accepted`, `forwarded`, `ended`: connections whose sender closed, e.g.
+  `to_server.ended` counts sockets fastpg closed).
 * **`DisposableServer`** (`tests/faults.py`): a PostgreSQL container of the tests' own
   (`fastpg-edge-net-<random>`, on a fixed host port so `docker restart` keeps the
   address), with `pause` / `unpause` / `kill` / `start` / `restart` / `heal`. It is never
@@ -45,7 +47,7 @@ an RST. In production this is the "lost RST" case below (half-open connection).
 | 3a | lost RST, partition (half-open) | never noticed: no TCP keepalives | yes | yes (edb7548): libpq's keepalive keys and `tcp_user_timeout`, keepalives on by default | `test_network_keepalives.py` (keys only) |
 | 4 | `docker restart` / `kill` / `stop`, `pg_terminate_backend` | statements in flight fail at once (57P01 `OperationalError`, or `ConnectionClosedError` after a kill); a pool recovers by itself, 0.27 s after `docker restart` began, 0.1 s after `docker start` returned; terminating every idle session at once is absorbed | no | - | `test_network_server.py`, plus existing `test_pool.py` / `test_connection.py` / `test_tls.py` terminate tests |
 | 5 | database down / refusing / unreachable | refused: every statement fails at once with its own connect attempt (no backoff); unreachable (SYNs dropped): connect waited for the OS (75 s on macOS); accepts TCP but never answers the startup: waited forever | yes | `connect_timeout` added (69c3bda); unknown DSN keys now named (7e8214c); one connect per waiting statement (bac365b); backoff **open** | `test_network_connect.py` |
-| 6 | `pg_sleep`, lock waits, `statement_timeout` | timeout returns on time; the statement runs on server-side and its connection stays busy; a cancelled UPDATE waiting on a lock still commits when the lock is released; `statement_timeout` from the DSN raises `QueryCanceledError` and the pool keeps the connection; the pool routes around a busy connection | no (known: no server-side cancel) | cancel **open** | `test_network_slow.py` |
+| 6 | `pg_sleep`, lock waits, `statement_timeout` | timeout returns on time; the statement ran on server-side and its connection stayed busy, so a cancelled UPDATE waiting on a lock still committed when the lock was released; now cancelled on the server when alone on its connection; `statement_timeout` from the DSN raises `QueryCanceledError` and the pool keeps the connection; the pool routes around a busy connection | yes (no server-side cancel) | yes (85a86ed, 90f0707): when alone on its connection | `test_network_slow.py` |
 | 7 | 1- and 7-byte fragments (plain, and TLS records byte by byte) | correct: startup, rows across chunks, structs, 20 kB values, errors, pipelining, `execute_many`, COPY, transactions | no | - | `test_responses_in_tiny_fragments`, `test_tls_records_in_one_byte_fragments` |
 | 8 | TLS variants | stall + recovery, 1-byte records, pool replacing a terminated busy TLS session; cut without close_notify and terminate were already covered by `test_tls.py` | no | - | `test_stalled_tls_connection_recovers`, `test_pool_replaces_a_terminated_busy_tls_connection` |
 
@@ -78,9 +80,10 @@ What works:
   the abandoned statement's result is discarded and the next statement gets its own
   result.
 * In a pool, an abandoned shared statement keeps its slot until the server is past it
-  (fastpg sends a no-op behind it and frees the slot when that returns); other statements
-  are routed elsewhere, and the pool opens a connection meanwhile. Once the server answers
-  again, slots are freed and the pool is back to normal (`in_flight == 0`).
+  (fastpg sends a no-op behind it and frees the slot when that returns; alone on its
+  connection, it is also cancelled there, see 6); other statements are routed elsewhere,
+  and the pool opens a connection meanwhile. Once the server answers again, slots are freed
+  and the pool is back to normal (`in_flight == 0`).
 
 Fixed:
 
@@ -126,7 +129,8 @@ Fixed:
      open, checked-out ones included, then re-raises, as asyncpg's `Pool.close` does. No
      `pool.close(timeout=...)`: `asyncio.timeout` around it is the bound.
   The server ends a terminated session when it next reads or writes: a statement running
-  there (e.g. `pg_sleep`) runs to its end first (no server-side cancel, see 6).
+  there (e.g. `pg_sleep`) runs to its end first (a terminated connection sends no cancel,
+  see 6).
 
 ## 3. Connection reset or closed mid-result
 
@@ -241,36 +245,76 @@ quietly and the open connections keep serving (pipelined).
 
 ## 6. Slow queries
 
-* `asyncio.timeout(0.2)` around `pg_sleep(1)` raises on time; the next statement on that
-  connection completes about 0.8 s later, when the sleep ends (no server-side cancel).
-* A cancelled `UPDATE` waiting for a row lock held by another session still runs, and
-  commits, when the lock is released. A caller's timeout is not a cancel of the write.
+* `asyncio.timeout(0.2)` around `pg_sleep(5)` raises on time, and the statement is
+  cancelled on the server (below): the next statement on that connection runs at once. The
+  same on an `acquire()` connection, in a transaction (whose ROLLBACK is sent behind the
+  cancel and runs at once), in `pool.transaction()`, and for a shared statement alone on its
+  pool connection (its slot is free again within milliseconds); leaving `async with` after
+  the timeout doesn't wait for the sleep.
+* An `UPDATE` waiting for a row lock held by another session, given up on, is cancelled
+  there: it doesn't run, and commit, once the lock is released. So is an `execute_many`
+  whose first chunk waits for that lock, and a `copy_in` whose first row waits for an open
+  transaction that inserted the same key.
 * `options=-c statement_timeout=100` in the DSN: `pg_sleep(2)` raises
   `QueryCanceledError` (57014) after 0.1 s; the connection stays usable, and a pool keeps it
   (57014 isn't session-fatal).
-* In a pool of two, a cancelled `pg_sleep(1)` keeps its slot, and 20 sequential fast
-  statements meanwhile take under 0.5 s in all (routed to the other connection).
+* Pipelined with other statements, a cancelled one is not cancelled on the server (the
+  others complete, and the proxy sees no second connection): it keeps its slot, and in a
+  pool of two, 20 sequential fast statements meanwhile take under 0.5 s in all (routed to
+  the other connection).
 
-Open: **server-side cancel.** Proposed design:
+Fixed (85a86ed, 90f0707): **no server-side cancel.** A statement whose caller gave up kept
+running on the server, and its connection stayed busy, until it ended. Now:
 
-* Capture the BackendKeyData (`K`: process id and secret key) as the startup response
-  passes through `EofWatch`'s `Framer` (xitca keeps its own copy private, and its
-  `Session::query_cancel` needs a tokio runtime), and keep the address the socket
-  connected to.
-* `cancel()`: open a new socket to that address (bounded by `connect_timeout`), write the
-  16-byte CancelRequest (length 16, code 80877102, pid, key), wait for the server to close
-  it. Plaintext works with every server version; PostgreSQL 17+ also accepts it over TLS,
-  which `sslmode=require`+ should use (the TLS code path is reusable).
-* Use it only where it cancels the right statement: when the abandoned statement is the
-  only one in flight on its connection (always for `acquire()` / `transaction()`, a
-  `Connection` with one statement, a shared pool slot whose connection has load 1). With
-  pipelining, the server cancels whatever runs, possibly another caller's statement.
-* The race: a cancel that arrives after its statement finished hits the next one. The
+* **The key.** xitca keeps the session's `BackendKeyData` private (`Session`, behind
+  `Client::cancel_token()`), and its `Session::query_cancel` builds a current_thread tokio
+  runtime. So `net::Framer`, which already follows every message read through `EofWatch`,
+  keeps the startup's `K` (process id and secret key); `IoWatch` also records whether the
+  session uses TLS.
+* **When.** Only when the abandoned operation is the only one on the wire: past its gates
+  and not finished. The operations there are counted, and their result futures' addresses
+  summed, so with one of them the sum is its future: an O(1) check, two relaxed atomic
+  additions (and subtractions) per operation. That covers `acquire()` and `transaction()`
+  connections, a `Connection` with one statement in flight, and a shared pool connection
+  whose load is 1; the statement methods (`select_*`, `execute`, `execute_script`), and bulk
+  writes cancelled before their last chunk is handed over (they hold the connection
+  exclusively, so they are alone on the wire, and their rollback waits for the cancel).
+  Once the last chunk is handed over, a bulk write commits even if its caller is
+  cancelled, as before (a cancel could land on its COMMIT). With several statements
+  pipelined nothing is sent: the server cancels whatever the session runs, possibly another
+  caller's statement.
+* **How.** Python connects a socket to the address the connection reached
+  (`_connect_candidate`, with the DSN's keepalive settings; the same path for a unix socket),
+  bounded by `connect_timeout` together with the TLS handshake, and hands it to the native
+  `Cancel`. Its task, polled on the loop thread like the connection's own (no thread, no
+  tokio runtime), negotiates TLS when the connection uses TLS (`tls::start` with the
+  connection's settings, `sslmode` raised to at least `require`, as libpq 17 does), writes
+  the 16-byte CancelRequest (length 16, code 80877102, pid, key) and waits for the server
+  to close the socket.
+* **The race.** A cancel that arrives after its statement finished hits the next one. The
   postmaster signals the backend before it closes the cancel socket, and an idle backend
-  ignores the signal; so don't send anything on that connection until the cancel socket
-  has closed. The pool already holds the slot until the server is past the statement
-  (`_flush_ghosts`); it would start the cancel there and send its no-op after the cancel
-  socket closed.
+  ignores the signal; so from the moment a cancel begins until its socket has closed (or it
+  failed before its request was written), every operation on the connection waits before
+  sending anything (`Cancels::settled`), and they go out in submission order afterwards,
+  as asyncpg's `_wait_for_cancellation` does. A pool's ghost no-op (`_flush_ghosts`) waits
+  the same way, so the slot is held until the server is past the statement and the cancel
+  is over. `test_a_late_cancel_never_lands_on_the_next_statement` (200 statements given up
+  on 0-4 ms in, each followed by a 2 ms one) fails within a second without that wait.
+* **Best effort.** A cancel that fails (refused, timed out, TLS failure) never raises: the
+  statement runs to its end, as before. Once its request is written, the wait for the
+  server's close has no time bound (asyncpg's has none either): a server that has the
+  request may act on it at any time, so nothing may be sent until it closes; the wait ends
+  with the connection. A fork()ed child sends nothing, nor does a closed or terminated
+  connection (a terminated one drops its cancels still being opened). `close()` waits for
+  the statements in flight, so a cancel begun before it still goes out and shortens that
+  wait.
+* **Cost.** Per operation, two relaxed atomic additions, two subtractions and an atomic
+  load. The pool sweep (16 connections, 16 workers, point lookups into a Struct, release
+  builds, native PostgreSQL) measured 41,656 and 41,393 req/s before, 39,530 and 39,111
+  after; interleaved on a loaded host, 38,700 and 39,173 before against 36,719 and 39,643
+  after: within noise.
+* A statement cancelled inside a transaction now aborts it (the server's 57014), as with
+  asyncpg and psycopg.
 
 ## 7. Fragmented delivery
 
@@ -288,7 +332,7 @@ and a pool replacing a terminated busy TLS session behave as without TLS.
 
 ## Running these tests
 
-`uv run pytest -q tests/test_network_*.py`: 89 tests, about 55 s (the slowest, a 1 s RTT
+`uv run pytest -q tests/test_network_*.py`: 104 tests, about 60 s (the slowest, a 1 s RTT
 startup, takes 10 s; the long ones are marked `@pytest.mark.timeout(60)`). The destructive
 ones start the tests' own container (`fastpg-edge-net-*`) on first use, removed at the end
 of the session, also when `FASTPG_DSN` is set.
