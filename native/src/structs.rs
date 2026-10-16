@@ -128,6 +128,8 @@ enum Mode {
 struct FieldSpec {
     attr: Py<PyString>,
     attr_name: String,
+    /// The column name it is matched by (`rename=`, an alias), when not `attr_name`.
+    column_name: Option<String>,
     kind: FieldKind,
     nullable: bool,
     required: bool,
@@ -236,15 +238,17 @@ impl StructSpec {
             let kind = FieldKind::from_code(kind).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!("unknown field kind {kind}"))
             })?;
-            by_name.insert(encode_name, i);
+            let attr_name = attr.to_str()?.to_owned();
             specs.push(FieldSpec {
-                attr_name: attr.to_str()?.to_owned(),
+                column_name: (encode_name != attr_name).then(|| encode_name.clone()),
+                attr_name,
                 attr: attr.unbind(),
                 kind,
                 nullable,
                 required,
                 json_decoder: json_decoder.map(Bound::unbind),
             });
+            by_name.insert(encode_name, i);
         }
         let mode = match (pydantic_defaults, named_tuple_defaults) {
             (Some(_), Some(_)) => {
@@ -525,7 +529,7 @@ impl Binding {
                     && matches!(spec.mode, Mode::Pydantic { .. }),
             });
         }
-        let missing: Vec<&str> = spec
+        let missing: Vec<String> = spec
             .fields
             .iter()
             .enumerate()
@@ -538,7 +542,11 @@ impl Binding {
                     .is_some_and(|d| d.get(*i).is_none_or(Option::is_none));
                 !**seen && (f.required || no_default)
             })
-            .map(|((_, f), _)| f.attr_name.as_str())
+            // A renamed or aliased field names the column it needs.
+            .map(|((_, f), _)| match &f.column_name {
+                Some(column) => format!("{} (column {column:?})", f.attr_name),
+                None => f.attr_name.clone(),
+            })
             .collect();
         if !missing.is_empty() {
             return Err(py_err(
