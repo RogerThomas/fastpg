@@ -177,6 +177,8 @@ pub(crate) struct Shared {
     /// that never answers would otherwise keep the socket open, e.g. after a connect timed
     /// out with `asyncio.timeout`).
     abort_connect: tokio::sync::Notify,
+    /// Notified by `terminate()`: the connection ends at once, without a Terminate.
+    abort: tokio::sync::Notify,
     client: Mutex<Option<Arc<Client>>>,
     cache: StatementCache,
     /// Ordinary operations hold it shared for their whole run; bulk writes (`bulk.rs`) hold it
@@ -419,8 +421,9 @@ pub(crate) fn plain_request(future: Py<PyAny>) -> Arc<Request> {
 }
 
 /// From "connect attempt finished" to "driver gone": resolves `connected`, runs the driver
-/// until the client is dropped or the server goes away, then marks the connection dead and
-/// resolves `closed`.
+/// until the client is dropped (once Terminate is written: see `net::Writes`), the server
+/// goes away or `terminate()` is called, then marks the connection dead and resolves
+/// `closed`.
 async fn serve(
     shared: Arc<Shared>,
     connection: Result<(Client, Driver, Arc<IoWatch>), QueryError>,
@@ -436,13 +439,14 @@ async fn serve(
                 shared.shutdown();
             }
             shared.post(connected, Outcome::Done);
-            // `biased` polls the driver first, so messages already received (e.g. the
-            // server's final ErrorResponse) are routed before the driver is dropped on EOF;
-            // `dead` (below) then fails every still-pending request.
+            // `biased`: `terminate()` wins over everything. Then the driver, so messages
+            // already received (e.g. the server's final ErrorResponse) are routed before the
+            // driver is dropped on EOF; `dead` (below) then fails every still-pending request.
             let driver = driver.into_future();
             tokio::pin!(driver);
             tokio::select! {
                 biased;
+                () = shared.abort.notified() => {}
                 _ = &mut driver => {}
                 () = watch.eof.notified() => {}
             }
@@ -475,6 +479,7 @@ impl Connection {
                 mailbox,
                 closing: AtomicBool::new(false),
                 abort_connect: tokio::sync::Notify::new(),
+                abort: tokio::sync::Notify::new(),
                 client: Mutex::new(None),
                 cache: StatementCache::new(statement_cache_size),
                 gate: tokio::sync::RwLock::new(()),
@@ -604,8 +609,9 @@ impl Connection {
         self.shared.flush(py);
     }
 
-    /// Stop accepting work. In-flight queries finish; then the connection is terminated. A
-    /// connect still in progress is abandoned, and its socket closed.
+    /// Stop accepting work. In-flight queries finish; then Terminate is written, and the
+    /// socket closed without waiting for the server. A connect still in progress is
+    /// abandoned, and its socket closed.
     /// In a fork()ed child it only stops accepting work: the session is the parent's.
     fn close(&self, py: Python<'_>) {
         self.shared.closing.store(true, Ordering::SeqCst);
@@ -615,6 +621,20 @@ impl Connection {
         // A permit for the handshake if it is still running; never looked at otherwise.
         self.shared.abort_connect.notify_one();
         self.shared.shutdown();
+        self.shared.pump(py);
+    }
+
+    /// Close at once: pending and in-flight operations fail with `ConnectionClosedError`, and
+    /// the socket is closed (no Terminate: the server notices the closed socket). Does
+    /// nothing more on a closed connection. In a fork()ed child it only stops accepting work.
+    fn terminate(&self, py: Python<'_>) {
+        self.shared.closing.store(true, Ordering::SeqCst);
+        if self.shared.inherited() {
+            return;
+        }
+        // Permits, looked at by the handshake if it is still running, and by `serve` after.
+        self.shared.abort_connect.notify_one();
+        self.shared.abort.notify_one();
         self.shared.pump(py);
     }
 

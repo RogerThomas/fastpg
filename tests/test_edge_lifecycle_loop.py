@@ -207,6 +207,17 @@ class _CloseInChild:
         return _start(self._conn.close()) is None and self._conn.closed
 
 
+class _TerminateInChild:
+    """Terminates an inherited connection in the child: it must send nothing either."""
+
+    def __init__(self, conn: fastpg.Connection) -> None:
+        self._conn = conn
+
+    def __call__(self) -> bool:
+        self._conn.terminate()
+        return self._conn.closed
+
+
 # --- the loop goes away ---------------------------------------------------------------------
 
 
@@ -373,4 +384,12 @@ async def test_a_forked_child_closing_the_connection_leaves_the_parent_alone(
     conn: fastpg.Connection,
 ) -> None:
     assert _fork(_CloseInChild(conn)) == 0
+    assert [await _select(conn, i) for i in range(3)] == [(0,), (1,), (2,)]
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs os.fork")
+async def test_a_forked_child_terminating_the_connection_leaves_the_parent_alone(
+    conn: fastpg.Connection,
+) -> None:
+    assert _fork(_TerminateInChild(conn)) == 0
     assert [await _select(conn, i) for i in range(3)] == [(0,), (1,), (2,)]
