@@ -171,9 +171,16 @@ fn param_error(py: Python<'_>, index: usize, msg: impl fmt::Display) -> PyErr {
 }
 
 pub fn from_py(obj: &Bound<'_, PyAny>, index: usize) -> PyResult<Param> {
+    let py = obj.py();
     convert(obj).map_err(|e| match e {
-        ConvertError::Py(e) => e,
-        ConvertError::Invalid(msg) => param_error(obj.py(), index, msg),
+        // As in bulk writes: a ParameterError naming the parameter, caused by the Python
+        // exception (an unencodable str, a value msgspec can't serialise as JSON, ...).
+        ConvertError::Py(e) => {
+            let err = param_error(py, index, &e);
+            err.set_cause(py, Some(e));
+            err
+        }
+        ConvertError::Invalid(msg) => param_error(py, index, msg),
     })
 }
 
