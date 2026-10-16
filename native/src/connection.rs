@@ -480,7 +480,7 @@ impl Connection {
             let host = (!unix).then_some(host.as_str());
             let handshake = async {
                 match net::config(&dsn) {
-                    Ok((cfg, tls)) => net::handshake(socket, cfg, &tls, host).await,
+                    Ok((cfg, options)) => net::handshake(socket, cfg, &options.tls, host).await,
                     Err(e) => Err(e),
                 }
             };

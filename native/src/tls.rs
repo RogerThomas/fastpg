@@ -12,8 +12,8 @@
 //! `net.rs` wraps the result in `EofWatch` as before, so a TLS `close_notify`, a TCP EOF
 //! without one, a TLS error and a socket error all end the connection the same way.
 //!
-//! The DSN's TLS keys are taken out here (xitca rejects keys and `sslmode` values it does
-//! not know); the rest of the DSN goes to xitca unchanged.
+//! The DSN's TLS keys (and libpq's `connect_timeout`) are taken out here (xitca rejects keys
+//! and `sslmode` values it does not know); the rest of the DSN goes to xitca unchanged.
 
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
@@ -330,9 +330,10 @@ const XITCA_KEYS: &[&str] = &[
     "target_session_attrs",
 ];
 
-/// TLS keys found in a DSN (last one wins, as in xitca's parser).
+/// TLS keys and `connect_timeout` found in a DSN (last one wins, as in xitca's parser).
 #[derive(Default)]
 struct Raw {
+    connect_timeout: Option<String>,
     sslmode: Option<String>,
     sslnegotiation: Option<String>,
     sslrootcert: Option<String>,
@@ -346,9 +347,10 @@ struct Raw {
 }
 
 impl Raw {
-    /// Keep `value` if `key` is a TLS key; `false` otherwise.
+    /// Keep `value` if `key` is a TLS key or `connect_timeout`; `false` otherwise.
     fn take(&mut self, key: &str, value: String) -> bool {
         let slot = match key {
+            "connect_timeout" => &mut self.connect_timeout,
             "sslmode" => &mut self.sslmode,
             "sslnegotiation" => &mut self.sslnegotiation,
             "sslrootcert" => &mut self.sslrootcert,
@@ -440,10 +442,35 @@ impl Raw {
     }
 }
 
-/// Split the TLS keys off `dsn`: the DSN for xitca (unchanged if it had none) and the TLS
-/// settings. Both forms are handled, URL (`postgresql://...?sslmode=require`) and key/value
-/// (`host=db sslmode=require`), each split the way xitca's own parser reads it.
-pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, TlsOptions), QueryError> {
+/// The DSN keys fastpg handles itself (xitca never sees them).
+pub struct DsnOptions {
+    pub tls: TlsOptions,
+    /// libpq's `connect_timeout`, in seconds (applied in Python, per address tried).
+    pub connect_timeout: Option<u32>,
+}
+
+/// libpq's `connect_timeout`: whole seconds; zero, negative or absent mean no timeout, and
+/// 1 means 2 (libpq's minimum).
+fn connect_timeout(value: Option<&str>) -> Result<Option<u32>, QueryError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let seconds: i64 = value.trim().parse().map_err(|_| {
+        interface(format!(
+            "invalid integer value {value:?} for connection option \"connect_timeout\""
+        ))
+    })?;
+    Ok(match seconds {
+        ..=0 => None,
+        1 => Some(2),
+        n => Some(u32::try_from(n).unwrap_or(u32::MAX)),
+    })
+}
+
+/// Split the TLS keys and `connect_timeout` off `dsn`: the DSN for xitca (unchanged if it had
+/// none) and their settings. Both forms are handled, URL (`postgresql://...?sslmode=require`)
+/// and key/value (`host=db sslmode=require`), each split the way xitca's own parser reads it.
+pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
     let mut raw = Raw::default();
     let rest = match ["postgresql://", "postgres://"]
         .iter()
@@ -452,7 +479,15 @@ pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, TlsOptions), QueryError> {
         Some(prefix) => strip_url(dsn, prefix.len(), &mut raw),
         None => strip_key_values(dsn, &mut raw),
     };
-    Ok((rest, raw.into_options()?))
+    let connect_timeout = connect_timeout(raw.connect_timeout.take().as_deref())?;
+    let tls = raw.into_options()?;
+    Ok((
+        rest,
+        DsnOptions {
+            tls,
+            connect_timeout,
+        },
+    ))
 }
 
 fn strip_url<'a>(dsn: &'a str, body: usize, raw: &mut Raw) -> Cow<'a, str> {
@@ -1045,12 +1080,36 @@ impl<Io: AsyncIo + Send> AsyncIo for TlsStream<Io> {
 mod tests {
     use super::*;
 
-    fn split(dsn: &str) -> (String, TlsOptions) {
+    fn split_all(dsn: &str) -> (String, DsnOptions) {
         let (rest, opts) = split_dsn(dsn).unwrap_or_else(|e| match e {
             QueryError::Interface(m) => panic!("{m}"),
             _ => panic!("unexpected error"),
         });
         (rest.into_owned(), opts)
+    }
+
+    fn split(dsn: &str) -> (String, TlsOptions) {
+        let (rest, opts) = split_all(dsn);
+        (rest, opts.tls)
+    }
+
+    #[test]
+    fn connect_timeout_is_split_off_as_libpq_reads_it() {
+        let (rest, opts) = split_all("postgresql://db/x?connect_timeout=10&application_name=a");
+        assert_eq!(rest, "postgresql://db/x?application_name=a");
+        assert_eq!(opts.connect_timeout, Some(10));
+        let (rest, opts) = split_all("host=db connect_timeout=' 5 ' user=u");
+        assert_eq!(rest, "host=db user=u");
+        assert_eq!(opts.connect_timeout, Some(5));
+        for (value, seconds) in [("1", Some(2)), ("0", None), ("-3", None), ("3", Some(3))] {
+            let dsn = format!("postgresql://db/x?connect_timeout={value}");
+            assert_eq!(split_all(&dsn).1.connect_timeout, seconds, "{value}");
+        }
+        assert_eq!(split_all("postgresql://db/x").1.connect_timeout, None);
+        assert_eq!(
+            error("postgresql://db/x?connect_timeout=1.5"),
+            "invalid integer value \"1.5\" for connection option \"connect_timeout\""
+        );
     }
 
     fn error(dsn: &str) -> String {

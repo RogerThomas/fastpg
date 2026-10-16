@@ -12,6 +12,9 @@ def rust_allocations() -> int | None:
 def dsn_targets(dsn: str) -> list[tuple[str, str, int]]:
     """The hosts of `dsn` as `("tcp" | "unix", host or path, port)`, in connection order."""
 
+def dsn_connect_timeout(dsn: str) -> int | None:
+    """libpq's `connect_timeout` of `dsn` in seconds (None: wait indefinitely); checks the DSN."""
+
 @final
 class StructSpec:
     def __new__(
