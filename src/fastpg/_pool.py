@@ -482,8 +482,8 @@ class Pool:
         if self._waiting or self._closing is not None:  # FIFO: don't overtake waiters
             return None
         entry = self._best_slot()
-        if entry is None or self._load(entry):
-            self._grow()
+        if entry is not None and self._load(entry):
+            self._grow()  # if None, the statement waits and its dispatch grows the pool
         return entry
 
     def _idle_entry(self) -> _Entry | None:
