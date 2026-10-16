@@ -174,10 +174,13 @@ impl ColumnCodec {
                 out.put_f64(unsafe { ffi::PyFloat_AS_DOUBLE(p) });
                 return Ok(true);
             }
+            // A float beyond float4's range falls through to the generic path's range error.
             Fast::Float4 if exact_float => {
                 // SAFETY: `p` is an exact float.
-                out.put_f32(unsafe { ffi::PyFloat_AS_DOUBLE(p) } as f32);
-                return Ok(true);
+                if let Some(v) = params::float4(unsafe { ffi::PyFloat_AS_DOUBLE(p) }) {
+                    out.put_f32(v);
+                    return Ok(true);
+                }
             }
             Fast::Bool if obj.is_exact_instance_of::<pyo3::types::PyBool>() => {
                 out.put_u8(u8::from(obj.is_truthy()?));

@@ -1,5 +1,6 @@
 """Parameters that don't fit the type the server inferred for them."""
 
+import math
 from decimal import Decimal
 
 import pytest
@@ -37,6 +38,29 @@ async def test_int_beyond_64_bits_for_an_integer_type_is_out_of_range(
 async def test_int_beyond_float_range_is_out_of_range(conn: fastpg.Connection) -> None:
     with pytest.raises(fastpg.ParameterError, match="int out of range for PostgreSQL type float8"):
         await conn.select_one("SELECT $1::float8", 10**400)
+
+
+@pytest.mark.parametrize("value", [1e300, -1e300, 1e-50])
+async def test_float_beyond_float4_range_is_out_of_range(
+    conn: fastpg.Connection,
+    value: float,
+) -> None:
+    # As PostgreSQL's own float8 -> float4 cast: not rounded to infinity or zero.
+    expected = r"^parameter \$1: float out of range for PostgreSQL type float4$"
+    with pytest.raises(fastpg.ParameterError, match=expected):
+        await conn.select_one("SELECT $1::float4", value)
+
+
+@pytest.mark.parametrize("value", [0.0, -0.0, 1.5, 1e-40, math.inf, -math.inf])
+async def test_float_within_float4_range(conn: fastpg.Connection, value: float) -> None:
+    (got,) = await conn.select_one("SELECT $1::float4", value)
+    assert got == pytest.approx(value, rel=1e-6)
+    assert math.copysign(1, got) == math.copysign(1, value)
+
+
+async def test_float_nan_for_float4(conn: fastpg.Connection) -> None:
+    (got,) = await conn.select_one("SELECT $1::float4", math.nan)
+    assert math.isnan(got)
 
 
 async def test_int_with_more_digits_than_python_converts(conn: fastpg.Connection) -> None:

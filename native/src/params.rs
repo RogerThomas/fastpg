@@ -389,9 +389,9 @@ impl ToSql for Indexed<'_> {
                     // Correctly rounded, like Python's `float(int)`; past f64's range it is
                     // `inf`, where Python raises OverflowError.
                     let v = digits.parse::<f64>().map_err(|e| fail(e.to_string()))?;
-                    match *ty {
-                        Type::FLOAT4 if (v as f32).is_finite() => out.put_f32(v as f32),
-                        Type::FLOAT8 if v.is_finite() => out.put_f64(v),
+                    match float4(v) {
+                        Some(f) if *ty == Type::FLOAT4 && f.is_finite() => out.put_f32(f),
+                        _ if *ty == Type::FLOAT8 && v.is_finite() => out.put_f64(v),
                         _ => return Err(range("int")),
                     }
                 }
@@ -399,7 +399,7 @@ impl ToSql for Indexed<'_> {
                 _ => return Err(mismatch()),
             },
             Param::Float(v) => match *ty {
-                Type::FLOAT4 => out.put_f32(*v as f32),
+                Type::FLOAT4 => out.put_f32(float4(*v).ok_or_else(|| range("float"))?),
                 Type::FLOAT8 => out.put_f64(*v),
                 Type::NUMERIC => encode_numeric(&float_repr(*v), out).map_err(fail)?,
                 _ => return Err(mismatch()),
@@ -447,6 +447,13 @@ impl ToSql for Indexed<'_> {
     }
 
     to_sql_checked!();
+}
+
+/// `v` as a float4, unless it is finite but beyond float4's range: PostgreSQL's float8 to
+/// float4 cast refuses those too, rather than rounding them to infinity or zero.
+pub fn float4(v: f64) -> Option<f32> {
+    let f = v as f32;
+    (!v.is_finite() || (f.is_finite() && (f != 0.0 || v == 0.0))).then_some(f)
 }
 
 fn float_repr(v: f64) -> String {
