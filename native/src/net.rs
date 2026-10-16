@@ -30,7 +30,7 @@ use xitca_postgres::{Client, Config, Driver, Postgres};
 
 use crate::auth;
 use crate::errors::QueryError;
-use crate::tls::{self, ChannelBinding, DsnOptions, TlsOptions};
+use crate::tls::{self, ChannelBinding, DsnOptions, SocketOptions, TlsOptions};
 
 /// One response cycle (the server's messages up to and including a `ReadyForQuery`, i.e. the
 /// answer to one `Sync` or simple query), summarised for a bulk write (see [`IoWatch::tap`]).
@@ -348,7 +348,7 @@ enum Target {
     Unix(PathBuf),
 }
 
-/// Parse `dsn` into xitca's config and the settings xitca never sees (TLS, connect timeout).
+/// Parse `dsn` into xitca's config and the settings xitca never sees (TLS, socket options).
 pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
     let (rest, options) = tls::split_dsn(dsn)?;
     // Every key is known by now (`split_dsn` names an unknown one), and xitca's parse errors
@@ -363,9 +363,9 @@ pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
     Ok((cfg, options))
 }
 
-/// libpq's `connect_timeout` of `dsn`, in seconds (after checking the whole DSN).
-pub fn connect_timeout(dsn: &str) -> Result<Option<u32>, QueryError> {
-    Ok(config(dsn)?.1.connect_timeout)
+/// libpq's socket keys of `dsn` (after checking the whole DSN).
+pub fn socket_options(dsn: &str) -> Result<SocketOptions, QueryError> {
+    Ok(config(dsn)?.1.socket)
 }
 
 /// The hosts of `dsn` as `("tcp" | "unix", host or directory/path, port)`, in connection
