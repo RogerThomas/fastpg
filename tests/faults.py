@@ -1,7 +1,8 @@
 """Network fault injection for the network edge-case tests (``test_network_*.py``).
 
 * `FaultProxy`: a TCP (or unix socket to TCP) forwarder between fastpg and a server that
-  adds latency, stalls, drops connections (FIN or RST) and delivers bytes in tiny fragments.
+  adds latency, stalls, drops connections (FIN or RST), delivers bytes in tiny fragments, and
+  refuses new connections or leaves them hanging.
 * `DisposableServer`: a PostgreSQL container of the tests' own, to pause, kill and restart.
 """
 
@@ -130,6 +131,8 @@ class FaultProxy:
     _links: list[_Link] = field(default_factory=list[_Link])
     _tasks: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
     _server: asyncio.Server | None = None
+    _held: list[socket.socket] = field(default_factory=list[socket.socket])
+    """Sockets `unreachable()` keeps open."""
 
     async def _read(
         self,
@@ -249,9 +252,30 @@ class FaultProxy:
         for link in links:
             link.drop(rst=rst)
 
+    def unreachable(self) -> None:
+        """Make new connections hang, as to an address whose SYNs go unanswered; the open
+        ones carry on.
+
+        The port keeps listening (on a duplicate of the socket) but nothing accepts any more,
+        and its queue is filled: the kernel drops new SYNs.
+        """
+        if self._server is None:
+            return
+        listener = self._server.sockets[0].dup()
+        self._server.close()
+        listener.listen(1)
+        self._held.append(listener)
+        for _ in range(2):
+            filler = socket.socket()
+            filler.settimeout(0.0)  # non-blocking
+            filler.connect_ex(listener.getsockname())
+            self._held.append(filler)
+
     async def close(self) -> None:
         self.resume()
         self.drop(rst=True)
+        for sock in self._held:
+            sock.close()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
