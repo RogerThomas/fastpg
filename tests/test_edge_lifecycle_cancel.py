@@ -179,6 +179,29 @@ async def _pool_acquire(pool: fastpg.Pool, i: int) -> object:
         return await conn.select_one("SELECT $1::int", i)
 
 
+def _bulk_write(
+    target: fastpg.Connection | fastpg.Transaction | fastpg.Pool,
+    method: str,
+    low: int,
+    rows: int,
+) -> Coroutine[Any, Any, int]:
+    """Write ``rows`` rows with ids from ``low`` by ``method``."""
+    data = [(low + r, "v") for r in range(rows)]
+    if method == "execute_many":
+        return target.execute_many("INSERT INTO edge_cancel VALUES ($1, $2)", data)
+    if method == "insert_many":
+        return target.insert_many("edge_cancel", data)
+    return target.copy_in("edge_cancel", iter(data))
+
+
+async def _in_transaction(conn: fastpg.Connection) -> bool:
+    try:
+        await _assert_consistent(conn, 0)
+    except errors.DataError:
+        return True
+    return False
+
+
 async def _settled(pool: fastpg.Pool) -> fastpg.PoolStats:
     """The pool's stats once nothing is in flight, waiting or opening."""
     async with asyncio.timeout(10):
@@ -259,14 +282,7 @@ async def test_bulk_write_cancelled_at_random_points_is_all_or_nothing(
     outcomes: set[str] = set()
     for i in range(40):
         low = i * rows
-        data = [(low + r, "v") for r in range(rows)]
-        if method == "execute_many":
-            coro = conn.execute_many("INSERT INTO edge_cancel VALUES ($1, $2)", data)
-        elif method == "insert_many":
-            coro = conn.insert_many("edge_cancel", data)
-        else:
-            coro = conn.copy_in("edge_cancel", iter(data))
-        task = await _cancel_after(coro, rng.randrange(40))
+        task = await _cancel_after(_bulk_write(conn, method, low, rows), rng.randrange(40))
         written = await _count(conn, low, low + rows)
         if task.cancelled():
             assert written in {0, rows}
@@ -277,6 +293,53 @@ async def test_bulk_write_cancelled_at_random_points_is_all_or_nothing(
             outcomes.add("finished")
         await _assert_consistent(conn, i)
     assert "cancelled, 0 written" in outcomes
+    assert loop_errors.messages() == []
+
+
+@pytest.mark.usefixtures("table")
+@pytest.mark.parametrize("method", ["execute_many", "insert_many", "copy_in"])
+async def test_bulk_write_cancelled_inside_a_transaction_leaves_it_usable(
+    conn: fastpg.Connection,
+    rng: random.Random,
+    method: str,
+) -> None:
+    rows = 3000
+    expected = 0
+    async with conn.transaction() as tx:
+        for i in range(25):
+            low = i * rows
+            task = await _cancel_after(_bulk_write(tx, method, low, rows), rng.randrange(40))
+            # Its own savepoint was rolled back (or released): the transaction isn't aborted.
+            (written,) = await tx.select_one(
+                "SELECT count(*)::int FROM edge_cancel WHERE id >= $1 AND id < $2",
+                low,
+                low + rows,
+            )
+            assert written in ({0, rows} if task.cancelled() else {rows})
+            expected += written
+    assert await _count(conn, 0, 25 * rows) == expected
+
+
+@pytest.mark.usefixtures("table")
+@pytest.mark.parametrize("method", ["execute_many", "insert_many", "copy_in"])
+async def test_pool_bulk_write_cancelled_at_random_points(
+    dsn: str,
+    conn: fastpg.Connection,
+    rng: random.Random,
+    loop_errors: LoopErrors,
+    method: str,
+) -> None:
+    rows = 3000
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        for i in range(25):
+            low = i * rows
+            task = await _cancel_after(_bulk_write(pool, method, low, rows), rng.randrange(40))
+            written = await _count(conn, low, low + rows)
+            assert written in ({0, rows} if task.cancelled() else {rows})
+        stats = await _settled(pool)
+        assert (stats.size, stats.acquired) == (1, 0)
+        async with pool.acquire() as acquired:
+            assert not await _in_transaction(acquired)
     assert loop_errors.messages() == []
 
 
