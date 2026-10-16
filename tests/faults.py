@@ -1,7 +1,7 @@
 """Network fault injection for the network edge-case tests (``test_network_*.py``).
 
-* `FaultProxy`: a TCP forwarder between fastpg and a server that adds latency, stalls,
-  drops connections (FIN or RST) and delivers bytes in tiny fragments.
+* `FaultProxy`: a TCP (or unix socket to TCP) forwarder between fastpg and a server that
+  adds latency, stalls, drops connections (FIN or RST) and delivers bytes in tiny fragments.
 * `DisposableServer`: a PostgreSQL container of the tests' own, to pause, kill and restart.
 """
 
@@ -206,7 +206,9 @@ class FaultProxy:
             writer.transport.abort()
             return
         for side in (writer, upstream_writer):
-            side.get_extra_info("socket").setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock = side.get_extra_info("socket")
+            if sock.family != socket.AF_UNIX:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self._links.append(_Link(writer, upstream_writer))
         await asyncio.gather(
             self._flow(reader, upstream_writer, self.to_server),
@@ -223,6 +225,10 @@ class FaultProxy:
         self._server = await asyncio.start_server(self._track, "127.0.0.1", 0)
         self.port = self._server.sockets[0].getsockname()[1]
         return self.port
+
+    async def start_unix(self, path: str) -> None:
+        """Listen on the unix socket `path` instead."""
+        self._server = await asyncio.start_unix_server(self._track, path)
 
     def route(self, dsn: str) -> str:
         """URL `dsn` pointed at this (started) proxy."""

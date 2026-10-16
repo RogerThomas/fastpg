@@ -15,8 +15,31 @@ def after_fork_in_child() -> None:
 def dsn_targets(dsn: str) -> list[tuple[str, str, int]]:
     """The hosts of `dsn` as `("tcp" | "unix", host or path, port)`, in connection order."""
 
-def dsn_connect_timeout(dsn: str) -> int | None:
-    """libpq's `connect_timeout` of `dsn` in seconds (None: wait indefinitely); checks the DSN."""
+def dsn_socket_options(dsn: str) -> SocketOptions:
+    """libpq's socket keys of `dsn` (connect_timeout, keepalives...); checks the whole DSN."""
+
+@final
+class SocketOptions:
+    """None: no timeout for `connect_timeout`, the OS default for the others."""
+
+    @property
+    def connect_timeout(self) -> int | None:
+        """Seconds."""
+    @property
+    def keepalives(self) -> bool:
+        """`SO_KEEPALIVE`: on unless `keepalives=0`."""
+    @property
+    def keepalives_idle(self) -> int | None:
+        """Seconds idle before the first probe."""
+    @property
+    def keepalives_interval(self) -> int | None:
+        """Seconds between probes."""
+    @property
+    def keepalives_count(self) -> int | None:
+        """Probes unanswered before the connection is dropped."""
+    @property
+    def tcp_user_timeout(self) -> int | None:
+        """Milliseconds sent data may stay unacknowledged (Linux)."""
 
 @final
 class StructSpec:

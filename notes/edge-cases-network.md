@@ -7,7 +7,8 @@ proposed design for each. Every behaviour below is pinned by a test in
 
 ## Tools
 
-* **`FaultProxy`** (`tests/faults.py`): a TCP forwarder on 127.0.0.1. Per direction
+* **`FaultProxy`** (`tests/faults.py`): a TCP forwarder on 127.0.0.1 (or, with
+  `start_unix(path)`, from a unix socket). Per direction
   (`to_server`, `to_client`): `delay` (latency added to every read, without limiting
   throughput: reads and writes go through a queue of `(due, bytes)`), `fragment` (at most
   N bytes per write, each sent on its own), `stall()` / `resume()` (bytes are held, not
@@ -41,6 +42,7 @@ an RST. In production this is the "lost RST" case below (half-open connection).
 | 2d | | a cancelled `connect()` left its socket open and registered until the server answered (maybe never) | yes | yes (5b8de22) | `test_cancelled_connect_to_a_stalled_server_closes_its_socket` |
 | 2e | | `close()` (and so `async with` exit, `pool.close()`) waits for the server's EOF after Terminate: forever on a stalled or partitioned server | yes | **open** (design below) | `test_close_completes_after_...` (documents it) |
 | 3 | RST / FIN mid `select_many`, COPY, `execute_many`, transaction | fails at once with `ConnectionClosedError`; connection closed; nothing of the write committed; a pool replaces the connection | message only | yes (306de25): it said "connection is closed", as after the caller's own `close()`; now "connection lost: closed by the server or the network" | `test_network_drop.py` |
+| 3a | lost RST, partition (half-open) | never noticed: no TCP keepalives | yes | yes (edb7548): libpq's keepalive keys and `tcp_user_timeout`, keepalives on by default | `test_network_keepalives.py` (keys only) |
 | 4 | `docker restart` / `kill` / `stop`, `pg_terminate_backend` | statements in flight fail at once (57P01 `OperationalError`, or `ConnectionClosedError` after a kill); a pool recovers by itself, 0.27 s after `docker restart` began, 0.1 s after `docker start` returned; terminating every idle session at once is absorbed | no | - | `test_network_server.py`, plus existing `test_pool.py` / `test_connection.py` / `test_tls.py` terminate tests |
 | 5 | database down / refusing / unreachable | refused: every statement fails at once with its own connect attempt (no backoff); unreachable (SYNs dropped): connect waited for the OS (75 s on macOS); accepts TCP but never answers the startup: waited forever | yes | `connect_timeout` added (69c3bda); unknown DSN keys now named (7e8214c); one connect per waiting statement (bac365b); backoff **open** | `test_network_connect.py` |
 | 6 | `pg_sleep`, lock waits, `statement_timeout` | timeout returns on time; the statement runs on server-side and its connection stays busy; a cancelled UPDATE waiting on a lock still commits when the lock is released; `statement_timeout` from the DSN raises `QueryCanceledError` and the pool keeps the connection; the pool routes around a busy connection | no (known: no server-side cancel) | cancel **open** | `test_network_slow.py` |
@@ -137,17 +139,27 @@ Fixed: the message was "connection is closed", the same as after the caller's ow
 lost: closed by the server or the network" (still `ConnectionClosedError`); "connection is
 closed" means `close()` was called.
 
-Open (half-open connections): **a lost RST or a network partition is never noticed.** If
-neither FIN nor RST arrives (a partition, a crashed host, macOS dropping an RST into a
-closed window as above), the socket stays `ESTABLISHED`: queries wait until the caller's
-timeout, and `close()` hangs (2e). fastpg sets no `SO_KEEPALIVE`, while libpq enables
-keepalives by default. Proposed: libpq's keys, `keepalives` (default 1),
-`keepalives_idle`, `keepalives_interval`, `keepalives_count`, applied in
-`_connect_candidate` (`SO_KEEPALIVE`, `TCP_KEEPIDLE` / macOS `TCP_KEEPALIVE`,
-`TCP_KEEPINTVL`, `TCP_KEEPCNT`), split off the DSN like `connect_timeout`; plus
-`tcp_user_timeout` on Linux (`TCP_USER_TIMEOUT`) to bound unacknowledged writes. A keepalive
-or write timeout surfaces as a fatal socket error, which `EofWatch` already turns into
-`ConnectionClosedError` for everything pending.
+Fixed (edb7548), half-open connections: **a lost RST or a network partition was never
+noticed.** If neither FIN nor RST arrives (a partition, a crashed host, macOS dropping an
+RST into a closed window as above), the socket stays `ESTABLISHED`: queries waited until
+the caller's timeout, and `close()` hangs (2e). fastpg set no `SO_KEEPALIVE`. It now takes
+libpq's keys, with libpq's semantics: `keepalives` (default 1, 0 turns them off),
+`keepalives_idle`, `keepalives_interval`, `keepalives_count` (`SO_KEEPALIVE`,
+`TCP_KEEPIDLE` / macOS `TCP_KEEPALIVE`, `TCP_KEEPINTVL`, `TCP_KEEPCNT`) and
+`tcp_user_timeout` (milliseconds, `TCP_USER_TIMEOUT`, Linux only). Absent, 0 or negative
+keeps the OS default; a non-integer is an `InterfaceError` worded like libpq's, and a value
+the OS refuses fails the attempt (`setsockopt(TCP_KEEPALIVE) failed: Invalid argument`).
+Parsed in Rust with `connect_timeout` (`tls::split_dsn`, `dsn_socket_options`), set in
+`_connect_candidate` on each TCP socket before it connects, so pool and multi-host
+connections get them too; unix sockets get none. A keepalive or write timeout surfaces as
+a fatal socket error, which `EofWatch` turns into `ConnectionClosedError` for everything
+pending.
+
+Not tested: that a dead peer is noticed. Keepalive probes and unacknowledged segments need
+a peer whose kernel stops answering, and every forwarder here (`FaultProxy`, Docker's)
+answers from its own kernel; dropping packets needs root (`pf`, `iptables`). The tests
+check that every kind of connection (URL and key/value DSN, pool, multi-host, TLS) takes
+the keys, that a unix socket ignores them, and the invalid values.
 
 ## 4. Server restart and `pg_terminate_backend`
 
@@ -197,7 +209,7 @@ Implemented:
   pool with nothing open fails its waiting statements with that error. Parsed in Rust
   (`tls::split_dsn` takes it off the DSN with the TLS keys; `dsn_connect_timeout`), applied
   in Python (`asyncio.timeout_at` around each candidate's connect and the handshake).
-* **Unknown DSN keys are named**: `unsupported connection option "keepalives"`; any other
+* **Unknown DSN keys are named**: `unsupported connection option "gssencmode"`; any other
   xitca parse failure says `invalid connection string: malformed, or an invalid port or
   target_session_attrs value`.
 
@@ -270,7 +282,7 @@ and a pool replacing a terminated busy TLS session behave as without TLS.
 
 ## Running these tests
 
-`uv run pytest -q tests/test_network_*.py`: 53 tests, about 55 s (the slowest, a 1 s RTT
+`uv run pytest -q tests/test_network_*.py`: 81 tests, about 55 s (the slowest, a 1 s RTT
 startup, takes 10 s; the long ones are marked `@pytest.mark.timeout(60)`). The destructive
 ones start the tests' own container (`fastpg-edge-net-*`) on first use, removed at the end
 of the session, also when `FASTPG_DSN` is set.

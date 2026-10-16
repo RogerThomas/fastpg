@@ -110,4 +110,10 @@ known-slow queries on `acquire()` or a separate pool, set `statement_timeout`, a
 * A cancelled query keeps running on the server, and its connection stays busy. Wrap calls
   in `asyncio.timeout(...)`, and put libpq's `connect_timeout` (seconds) in the DSN, or a
   connection being opened to a database that doesn't answer waits indefinitely.
+* TCP keepalives are on, as in libpq, so a connection to a host that vanished (a network
+  partition, a crashed host) eventually fails with `ConnectionClosedError`. The OS
+  defaults take hours: tune them with libpq's DSN keys `keepalives_idle`,
+  `keepalives_interval` (seconds), `keepalives_count`, and on Linux `tcp_user_timeout`
+  (milliseconds, bounds unacknowledged writes). Absent or 0 keeps the OS default, and
+  `keepalives=0` turns keepalives off. Unix sockets ignore these keys.
 * Each process and loop has its own pool: allow `processes × max_size` connections.

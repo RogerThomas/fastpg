@@ -11,6 +11,7 @@ on the loop thread.
 import asyncio
 import os
 import socket
+import sys
 import warnings
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 from fastpg import _writes
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Connection as NativeConnection
-from fastpg._native import after_fork_in_child, dsn_connect_timeout, dsn_targets
+from fastpg._native import after_fork_in_child, dsn_socket_options, dsn_targets
 from fastpg._spec import Planner
 from fastpg._template import TemplateCompiler
 from fastpg.errors import (
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
     from types import TracebackType
 
+    from fastpg._native import SocketOptions
     from fastpg._spec import Plan
 
 type Strategy = Literal["auto", "direct", "msgpack", "json"]
@@ -757,14 +759,61 @@ async def _sock_connect(
         raise OSError(error, msg)
 
 
+def _keepalive_idle() -> tuple[int, str]:
+    """The socket option for ``keepalives_idle``: ``TCP_KEEPIDLE`` (macOS: ``TCP_KEEPALIVE``)."""
+    if sys.platform == "darwin":
+        return socket.TCP_KEEPALIVE, "TCP_KEEPALIVE"
+    return socket.TCP_KEEPIDLE, "TCP_KEEPIDLE"
+
+
+def _tcp_settings(options: SocketOptions) -> list[tuple[int, int, str, int | None]]:
+    """``(level, option, name, value)`` for libpq's keepalive and ``tcp_user_timeout`` keys.
+
+    As in libpq: the keepalive ones only with ``keepalives`` on, ``TCP_USER_TIMEOUT`` only
+    where the platform has it (Linux). A None value keeps the OS default.
+    """
+    settings: list[tuple[int, int, str, int | None]] = []
+    if options.keepalives:
+        idle, idle_name = _keepalive_idle()
+        settings += [
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, "SO_KEEPALIVE", 1),
+            (socket.IPPROTO_TCP, idle, idle_name, options.keepalives_idle),
+            (
+                socket.IPPROTO_TCP,
+                socket.TCP_KEEPINTVL,
+                "TCP_KEEPINTVL",
+                options.keepalives_interval,
+            ),
+            (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, "TCP_KEEPCNT", options.keepalives_count),
+        ]
+    if sys.platform == "linux":
+        timeout = options.tcp_user_timeout
+        settings.append((socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, "TCP_USER_TIMEOUT", timeout))
+    return settings
+
+
+def _set_tcp_options(sock: socket.socket, options: SocketOptions) -> None:
+    for level, option, name, value in _tcp_settings(options):
+        if value is None:
+            continue
+        try:
+            sock.setsockopt(level, option, value)
+        except OSError as e:
+            msg = f"setsockopt({name}) failed: {e.strerror}"
+            raise OSError(e.errno, msg) from e
+
+
 async def _connect_candidate(
     loop: asyncio.AbstractEventLoop,
     family: socket.AddressFamily,
     address: _Address,
+    options: SocketOptions,
 ) -> socket.socket:
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.settimeout(0.0)  # non-blocking (as `setblocking(False)`, without a bare boolean)
     try:
+        if family != socket.AF_UNIX:  # keepalives don't apply to unix sockets (as in libpq)
+            _set_tcp_options(sock, options)
         await _sock_connect(loop, sock, address)
     except BaseException:
         sock.close()
@@ -800,14 +849,16 @@ async def _resolve(
 async def _open_socket(
     loop: asyncio.AbstractEventLoop,
     dsn: str,
-    timeout: float | None,
+    options: SocketOptions,
 ) -> tuple[socket.socket, str, _Address, float | None]:
     """Connect the database socket from the loop (numeric hosts need no thread).
 
     Returns the socket, the DSN host it reached (the TLS server name), its address, and the
-    deadline of the attempt: as in libpq, ``connect_timeout`` (`timeout`) applies to each
-    address tried, from its TCP connect to the end of the startup.
+    deadline of the attempt: as in libpq, ``connect_timeout`` applies to each address tried,
+    from its TCP connect to the end of the startup. Each TCP socket gets ``options``'
+    keepalive and ``tcp_user_timeout`` settings before it connects.
     """
+    timeout = options.connect_timeout
     failures: list[str] = []
     for kind, host, port in dsn_targets(dsn):
         if kind == "unix":
@@ -828,7 +879,7 @@ async def _open_socket(
             limit = asyncio.timeout_at(deadline)
             try:
                 async with limit:
-                    sock = await _connect_candidate(loop, family, address)
+                    sock = await _connect_candidate(loop, family, address, options)
             except OSError as e:  # TimeoutError too
                 if limit.expired():
                     expired = "timeout expired (connect_timeout)"
@@ -881,12 +932,18 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     bounds each address tried, from its TCP connect to the end of the startup; when it
     expires, ``InterfaceError`` says so.
 
+    TCP keepalives are on, as in libpq (``keepalives=0`` turns them off), and libpq's
+    ``keepalives_idle``, ``keepalives_interval``, ``keepalives_count`` (seconds, probes) and
+    ``tcp_user_timeout`` (milliseconds, Linux only) tune them: absent or 0 keeps the OS
+    default. Unix sockets ignore them. A dead peer then fails the connection with
+    ``ConnectionClosedError``.
+
     The connection is bound to the running event loop, whose thread runs its protocol and
     waits on the database socket directly: no extra threads, and a query costs no thread
     hand-offs.
     """
     loop = asyncio.get_running_loop()
-    timeout = dsn_connect_timeout(dsn)
+    options = dsn_socket_options(dsn)
     native = NativeConnection(statement_cache_size)
     # Wakes the loop for the rare task woken from another thread (e.g. by a `__del__` there).
     fd = native.fileno()
@@ -894,7 +951,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     connected: asyncio.Future[None] = loop.create_future()
     closed: asyncio.Future[None] = loop.create_future()
     try:
-        sock, host, address, deadline = await _open_socket(loop, dsn, timeout)
+        sock, host, address, deadline = await _open_socket(loop, dsn, options)
         sfd = sock.fileno()
         # Registered first: attach() can fail at once (e.g. a TLS file is missing), and then
         # detaches (unregisters and closes) the socket before returning.
