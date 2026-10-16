@@ -35,6 +35,8 @@ print(await conn.select_many("SELECT email FROM users ORDER BY email"))
 * After a statement fails, PostgreSQL aborts the transaction. If the block catches the error
   and carries on, the commit rolls back and raises a `DatabaseError` with SQLSTATE `25P02`.
   Wrap statements whose errors you expect in `tx.savepoint()`.
+* A statement cancelled inside the block (`asyncio.timeout(...)`) is cancelled on the server
+  too, which aborts the transaction in the same way.
 * `SerializationError` (`40001`) and `DeadlockDetectedError` (`40P01`), both
   `fastpg.errors.TransactionError`, mean the transaction should be retried from the start.
 * A connection has one transaction at a time; starting a second raises `InterfaceError`.

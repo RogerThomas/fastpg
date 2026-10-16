@@ -61,6 +61,13 @@ class _Native:
         pass
 
 
+class _Canceller:
+    """Stands in for the connection's server-side cancel (nothing is cancelled here)."""
+
+    def stop(self) -> None:
+        pass
+
+
 class _Runner:
     """Callables for timeit: each drives one query method call to completion."""
 
@@ -113,8 +120,9 @@ def _time(runner: _Runner, number: int, repeat: int) -> None:
 async def _main(number: int, repeat: int) -> None:
     loop = asyncio.get_running_loop()
     native: Any = _Native()
+    canceller: Any = _Canceller()
     closed: asyncio.Future[None] = loop.create_future()
-    conn = fastpg.Connection(native, loop, closed)
+    conn = fastpg.Connection(native, loop, canceller, closed)
     _time(_Runner(conn), number, repeat)
     closed.set_result(None)
     await conn.close()

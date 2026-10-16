@@ -146,6 +146,15 @@ impl TlsOptions {
         self.channel_binding
     }
 
+    /// These settings with TLS required (`prefer` becomes `require`): for a cancel request
+    /// on a connection that uses TLS, which must not fall back to plaintext.
+    pub fn requiring_tls(&self) -> Self {
+        Self {
+            mode: self.mode.max(SslMode::Require),
+            ..self.clone()
+        }
+    }
+
     fn roots(&self) -> Result<Arc<RootCertStore>, QueryError> {
         match &self.root_cert {
             Some(RootCert::File(path)) if !path.exists() => Err(interface(format!(

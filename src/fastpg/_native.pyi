@@ -148,8 +148,28 @@ class Connection:
         reader: RowReader,
         columns: Sequence[str] | None = None,
     ) -> Bulk: ...
+    def begin_cancel(self, future: asyncio.Future[Any]) -> Cancel | None:
+        """`future`'s caller gave up: a server-side cancel, if it is alone in flight."""
     def drain(self) -> None: ...
     def statement_cache_len(self) -> int: ...
+
+@final
+class Cancel:
+    """A server-side cancel in progress; see `_Canceller` in `fastpg._connection`."""
+
+    def send(
+        self,
+        fd: int,
+        *,
+        unix: bool,
+        add_writer: Callable[[], object],
+        remove_writer: Callable[[], object],
+        detach: Callable[[], object],
+        sent: asyncio.Future[None],
+    ) -> None: ...
+    def end(self) -> None: ...
+    def on_readable(self) -> None: ...
+    def on_writable(self) -> None: ...
 
 @final
 class RowReader:

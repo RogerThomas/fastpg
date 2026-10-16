@@ -54,7 +54,9 @@ For `copy_in` and `insert_many`, every row must be of the first row's kind:
 ## Atomicity and errors
 
 Each call runs in its own `BEGIN ... COMMIT`, or, inside your transaction, a `SAVEPOINT`: a
-failed or cancelled bulk write leaves your transaction as it was, and usable.
+failed or cancelled bulk write leaves your transaction as it was, and usable. A call
+cancelled before its last rows are handed over is cancelled on the server too (a chunk
+waiting there for a lock doesn't hold up the rollback); one cancelled after that commits.
 
 ```python
 await conn.execute_script("CREATE TEMP TABLE items (id int PRIMARY KEY)")

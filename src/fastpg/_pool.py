@@ -623,8 +623,10 @@ class Pool:
     async def _flush_ghosts(self, entry: _Entry) -> None:
         """Free the slots of cancelled statements once the server is past them.
 
-        A cancelled statement still runs to completion on the server, so its slot (and the
-        connection's stall score) stays taken until a no-op sent after it completes.
+        A cancelled statement may still run on the server (to its end, unless it was
+        cancelled there), so its slot (and the connection's stall score) stays taken until a
+        no-op sent after it completes. The no-op is only sent once a server-side cancel is
+        over, so the slot is also held until then.
         """
         while entry.ghosts:
             ghosts = entry.ghosts
@@ -638,7 +640,10 @@ class Pool:
                 self._finish(entry, token, error)
         entry.flushing = False
 
-    def _abandon(self, entry: _Entry, token: int) -> None:
+    def _abandon(self, entry: _Entry, token: int, future: asyncio.Future[Any]) -> None:
+        """The caller of a sent shared statement (``future``) gave up: cancel it on the server
+        if it is alone on its connection, and keep its slot as a ghost."""
+        entry.fetcher.abandon(future)
         entry.ghosts.append(token)
         if not entry.flushing:
             entry.flushing = True
@@ -650,8 +655,8 @@ class Pool:
         if waiter.token and asyncio.iscoroutine(waiter.call):
             waiter.call.close()  # the decoding step, never started
         if future.cancelled():
-            if waiter.token:  # sent: the server still runs it
-                self._abandon(waiter.entry, waiter.token)
+            if waiter.token:  # sent: the server may still run it
+                self._abandon(waiter.entry, waiter.token, future)
             else:  # still queued
                 with suppress(ValueError):
                     self._waiting.remove(waiter)
@@ -714,7 +719,7 @@ class Pool:
         try:
             result = await self._call(entry, future, kind, query, params, into, strategy)
         except asyncio.CancelledError:
-            self._abandon(entry, token)
+            self._abandon(entry, token, future)
             raise
         except BaseException as e:
             self._finish(entry, token, e)

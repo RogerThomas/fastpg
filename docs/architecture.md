@@ -36,6 +36,11 @@ thread hand-off.
   `copy_in` its back-pressure, and records per-statement results for `execute_many` and
   `insert_many`. It follows the messages written too: once `close()`'s Terminate is
   flushed, it reports EOF itself, so the close doesn't wait for the server.
+* **Server-side cancel** (`native/src/cancel.rs`): a query whose caller gives up while it is
+  alone on its connection gets a CancelRequest, on a socket Python connects to the same
+  address and the connection's executor drives (TLS when the connection uses it). Until the
+  server has closed that socket, the connection's other operations wait before sending, so
+  the cancel can't land on the next query.
 * **`RawCell` and `RowBuffer`** (`native/src/rows.rs`): `RawCell` takes any PostgreSQL value
   as its untouched binary bytes. Each result's cells are copied into one `RowBuffer` arena,
   one `memcpy` per cell. `select_many` hands rows over every 512 rows, so decoding overlaps
