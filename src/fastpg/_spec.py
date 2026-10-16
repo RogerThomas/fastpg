@@ -146,7 +146,8 @@ class StructPlanner:
             if constraints:
                 msg = f"constraints {constraints} need msgspec validation"
                 raise NeedsValidationError(msg)
-            return kind, nullable
+            # `Any` takes None, as msgspec validation does: NULL is no error there.
+            return kind, nullable or kind is Kind.ANY
         if isinstance(t, cls._JSON_SHAPED):
             return Kind.JSON, nullable
         msg = f"{type(t).__name__} needs msgspec validation"

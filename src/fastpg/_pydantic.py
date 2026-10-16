@@ -68,7 +68,8 @@ class ModelPlanner:
             if extra.pop("microseconds_precision", "truncate") != "truncate" or extra:
                 msg = f"schema options {extra} need pydantic validation"
                 raise NeedsValidationError(msg)
-            return kind, nullable
+            # `Any` takes None, as pydantic validation does: NULL is no error there.
+            return kind, nullable or kind is Kind.ANY
         if schema["type"] in cls._JSON_SHAPED:
             return Kind.JSON, nullable
         msg = f"{schema['type']!r} fields need pydantic validation"
