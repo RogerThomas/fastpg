@@ -95,6 +95,14 @@ async def _connect_cancelled_after(dsn: str, iterations: int) -> None:
         await task.result().close()
 
 
+async def _wait_until_alone(dsn: str, name: str) -> None:
+    """Connect with ``dsn`` (tagged ``name``) until no other session has that tag."""
+    query = "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+    async with await fastpg.connect(dsn) as conn, asyncio.timeout(5):
+        while (await conn.select_one(query, name))[0] > 1:
+            await asyncio.sleep(0.01)
+
+
 async def _connect_times_out(dsn: str, seconds: float) -> bool:
     """Whether connecting takes longer than ``seconds``; any connection made is closed.
 
@@ -448,11 +456,7 @@ async def test_tls_connect_cancelled_at_random_points_leaks_nothing(
     fds = _open_fds()
     for _ in range(30):
         await _connect_cancelled_after(verified, rng.randrange(30))
-    async with await fastpg.connect(verified) as conn:
-        query = "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'edge_tls_cancel'"
-        async with asyncio.timeout(5):
-            while (await conn.select_one(query))[0] > 1:
-                await asyncio.sleep(0.01)
+    await _wait_until_alone(verified, "edge_tls_cancel")
     async with asyncio.timeout(5):
         while _open_fds() > fds:
             await asyncio.sleep(0.01)
