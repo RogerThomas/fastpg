@@ -38,7 +38,9 @@ Only when validation would change nothing, decided once per model from its core 
 * no field constraints (`Field(gt=...)`, `max_length`, `strict`, ...);
 * no validators, `model_post_init`, custom `__init__` or private attributes, and not a
   `RootModel`;
-* `extra` isn't `"allow"`, and aliases are plain strings (no `AliasPath`, `AliasChoices`);
+* `extra` isn't `"allow"`, and aliases are plain strings (no `AliasPath`, `AliasChoices`)
+  matched as aliases only (no `validate_by_name`/`populate_by_name`, nor
+  `validate_by_alias=False`);
 * defaults are `None`, `bool`, `int`, `float`, `str` or `bytes`, with no `default_factory`
   or `validate_default`.
 

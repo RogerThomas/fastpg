@@ -29,6 +29,63 @@ class ConstrainedValueModel(pydantic.BaseModel):
     value: int = pydantic.Field(ge=0)
 
 
+class AliasedModel(pydantic.BaseModel):
+    first_name: str = pydantic.Field(alias="first name")
+
+
+class AliasOrNameModel(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(populate_by_name=True)
+
+    first_name: str = pydantic.Field(alias="first name")
+
+
+class NameOnlyModel(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(validate_by_name=True, validate_by_alias=False)
+
+    first_name: str = pydantic.Field(alias="first name")
+
+
+@pytest.mark.parametrize("strategy", ["auto", "json"])
+@pytest.mark.parametrize(
+    ("into", "column"),
+    [
+        (AliasedModel, '"first name"'),
+        (AliasOrNameModel, '"first name"'),
+        (AliasOrNameModel, "first_name"),
+        (NameOnlyModel, "first_name"),
+    ],
+)
+async def test_pydantic_matches_columns_as_its_validation_does(
+    conn: fastpg.Connection,
+    into: type[AliasedModel | AliasOrNameModel | NameOnlyModel],
+    column: str,
+    strategy: fastpg.Strategy,
+) -> None:
+    row = await conn.select_one(f"SELECT 'x' AS {column}", into=into, strategy=strategy)
+    assert row.first_name == "x"
+
+
+@pytest.mark.parametrize(
+    ("into", "column"),
+    [(AliasedModel, "first_name"), (NameOnlyModel, '"first name"')],
+)
+async def test_pydantic_column_its_validation_doesnt_match(
+    conn: fastpg.Connection,
+    into: type[AliasedModel | NameOnlyModel],
+    column: str,
+) -> None:
+    with pytest.raises(fastpg.DecodeError, match="first"):
+        await conn.select_one(f"SELECT 'x' AS {column}", into=into)
+
+
+async def test_pydantic_model_matching_names_and_aliases_is_not_built_directly(
+    conn: fastpg.Connection,
+) -> None:
+    expected = r"AliasOrNameModel: .*validate_by_name"
+    with pytest.raises(fastpg.UnsupportedTypeError, match=expected):
+        await conn.select_one("SELECT 'x' AS first_name", into=AliasOrNameModel, strategy="direct")
+
+
 @pytest.mark.parametrize(
     ("into", "strategy"),
     [

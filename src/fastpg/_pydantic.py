@@ -98,6 +98,20 @@ class ModelPlanner:
         if model.model_config.get("extra") == "allow" or model.__private_attributes__:
             msg = "extra='allow' / private attributes need pydantic validation"
             raise NeedsValidationError(msg)
+        # Direct construction matches a column to a field's alias only. With these settings
+        # validation also (or only) matches the field's name.
+        config = model.model_config
+        by_name = config.get("validate_by_name") or config.get("populate_by_name")
+        aliased = any(
+            (info.validation_alias or info.alias) not in (None, name)
+            for name, info in model.model_fields.items()
+        )
+        if aliased and (by_name or config.get("validate_by_alias") is False):
+            msg = (
+                "validate_by_name / populate_by_name / validate_by_alias=False with aliases"
+                " need pydantic validation"
+            )
+            raise NeedsValidationError(msg)
         return schema["schema"]
 
     @staticmethod
