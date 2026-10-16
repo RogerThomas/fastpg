@@ -482,8 +482,8 @@ class Pool:
         if self._waiting or self._closing is not None:  # FIFO: don't overtake waiters
             return None
         entry = self._best_slot()
-        if entry is None or self._load(entry):
-            self._grow()
+        if entry is not None and self._load(entry):
+            self._grow()  # if None, the statement waits and its dispatch grows the pool
         return entry
 
     def _idle_entry(self) -> _Entry | None:
@@ -623,8 +623,10 @@ class Pool:
     async def _flush_ghosts(self, entry: _Entry) -> None:
         """Free the slots of cancelled statements once the server is past them.
 
-        A cancelled statement still runs to completion on the server, so its slot (and the
-        connection's stall score) stays taken until a no-op sent after it completes.
+        A cancelled statement may still run on the server (to its end, unless it was
+        cancelled there), so its slot (and the connection's stall score) stays taken until a
+        no-op sent after it completes. The no-op is only sent once a server-side cancel is
+        over, so the slot is also held until then.
         """
         while entry.ghosts:
             ghosts = entry.ghosts
@@ -638,7 +640,10 @@ class Pool:
                 self._finish(entry, token, error)
         entry.flushing = False
 
-    def _abandon(self, entry: _Entry, token: int) -> None:
+    def _abandon(self, entry: _Entry, token: int, future: asyncio.Future[Any]) -> None:
+        """The caller of a sent shared statement (``future``) gave up: cancel it on the server
+        if it is alone on its connection, and keep its slot as a ghost."""
+        entry.fetcher.abandon(future)
         entry.ghosts.append(token)
         if not entry.flushing:
             entry.flushing = True
@@ -650,8 +655,8 @@ class Pool:
         if waiter.token and asyncio.iscoroutine(waiter.call):
             waiter.call.close()  # the decoding step, never started
         if future.cancelled():
-            if waiter.token:  # sent: the server still runs it
-                self._abandon(waiter.entry, waiter.token)
+            if waiter.token:  # sent: the server may still run it
+                self._abandon(waiter.entry, waiter.token, future)
             else:  # still queued
                 with suppress(ValueError):
                     self._waiting.remove(waiter)
@@ -714,7 +719,7 @@ class Pool:
         try:
             result = await self._call(entry, future, kind, query, params, into, strategy)
         except asyncio.CancelledError:
-            self._abandon(entry, token)
+            self._abandon(entry, token, future)
             raise
         except BaseException as e:
             self._finish(entry, token, e)
@@ -814,10 +819,23 @@ class Pool:
                 self._wakeup = self._loop.create_future()
                 await self._wakeup
 
+    def _terminate(self) -> None:
+        """Close every connection at once, checked-out ones included (a cancelled close)."""
+        for task in list(self._tasks):  # connects, and the closes of discarded connections
+            task.cancel()  # a cancelled Connection.close() terminates its connection
+        for entry in self._entries:
+            entry.conn.terminate()
+
     async def _close(self) -> None:
         if self._closing is None:
             self._closing = self._loop.create_task(self._shutdown())
-        await asyncio.shield(self._closing)
+        try:
+            await asyncio.shield(self._closing)
+        except asyncio.CancelledError:
+            # The shutdown goes on (shielded), with nothing left to wait for on the server;
+            # checked-out connections still leave the pool when released.
+            self._terminate()
+            raise
 
     # --- public API ---------------------------------------------------------------------
 
@@ -1060,6 +1078,10 @@ class Pool:
     async def close(self) -> None:
         """Close gracefully: new calls and waiters fail with ConnectionClosedError, shared
         statements in flight complete, and checked-out connections close when released.
+
+        If the call is cancelled (e.g. by ``asyncio.timeout``), every connection still open,
+        checked-out ones included, is closed at once (`Connection.terminate()`), and the
+        cancellation is raised.
         """
         await self._close()
 

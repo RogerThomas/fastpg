@@ -16,6 +16,7 @@
 mod alloc_stats;
 mod auth;
 mod bulk;
+mod cancel;
 mod connection;
 mod decode;
 mod errors;
@@ -46,10 +47,11 @@ fn dsn_targets(py: Python<'_>, dsn: &str) -> PyResult<Vec<(&'static str, String,
     net::targets(dsn).map_err(|e| e.into_pyerr(py))
 }
 
-/// libpq's `connect_timeout` of `dsn` in seconds (`None`: wait indefinitely); checks the DSN.
+/// libpq's socket keys of `dsn` (`connect_timeout`, keepalives, `tcp_user_timeout`); checks
+/// the DSN.
 #[pyfunction]
-fn dsn_connect_timeout(py: Python<'_>, dsn: &str) -> PyResult<Option<u32>> {
-    net::connect_timeout(dsn).map_err(|e| e.into_pyerr(py))
+fn dsn_socket_options(py: Python<'_>, dsn: &str) -> PyResult<tls::SocketOptions> {
+    net::socket_options(dsn).map_err(|e| e.into_pyerr(py))
 }
 
 /// Keeps the GIL on free-threaded Python (`gil_used = true`; PyO3's default is `false`): this
@@ -60,11 +62,13 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<structs::StructSpec>()?;
     m.add_class::<bulk::RowReader>()?;
     m.add_class::<bulk::Bulk>()?;
+    m.add_class::<cancel::Cancel>()?;
     m.add_class::<router::Router>()?;
+    m.add_class::<tls::SocketOptions>()?;
     m.add_function(wrap_pyfunction!(rust_allocations, m)?)?;
     m.add_function(wrap_pyfunction!(dsn_targets, m)?)?;
     m.add_function(wrap_pyfunction!(connection::after_fork_in_child, m)?)?;
-    m.add_function(wrap_pyfunction!(dsn_connect_timeout, m)?)?;
+    m.add_function(wrap_pyfunction!(dsn_socket_options, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

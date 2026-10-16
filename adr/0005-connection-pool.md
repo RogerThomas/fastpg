@@ -27,4 +27,6 @@ statement.
   asyncpg pool of 16.
 - Joining a busy connection while one is idle gave 16% more ops/s at 16 tasks, but doubled
   slow-query p99 (21 ms to 30-39 ms), so pipelining waits until every connection is busy.
-- There is no server-side cancel, connect timeout or backoff.
+- A cancelled statement is cancelled on the server only when it is alone on its connection; a
+  pipelined one runs to its end. There is no connect backoff (the DSN's `connect_timeout`
+  bounds a connect).

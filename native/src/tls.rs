@@ -12,8 +12,9 @@
 //! `net.rs` wraps the result in `EofWatch` as before, so a TLS `close_notify`, a TCP EOF
 //! without one, a TLS error and a socket error all end the connection the same way.
 //!
-//! The DSN's TLS keys (and libpq's `connect_timeout`) are taken out here (xitca rejects keys
-//! and `sslmode` values it does not know); the rest of the DSN goes to xitca unchanged.
+//! The DSN's TLS keys (and libpq's `connect_timeout`, keepalive and `tcp_user_timeout` keys)
+//! are taken out here (xitca rejects keys and `sslmode` values it does not know); the rest of
+//! the DSN goes to xitca unchanged.
 
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
@@ -25,6 +26,7 @@ use std::task::{Context, Poll};
 use bytes::BytesMut;
 use percent_encoding::percent_decode_str;
 use postgres_protocol::message::frontend;
+use pyo3::pyclass;
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::verify_server_cert_signed_by_trust_anchor;
@@ -142,6 +144,15 @@ pub struct TlsOptions {
 impl TlsOptions {
     pub fn channel_binding(&self) -> ChannelBinding {
         self.channel_binding
+    }
+
+    /// These settings with TLS required (`prefer` becomes `require`): for a cancel request
+    /// on a connection that uses TLS, which must not fall back to plaintext.
+    pub fn requiring_tls(&self) -> Self {
+        Self {
+            mode: self.mode.max(SslMode::Require),
+            ..self.clone()
+        }
     }
 
     fn roots(&self) -> Result<Arc<RootCertStore>, QueryError> {
@@ -330,10 +341,15 @@ const XITCA_KEYS: &[&str] = &[
     "target_session_attrs",
 ];
 
-/// TLS keys and `connect_timeout` found in a DSN (last one wins, as in xitca's parser).
+/// TLS keys and socket keys found in a DSN (last one wins, as in xitca's parser).
 #[derive(Default)]
 struct Raw {
     connect_timeout: Option<String>,
+    keepalives: Option<String>,
+    keepalives_idle: Option<String>,
+    keepalives_interval: Option<String>,
+    keepalives_count: Option<String>,
+    tcp_user_timeout: Option<String>,
     sslmode: Option<String>,
     sslnegotiation: Option<String>,
     sslrootcert: Option<String>,
@@ -347,10 +363,15 @@ struct Raw {
 }
 
 impl Raw {
-    /// Keep `value` if `key` is a TLS key or `connect_timeout`; `false` otherwise.
+    /// Keep `value` if `key` is a TLS key or a socket key; `false` otherwise.
     fn take(&mut self, key: &str, value: String) -> bool {
         let slot = match key {
             "connect_timeout" => &mut self.connect_timeout,
+            "keepalives" => &mut self.keepalives,
+            "keepalives_idle" => &mut self.keepalives_idle,
+            "keepalives_interval" => &mut self.keepalives_interval,
+            "keepalives_count" => &mut self.keepalives_count,
+            "tcp_user_timeout" => &mut self.tcp_user_timeout,
             "sslmode" => &mut self.sslmode,
             "sslnegotiation" => &mut self.sslnegotiation,
             "sslrootcert" => &mut self.sslrootcert,
@@ -445,8 +466,45 @@ impl Raw {
 /// The DSN keys fastpg handles itself (xitca never sees them).
 pub struct DsnOptions {
     pub tls: TlsOptions,
-    /// libpq's `connect_timeout`, in seconds (applied in Python, per address tried).
+    pub socket: SocketOptions,
+}
+
+/// libpq's socket keys, applied in Python: `connect_timeout` per address tried, the others to
+/// each TCP socket before it connects (never to a unix socket). `None` means no timeout for
+/// `connect_timeout`, and the OS default for the others.
+#[pyclass(frozen, get_all, module = "fastpg._native")]
+pub struct SocketOptions {
+    /// Seconds.
     pub connect_timeout: Option<u32>,
+    /// `SO_KEEPALIVE`: on unless `keepalives=0`.
+    pub keepalives: bool,
+    /// Seconds idle before the first probe (`TCP_KEEPIDLE`, macOS `TCP_KEEPALIVE`).
+    pub keepalives_idle: Option<u32>,
+    /// Seconds between probes (`TCP_KEEPINTVL`).
+    pub keepalives_interval: Option<u32>,
+    /// Probes unanswered before the connection is dropped (`TCP_KEEPCNT`).
+    pub keepalives_count: Option<u32>,
+    /// Milliseconds sent data may stay unacknowledged (`TCP_USER_TIMEOUT`, Linux only).
+    pub tcp_user_timeout: Option<u32>,
+}
+
+fn invalid_integer(key: &str, value: &str) -> QueryError {
+    interface(format!(
+        "invalid integer value {value:?} for connection option {key:?}"
+    ))
+}
+
+/// A libpq integer key: a C `int`, surrounding whitespace allowed.
+fn int_option(key: &str, value: Option<&str>) -> Result<Option<i32>, QueryError> {
+    value
+        .map(|v| v.trim().parse().map_err(|_| invalid_integer(key, v)))
+        .transpose()
+}
+
+/// A keepalive or `tcp_user_timeout` key: zero, negative or absent mean the OS default (libpq
+/// sets a negative one as zero).
+fn socket_option(key: &str, value: Option<&str>) -> Result<Option<u32>, QueryError> {
+    Ok(int_option(key, value)?.and_then(|n| u32::try_from(n).ok().filter(|&n| n > 0)))
 }
 
 /// libpq's `connect_timeout`: whole seconds; zero, negative or absent mean no timeout, and
@@ -455,11 +513,10 @@ fn connect_timeout(value: Option<&str>) -> Result<Option<u32>, QueryError> {
     let Some(value) = value else {
         return Ok(None);
     };
-    let seconds: i64 = value.trim().parse().map_err(|_| {
-        interface(format!(
-            "invalid integer value {value:?} for connection option \"connect_timeout\""
-        ))
-    })?;
+    let seconds: i64 = value
+        .trim()
+        .parse()
+        .map_err(|_| invalid_integer("connect_timeout", value))?;
     Ok(match seconds {
         ..=0 => None,
         1 => Some(2),
@@ -467,7 +524,7 @@ fn connect_timeout(value: Option<&str>) -> Result<Option<u32>, QueryError> {
     })
 }
 
-/// Split the TLS keys and `connect_timeout` off `dsn`: the DSN for xitca (unchanged if it had
+/// Split the TLS keys and socket keys off `dsn`: the DSN for xitca (unchanged if it had
 /// none) and their settings. Both forms are handled, URL (`postgresql://...?sslmode=require`)
 /// and key/value (`host=db sslmode=require`), each split the way xitca's own parser reads it.
 pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
@@ -479,15 +536,26 @@ pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
         Some(prefix) => strip_url(dsn, prefix.len(), &mut raw),
         None => strip_key_values(dsn, &mut raw),
     };
-    let connect_timeout = connect_timeout(raw.connect_timeout.take().as_deref())?;
+    let socket = SocketOptions {
+        connect_timeout: connect_timeout(raw.connect_timeout.take().as_deref())?,
+        // libpq: any integer but 0 turns them on.
+        keepalives: int_option("keepalives", raw.keepalives.take().as_deref())? != Some(0),
+        keepalives_idle: socket_option("keepalives_idle", raw.keepalives_idle.take().as_deref())?,
+        keepalives_interval: socket_option(
+            "keepalives_interval",
+            raw.keepalives_interval.take().as_deref(),
+        )?,
+        keepalives_count: socket_option(
+            "keepalives_count",
+            raw.keepalives_count.take().as_deref(),
+        )?,
+        tcp_user_timeout: socket_option(
+            "tcp_user_timeout",
+            raw.tcp_user_timeout.take().as_deref(),
+        )?,
+    };
     let tls = raw.into_options()?;
-    Ok((
-        rest,
-        DsnOptions {
-            tls,
-            connect_timeout,
-        },
-    ))
+    Ok((rest, DsnOptions { tls, socket }))
 }
 
 fn strip_url<'a>(dsn: &'a str, body: usize, raw: &mut Raw) -> Cow<'a, str> {
@@ -1097,19 +1165,63 @@ mod tests {
     fn connect_timeout_is_split_off_as_libpq_reads_it() {
         let (rest, opts) = split_all("postgresql://db/x?connect_timeout=10&application_name=a");
         assert_eq!(rest, "postgresql://db/x?application_name=a");
-        assert_eq!(opts.connect_timeout, Some(10));
+        assert_eq!(opts.socket.connect_timeout, Some(10));
         let (rest, opts) = split_all("host=db connect_timeout=' 5 ' user=u");
         assert_eq!(rest, "host=db user=u");
-        assert_eq!(opts.connect_timeout, Some(5));
+        assert_eq!(opts.socket.connect_timeout, Some(5));
         for (value, seconds) in [("1", Some(2)), ("0", None), ("-3", None), ("3", Some(3))] {
             let dsn = format!("postgresql://db/x?connect_timeout={value}");
-            assert_eq!(split_all(&dsn).1.connect_timeout, seconds, "{value}");
+            assert_eq!(split_all(&dsn).1.socket.connect_timeout, seconds, "{value}");
         }
-        assert_eq!(split_all("postgresql://db/x").1.connect_timeout, None);
+        assert_eq!(
+            split_all("postgresql://db/x").1.socket.connect_timeout,
+            None
+        );
         assert_eq!(
             error("postgresql://db/x?connect_timeout=1.5"),
             "invalid integer value \"1.5\" for connection option \"connect_timeout\""
         );
+    }
+
+    #[test]
+    fn keepalive_keys_are_split_off_as_libpq_reads_them() {
+        let (rest, opts) = split_all(
+            "postgresql://db/x?keepalives_idle=10&application_name=a&keepalives_interval=%202\
+             &keepalives_count=3&tcp_user_timeout=4000",
+        );
+        assert_eq!(rest, "postgresql://db/x?application_name=a");
+        let s = opts.socket;
+        assert!(s.keepalives, "libpq's default");
+        assert_eq!(s.keepalives_idle, Some(10));
+        assert_eq!(s.keepalives_interval, Some(2));
+        assert_eq!(s.keepalives_count, Some(3));
+        assert_eq!(s.tcp_user_timeout, Some(4000));
+        let (rest, opts) = split_all("host=db keepalives=0 keepalives_idle=0 user=u");
+        assert_eq!(rest, "host=db user=u");
+        assert!(!opts.socket.keepalives);
+        assert_eq!(opts.socket.keepalives_idle, None, "0: the OS default");
+        for value in ["1", "-1", "2"] {
+            let dsn = format!("host=db keepalives={value}");
+            assert!(split_all(&dsn).1.socket.keepalives, "{value}");
+        }
+        let s = split_all("host=db keepalives_count=-1").1.socket;
+        assert_eq!(s.keepalives_count, None, "negative: the OS default");
+        assert_eq!(s.keepalives_idle, None);
+        assert_eq!(s.tcp_user_timeout, None);
+        for key in [
+            "keepalives",
+            "keepalives_idle",
+            "keepalives_interval",
+            "keepalives_count",
+            "tcp_user_timeout",
+        ] {
+            for value in ["x", "1.5", "2147483648"] {
+                assert_eq!(
+                    error(&format!("postgresql://db/x?{key}={value}")),
+                    format!("invalid integer value \"{value}\" for connection option \"{key}\""),
+                );
+            }
+        }
     }
 
     fn error(dsn: &str) -> String {
@@ -1142,12 +1254,12 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_named() {
-        let unknown = "unsupported connection option \"keepalives\"";
+        let unknown = "unsupported connection option \"gssencmode\"";
         assert_eq!(
-            error("postgresql://db/x?keepalives=1&sslmode=require"),
+            error("postgresql://db/x?gssencmode=disable&sslmode=require"),
             unknown
         );
-        assert_eq!(error("host=db keepalives=1 user=u"), unknown);
+        assert_eq!(error("host=db gssencmode=disable user=u"), unknown);
         let (rest, _) = split(
             "postgresql://u@db/x?application_name=a&options=-c%20x%3D1&target_session_attrs=any",
         );

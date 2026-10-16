@@ -397,9 +397,10 @@ Environment variables:
   loop's thread. This isn't checked: a connection used from another loop or thread, or in a
   child process after `fork()` (which shares the parent's socket), misbehaves rather than
   raising. Open connections (and pools) inside each process and each loop.
-* Pool: there's no server-side query cancel. A cancelled 30 s query keeps its connection busy
-  until it finishes. Connecting waits indefinitely unless the DSN has libpq's
-  `connect_timeout`, and there's no backoff when the database is down.
+* A cancelled query is cancelled on the server only when it's alone on its connection:
+  pipelined with others, a cancelled 30 s query keeps its connection busy until it
+  finishes. Connecting waits indefinitely unless the DSN has libpq's `connect_timeout`, and
+  the pool doesn't back off when the database is down.
 * Queries pipelined concurrently from *different tasks* on one connection aren't ordered with
   respect to each other: a statement that needs preparing can be overtaken by an already
   prepared one. Queries awaited in sequence by one task are always ordered.

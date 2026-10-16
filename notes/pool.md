@@ -164,10 +164,13 @@ Without draining, an acquire could starve under constant shared load.
     cheap and common mistake is guarded: a second `conn.transaction()` while one is active
     raises `InterfaceError` ("use tx.savepoint()").
 12. **Cancelled shared statements keep their slot until the server is past them.** A
-    cancelled statement still runs server-side. Freeing its slot immediately would make
-    the connection look idle and route new work behind, say, a 30 s query. Instead it stays
-    in flight as a *ghost* until a `SELECT 1` sent after it completes; ghosts are batched,
-    one sentinel per connection at a time. Tested.
+    cancelled statement alone on its connection is cancelled on the server too
+    (`edge-cases-network.md`, section 6); one pipelined with others runs on. Freeing its
+    slot immediately would make the connection look idle and route new work behind, say, a
+    30 s query. Instead it stays in flight as a *ghost* until a `SELECT 1` sent after it
+    completes. That no-op is only sent once a server-side cancel is over (its socket
+    closed), so the slot is held until both. Ghosts are batched, one sentinel per connection
+    at a time. Tested.
 13. **Dead connections are replaced lazily, with no retries.**
     * A connection found `closed` when picked is dropped.
     * A statement failing with a session-fatal error (`ConnectionClosedError`, SQLSTATE
@@ -201,7 +204,9 @@ Without draining, an acquire could starve under constant shared load.
     * New calls and all waiters fail with `ConnectionClosedError("pool is closed")`.
     * Shared statements in flight complete; idle connections close.
     * Checked-out connections close when released, and `close()` waits for them.
-    * It's idempotent and shielded: cancelling one `close()` caller doesn't abort the close.
+    * It's idempotent and shielded: cancelling one `close()` caller doesn't abort the
+      shutdown, but it terminates every connection still open, checked-out ones included
+      (`Connection.terminate()`, as asyncpg's `Pool.close` does).
 17. **A failed background connect fails the waiters only if nothing else can serve them**
     (no live and no opening connections). Otherwise they keep waiting for slots.
     `create_pool` raises if any of the `min_size` initial connects fails, and closes the
@@ -358,10 +363,10 @@ decode errors, `execute`, `execute_script`), `test_cancelled_waiter_keeps_its_sl
   with cap > 1). It doesn't affect pool correctness. It does make the cancelled-statement
   sentinel (decision 12) a heuristic, which could free a ghost slot early. It's also worth
   knowing for anyone pipelining dependent statements without awaiting.
-* **No server-side cancel.** A cancelled shared statement keeps running, and its
-  connection stays busy until it finishes; that's deliberate, see decision 12. Cancelling
-  inside `pool.transaction()` rolls back only after the running statement ends. Adding
-  PostgreSQL CancelRequest support (xitca has `cancel.rs`) would fix both.
+* **Server-side cancel only when alone on the connection.** A cancelled shared statement
+  pipelined with others keeps running, and its connection stays busy until it finishes
+  (decision 12): the server would cancel whatever the session runs, maybe another caller's
+  statement.
 * **No connect backoff.** With the server down, each statement that finds the pool below
   `max_size` starts a connect attempt (bounded by `max_size`). The DSN's `connect_timeout`
   bounds each attempt.

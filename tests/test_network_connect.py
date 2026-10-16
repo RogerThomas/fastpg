@@ -18,12 +18,12 @@ if TYPE_CHECKING:
     ("dsn", "message"),
     [
         (
-            "postgresql://fastpg@127.0.0.1:1/fastpg?keepalives=1",
-            'unsupported connection option "keepalives"',
+            "postgresql://fastpg@127.0.0.1:1/fastpg?gssencmode=disable",
+            'unsupported connection option "gssencmode"',
         ),
         (
-            "host=127.0.0.1 tcp_user_timeout=1000",
-            'unsupported connection option "tcp_user_timeout"',
+            "host=127.0.0.1 tcp_user_timeout=x",
+            'invalid integer value "x" for connection option "tcp_user_timeout"',
         ),
         ("host=127.0.0.1 port=x", "invalid connection string"),
         (
@@ -152,11 +152,37 @@ async def test_a_refusing_database_fails_statements_at_once(
             with pytest.raises(fastpg.InterfaceError):
                 await pool.select_one("SELECT 1")
         assert time.monotonic() - start < 2
-        # At least one connect attempt per statement (two, as it is: routing and then
-        # dispatching the waiting statement each start one).
-        assert fault_proxy.accepted >= 20
+        assert fault_proxy.accepted == 20  # one connect attempt per statement
         fault_proxy.refuse = False
         assert await pool.select_one("SELECT 1") == (1,)
+
+
+@pytest.mark.parametrize("max_size", [20, 4])
+async def test_concurrent_statements_on_a_refusing_database_connect_once_each(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+    max_size: int,
+) -> None:
+    """At most one connect attempt per waiting statement, and never more than max_size."""
+    async with await fastpg.create_pool(proxied_dsn, min_size=0, max_size=max_size) as pool:
+        fault_proxy.refuse = True
+        queries = [pool.select_one("SELECT 1") for _ in range(10)]
+        results = await asyncio.gather(*queries, return_exceptions=True)
+        assert all(isinstance(r, fastpg.InterfaceError) for r in results)
+        assert 1 <= fault_proxy.accepted <= min(10, max_size)
+
+
+async def test_acquire_on_a_refusing_database_connects_once(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    async with await fastpg.create_pool(proxied_dsn, min_size=0, max_size=4) as pool:
+        fault_proxy.refuse = True
+        for _ in range(5):
+            with pytest.raises(fastpg.InterfaceError):
+                async with pool.acquire():
+                    pass
+        assert fault_proxy.accepted == 5
 
 
 async def test_failing_growth_leaves_the_open_connections_serving(

@@ -107,7 +107,22 @@ known-slow queries on `acquire()` or a separate pool, set `statement_timeout`, a
   above `min_size` after `max_idle`, and tops the pool up to `min_size`.
 * `pool.close()` is graceful: new calls fail with `ConnectionClosedError`, queries already
   running complete, and connections taken with `acquire()` close when their block ends.
-* A cancelled query keeps running on the server, and its connection stays busy. Wrap calls
-  in `asyncio.timeout(...)`, and put libpq's `connect_timeout` (seconds) in the DSN, or a
-  connection being opened to a database that doesn't answer waits indefinitely.
+  It doesn't wait for the server to acknowledge the end of each session. Bound it with
+  `asyncio.timeout(...)`: when it is cancelled, every connection still open, those taken
+  with `acquire()` included, is closed at once (`Connection.terminate()`), and the queries
+  on them fail with `ConnectionClosedError`.
+* A cancelled query (`asyncio.timeout(...)`, a cancelled task) is cancelled on the server
+  when it's alone on its connection: always with `acquire()` and `transaction()`, and for
+  a shared query when nothing else is in flight there. Its connection takes no new query
+  until the server has answered the cancel. Pipelined with other queries, it runs to its
+  end, and the pool routes around its connection meanwhile.
+* Put libpq's `connect_timeout` (seconds) in the DSN: it bounds a cancel's connection too,
+  and without it a connection being opened to a database that doesn't answer waits
+  indefinitely.
+* TCP keepalives are on, as in libpq, so a connection to a host that vanished (a network
+  partition, a crashed host) eventually fails with `ConnectionClosedError`. The OS
+  defaults take hours: tune them with libpq's DSN keys `keepalives_idle`,
+  `keepalives_interval` (seconds), `keepalives_count`, and on Linux `tcp_user_timeout`
+  (milliseconds, bounds unacknowledged writes). Absent or 0 keeps the OS default, and
+  `keepalives=0` turns keepalives off. Unix sockets ignore these keys.
 * Each process and loop has its own pool: allow `processes × max_size` connections.

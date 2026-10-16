@@ -11,6 +11,7 @@ on the loop thread.
 import asyncio
 import os
 import socket
+import sys
 import warnings
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 from fastpg import _writes
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Connection as NativeConnection
-from fastpg._native import after_fork_in_child, dsn_connect_timeout, dsn_targets
+from fastpg._native import after_fork_in_child, dsn_socket_options, dsn_targets
 from fastpg._spec import Planner
 from fastpg._template import TemplateCompiler
 from fastpg.errors import (
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
     from types import TracebackType
 
+    from fastpg._native import Cancel, SocketOptions
     from fastpg._spec import Plan
 
 type Strategy = Literal["auto", "direct", "msgpack", "json"]
@@ -97,10 +99,15 @@ def _forget(future: asyncio.Future[None]) -> None:
 
 @dataclass(slots=True, eq=False)
 class _Queries:
-    """The query methods of `Connection` and `Transaction`, run on one native connection."""
+    """The query methods of `Connection` and `Transaction`, run on one native connection.
+
+    A statement whose caller gives up (a cancelled task, ``asyncio.timeout``) is cancelled on
+    the server if it is the only one in flight on the connection (see `_Canceller`).
+    """
 
     _native: NativeConnection
     _loop: asyncio.AbstractEventLoop
+    _canceller: _Canceller
     _templates: ClassVar[TemplateCompiler] = TemplateCompiler(max_size=1024)
     _named: ClassVar[NamedBinder] = NamedBinder(1024)
 
@@ -163,23 +170,22 @@ class _Queries:
 
     def _fetch(
         self,
+        future: asyncio.Future[Any],
         query: str | Template,
         params: tuple[object, ...],
         shape: int,
         into: type[Any] | None,
         strategy: Strategy,
-        future: asyncio.Future[Any] | None = None,
     ) -> Awaitable[Any]:
-        """Submit the query and return what resolves to its result.
+        """Submit the query, with ``future`` as its native result future, and return what
+        resolves to its result.
 
-        Not a coroutine: the tuple and direct routes return the native future itself, so a
-        query method awaits it without a coroutine in between. The native future is
-        ``future`` if given (the msgpack and json routes return a coroutine awaiting it).
+        Not a coroutine: the tuple and direct routes return ``future`` itself, so a query
+        method awaits it without a coroutine in between (the msgpack and json routes return
+        a coroutine awaiting it).
         """
         if isinstance(query, Template):
             query, params = self._templates.bind(query, params)
-        if future is None:
-            future = self._loop.create_future()
         if into is None:
             self._native.fetch(future, query, params, shape)
             return future
@@ -237,7 +243,12 @@ class _Queries:
         """
         if params is not None:
             query, args = self._named.bind(query, args, params)
-        return await self._fetch(query, args, _ONE, into, strategy)
+        future: asyncio.Future[Any] = self._loop.create_future()
+        try:
+            return await self._fetch(future, query, args, _ONE, into, strategy)
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
 
     @overload
     async def select_one_or_none(
@@ -279,7 +290,12 @@ class _Queries:
         """Return the only row, or None for an empty result (TooManyRowsError for >1 row)."""
         if params is not None:
             query, args = self._named.bind(query, args, params)
-        return await self._fetch(query, args, _ONE_OR_NONE, into, strategy)
+        future: asyncio.Future[Any] = self._loop.create_future()
+        try:
+            return await self._fetch(future, query, args, _ONE_OR_NONE, into, strategy)
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
 
     @overload
     async def select_many(
@@ -321,7 +337,12 @@ class _Queries:
         """Return every row."""
         if params is not None:
             query, args = self._named.bind(query, args, params)
-        return await self._fetch(query, args, _ALL, into, strategy)
+        future: asyncio.Future[Any] = self._loop.create_future()
+        try:
+            return await self._fetch(future, query, args, _ALL, into, strategy)
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
 
     async def execute(
         self,
@@ -337,7 +358,11 @@ class _Queries:
             query, args = self._templates.bind(query, args)
         future: asyncio.Future[int] = self._loop.create_future()
         self._native.execute(future, query, args)
-        return await future
+        try:
+            return await future
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
 
     async def execute_script(self, query: str | Template, /) -> None:
         """Run one or more `;`-separated statements without parameters (simple protocol).
@@ -348,7 +373,11 @@ class _Queries:
             query = self._templates.script(query)
         future: asyncio.Future[None] = self._loop.create_future()
         self._native.execute_script(future, query)
-        await future
+        try:
+            await future
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
 
     async def execute_many(self, query: str, rows: Iterable[Sequence[object]], /) -> int:
         """Run `query` once per row of positional parameters; return the total row count.
@@ -358,7 +387,8 @@ class _Queries:
         cancellation nothing is written, and an open transaction is left as it was.
         Concurrent queries on this connection wait until the call completes.
         """
-        return await _writes.execute_many(self._native, self._loop, query, rows)
+        abandon = self._canceller.abandon
+        return await _writes.execute_many(self._native, self._loop, query, rows, abandon)
 
     async def insert_many(
         self,
@@ -375,7 +405,8 @@ class _Queries:
         table's, in order). `columns` selects/orders the columns explicitly. `table` is
         ``"name"``, ``"schema.name"`` or a tuple of parts; names are quoted (exact match).
         """
-        return await _writes.insert_many(self._native, self._loop, table, rows, columns)
+        abandon = self._canceller.abandon
+        return await _writes.insert_many(self._native, self._loop, table, rows, columns, abandon)
 
     async def copy_in(
         self,
@@ -391,7 +422,8 @@ class _Queries:
         `insert_many`; values are encoded in Rust for the table's column types and streamed
         in chunks. All-or-nothing, like `execute_many`.
         """
-        return await _writes.copy_in(self._native, self._loop, table, rows, columns)
+        abandon = self._canceller.abandon
+        return await _writes.copy_in(self._native, self._loop, table, rows, columns, abandon)
 
 
 def _running_loop() -> asyncio.AbstractEventLoop | None:
@@ -420,7 +452,11 @@ class Connection(_Queries):
     (``t"... WHERE id = {pid}"``); see ``fastpg.Identifier`` for interpolating names.
 
     Concurrent queries from multiple tasks are pipelined over the one connection.
-    Use as an async context manager, or call `close()`.
+    Use as an async context manager, or call `close()` (`terminate()` to close at once).
+
+    A query whose caller gives up (a cancelled task, ``asyncio.timeout``) is cancelled on the
+    server too if it is the only one in flight on the connection; the connection's next
+    queries wait until that cancel is done.
     """
 
     _closed: asyncio.Future[None]
@@ -439,13 +475,27 @@ class Connection(_Queries):
             return
         self._native.close()
         try:
-            # Shielded: every close() call awaits the one future, so a caller giving up (a
-            # timeout: close() waits for queries in flight) must not cancel it for the rest.
+            # Shielded: every close() call awaits the one future, so its cancellation is
+            # this caller's alone (a later close() doesn't raise CancelledError).
             await asyncio.shield(self._closed)
+        except asyncio.CancelledError:
+            # A caller giving up (a timeout: close() waits for queries in flight) closes
+            # at once, as asyncpg does: nothing is left open.
+            self._native.terminate()
+            raise
         finally:
-            # Even then the close goes on; the mailbox reader (for wake-ups from other
-            # threads) can go, and the connection doesn't count as unclosed.
+            # The mailbox reader (for wake-ups from other threads) can go, and the
+            # connection doesn't count as unclosed.
             self._release()
+            self._canceller.stop()
+
+    def _terminate(self) -> None:
+        if self._native.inherited:  # a fork()ed child: the session is the parent's
+            self._released = True
+            return
+        self._native.terminate()
+        self._release()
+        self._canceller.stop()
 
     @property
     def closed(self) -> bool:
@@ -485,8 +535,22 @@ class Connection(_Queries):
         return self._transaction
 
     async def close(self) -> None:
-        """Close gracefully: in-flight queries complete, then the session is terminated."""
+        """Close gracefully: in-flight queries complete, then the session is terminated.
+
+        The Terminate message is sent and the socket closed without waiting for the server
+        to answer. If the call is cancelled (e.g. by ``asyncio.timeout``), the connection
+        is closed at once, as by `terminate()`.
+        """
         await self._close()
+
+    def terminate(self) -> None:
+        """Close at once: pending and in-flight queries fail with `ConnectionClosedError`.
+
+        Sends nothing to the server, which ends the session when it sees the socket close.
+        Safe to call more than once, after `close()`, or on a connection already lost. Call
+        it on the connection's event loop.
+        """
+        self._terminate()
 
     def __del__(self) -> None:
         if self._released:
@@ -567,7 +631,7 @@ class Transaction(_Queries):
         """
         # The query methods use a view of the session that refuses them unless the
         # transaction is active; BEGIN, COMMIT, ROLLBACK and savepoints use the session.
-        super().__init__(conn._native.transaction_view(), conn._loop)
+        super().__init__(conn._native.transaction_view(), conn._loop, conn._canceller)
         self._session = conn._native
         begin = ["BEGIN"]
         if isolation is not None:
@@ -688,7 +752,7 @@ class Fetcher(_Queries):
 
     @classmethod
     def of(cls, conn: Connection) -> Self:
-        return cls(conn._native, conn._loop)
+        return cls(conn._native, conn._loop, conn._canceller)
 
     def fetch(
         self,
@@ -703,7 +767,7 @@ class Fetcher(_Queries):
 
         Returns ``future`` itself, or (msgpack and json) a coroutine that decodes its result.
         """
-        return self._fetch(query, params, shape, into, strategy, future)
+        return self._fetch(future, query, params, shape, into, strategy)
 
     def send_execute(
         self,
@@ -717,6 +781,11 @@ class Fetcher(_Queries):
     def send_script(self, future: asyncio.Future[Any], query: str) -> None:
         """``execute_script``: ``future`` gets None."""
         self._native.execute_script(future, query)
+
+    def abandon(self, future: asyncio.Future[Any]) -> None:
+        """The caller awaiting ``future`` (a statement sent here) gave up on it: see
+        `_Canceller.abandon`."""
+        self._canceller.abandon(future)
 
 
 type _Address = tuple[Any, ...] | str
@@ -757,14 +826,61 @@ async def _sock_connect(
         raise OSError(error, msg)
 
 
+def _keepalive_idle() -> tuple[int, str]:
+    """The socket option for ``keepalives_idle``: ``TCP_KEEPIDLE`` (macOS: ``TCP_KEEPALIVE``)."""
+    if sys.platform == "darwin":
+        return socket.TCP_KEEPALIVE, "TCP_KEEPALIVE"
+    return socket.TCP_KEEPIDLE, "TCP_KEEPIDLE"
+
+
+def _tcp_settings(options: SocketOptions) -> list[tuple[int, int, str, int | None]]:
+    """``(level, option, name, value)`` for libpq's keepalive and ``tcp_user_timeout`` keys.
+
+    As in libpq: the keepalive ones only with ``keepalives`` on, ``TCP_USER_TIMEOUT`` only
+    where the platform has it (Linux). A None value keeps the OS default.
+    """
+    settings: list[tuple[int, int, str, int | None]] = []
+    if options.keepalives:
+        idle, idle_name = _keepalive_idle()
+        settings += [
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, "SO_KEEPALIVE", 1),
+            (socket.IPPROTO_TCP, idle, idle_name, options.keepalives_idle),
+            (
+                socket.IPPROTO_TCP,
+                socket.TCP_KEEPINTVL,
+                "TCP_KEEPINTVL",
+                options.keepalives_interval,
+            ),
+            (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, "TCP_KEEPCNT", options.keepalives_count),
+        ]
+    if sys.platform == "linux":
+        timeout = options.tcp_user_timeout
+        settings.append((socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, "TCP_USER_TIMEOUT", timeout))
+    return settings
+
+
+def _set_tcp_options(sock: socket.socket, options: SocketOptions) -> None:
+    for level, option, name, value in _tcp_settings(options):
+        if value is None:
+            continue
+        try:
+            sock.setsockopt(level, option, value)
+        except OSError as e:
+            msg = f"setsockopt({name}) failed: {e.strerror}"
+            raise OSError(e.errno, msg) from e
+
+
 async def _connect_candidate(
     loop: asyncio.AbstractEventLoop,
     family: socket.AddressFamily,
     address: _Address,
+    options: SocketOptions,
 ) -> socket.socket:
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.settimeout(0.0)  # non-blocking (as `setblocking(False)`, without a bare boolean)
     try:
+        if family != socket.AF_UNIX:  # keepalives don't apply to unix sockets (as in libpq)
+            _set_tcp_options(sock, options)
         await _sock_connect(loop, sock, address)
     except BaseException:
         sock.close()
@@ -800,14 +916,16 @@ async def _resolve(
 async def _open_socket(
     loop: asyncio.AbstractEventLoop,
     dsn: str,
-    timeout: float | None,
+    options: SocketOptions,
 ) -> tuple[socket.socket, str, _Address, float | None]:
     """Connect the database socket from the loop (numeric hosts need no thread).
 
     Returns the socket, the DSN host it reached (the TLS server name), its address, and the
-    deadline of the attempt: as in libpq, ``connect_timeout`` (`timeout`) applies to each
-    address tried, from its TCP connect to the end of the startup.
+    deadline of the attempt: as in libpq, ``connect_timeout`` applies to each address tried,
+    from its TCP connect to the end of the startup. Each TCP socket gets ``options``'
+    keepalive and ``tcp_user_timeout`` settings before it connects.
     """
+    timeout = options.connect_timeout
     failures: list[str] = []
     for kind, host, port in dsn_targets(dsn):
         if kind == "unix":
@@ -828,7 +946,7 @@ async def _open_socket(
             limit = asyncio.timeout_at(deadline)
             try:
                 async with limit:
-                    sock = await _connect_candidate(loop, family, address)
+                    sock = await _connect_candidate(loop, family, address, options)
             except OSError as e:  # TimeoutError too
                 if limit.expired():
                     expired = "timeout expired (connect_timeout)"
@@ -868,6 +986,75 @@ def _detach_socket(loop: asyncio.AbstractEventLoop, sock: socket.socket) -> None
     sock.close()
 
 
+@dataclass(slots=True, eq=False)
+class _Canceller:
+    """Cancels a connection's statement on the server when its caller gives up.
+
+    PostgreSQL's CancelRequest, on a new socket to the address the connection reached (with
+    its keepalive settings), over TLS when the connection uses TLS. Only a statement alone in
+    flight on its connection is cancelled: the server cancels whatever the session runs,
+    which with pipelining may be another caller's statement. The connection sends nothing
+    more until the cancel is over (``native/src/cancel.rs`` has the reasons).
+    """
+
+    _native: NativeConnection
+    _loop: asyncio.AbstractEventLoop
+    _family: socket.AddressFamily
+    _address: _Address
+    _options: SocketOptions
+    _tasks: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
+
+    async def _send(self, cancel: Cancel, sent: asyncio.Future[None]) -> None:
+        """Connect the cancel's socket and hand it over; return once the request is written."""
+        sock = await _connect_candidate(self._loop, self._family, self._address, self._options)
+        fd = sock.fileno()
+        # Registered first: send() detaches (unregisters and closes) the socket if it refuses.
+        self._loop.add_reader(fd, cancel.on_readable)
+        cancel.send(
+            fd,
+            unix=self._family == socket.AF_UNIX,
+            add_writer=partial(self._loop.add_writer, fd, cancel.on_writable),
+            remove_writer=partial(self._loop.remove_writer, fd),
+            detach=partial(_detach_socket, self._loop, sock),
+            sent=sent,
+        )
+        await sent
+
+    async def _cancel(self, cancel: Cancel) -> None:
+        """Send ``cancel``. As in libpq, ``connect_timeout`` bounds its connect and TLS
+        handshake; once its request is written, it is over when the server closes the socket
+        (or the connection ends). A failure (refused, unreachable, timed out, TLS) is dropped:
+        the statement runs to its end, as without a cancel."""
+        timeout = self._options.connect_timeout
+        deadline = None if timeout is None else self._loop.time() + timeout
+        sent: asyncio.Future[None] = self._loop.create_future()
+        sent.add_done_callback(_forget)  # its error, if it fails after a timeout
+        try:
+            with suppress(OSError, FastPGError):  # TimeoutError is an OSError
+                async with asyncio.timeout_at(deadline):
+                    await self._send(cancel, sent)
+        finally:
+            cancel.end()  # unless its request was written
+
+    def abandon(self, future: asyncio.Future[Any]) -> None:
+        """The caller awaiting ``future``, a statement's native result future, gave up:
+        cancel the statement on the server if it is the only one in flight.
+
+        Returns at once: the cancel is sent in the background, and the connection's later
+        statements wait until it is over.
+        """
+        cancel = self._native.begin_cancel(future)
+        if cancel is not None:
+            task = self._loop.create_task(self._cancel(cancel))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    def stop(self) -> None:
+        """The connection is closed: drop the cancels still being sent."""
+        for task in list(self._tasks):
+            task.cancel()
+
+
 async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     """Open a connection, e.g. ``await connect("postgresql://user:pw@host:5432/db")``.
 
@@ -881,12 +1068,18 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     bounds each address tried, from its TCP connect to the end of the startup; when it
     expires, ``InterfaceError`` says so.
 
+    TCP keepalives are on, as in libpq (``keepalives=0`` turns them off), and libpq's
+    ``keepalives_idle``, ``keepalives_interval``, ``keepalives_count`` (seconds, probes) and
+    ``tcp_user_timeout`` (milliseconds, Linux only) tune them: absent or 0 keeps the OS
+    default. Unix sockets ignore them. A dead peer then fails the connection with
+    ``ConnectionClosedError``.
+
     The connection is bound to the running event loop, whose thread runs its protocol and
     waits on the database socket directly: no extra threads, and a query costs no thread
     hand-offs.
     """
     loop = asyncio.get_running_loop()
-    timeout = dsn_connect_timeout(dsn)
+    options = dsn_socket_options(dsn)
     native = NativeConnection(statement_cache_size)
     # Wakes the loop for the rare task woken from another thread (e.g. by a `__del__` there).
     fd = native.fileno()
@@ -894,7 +1087,8 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     connected: asyncio.Future[None] = loop.create_future()
     closed: asyncio.Future[None] = loop.create_future()
     try:
-        sock, host, address, deadline = await _open_socket(loop, dsn, timeout)
+        sock, host, address, deadline = await _open_socket(loop, dsn, options)
+        canceller = _Canceller(native, loop, sock.family, address, options)
         sfd = sock.fileno()
         # Registered first: attach() can fail at once (e.g. a TLS file is missing), and then
         # detaches (unregisters and closes) the socket before returning.
@@ -916,4 +1110,4 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
         native.close()  # once attached, the socket is detached and closed by native
         loop.remove_reader(fd)
         raise
-    return Connection(native, loop, closed)
+    return Connection(native, loop, canceller, closed)

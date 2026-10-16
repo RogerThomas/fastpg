@@ -21,6 +21,7 @@ use xitca_postgres::iter::AsyncLendingIterator;
 use xitca_postgres::{Client, Driver, Execute, Statement};
 
 use crate::bulk::{self, Bulk, RowReader};
+use crate::cancel::{self, Cancel, Cancels, InFlight};
 use crate::decode;
 use crate::errors::{QueryError, py_err};
 use crate::event_loop;
@@ -177,6 +178,8 @@ pub(crate) struct Shared {
     /// that never answers would otherwise keep the socket open, e.g. after a connect timed
     /// out with `asyncio.timeout`).
     abort_connect: tokio::sync::Notify,
+    /// Notified by `terminate()`: the connection ends at once, without a Terminate.
+    abort: tokio::sync::Notify,
     client: Mutex<Option<Arc<Client>>>,
     cache: StatementCache,
     /// Ordinary operations hold it shared for their whole run; bulk writes (`bulk.rs`) hold it
@@ -190,7 +193,7 @@ pub(crate) struct Shared {
     /// alive), so without this they would wait forever.
     dead: tokio::sync::watch::Sender<bool>,
     /// Polls this connection's tasks on the loop thread (see `event_loop.rs`).
-    exec: event_loop::Executor,
+    pub(crate) exec: event_loop::Executor,
     /// The socket's readiness, fed by the loop's `add_reader` / `add_writer` callbacks.
     readiness: Arc<event_loop::IoState>,
     /// Set by `attach()`; cleared once the socket is detached.
@@ -206,12 +209,25 @@ pub(crate) struct Shared {
     /// [`FORK_GENERATION`] when created: another one now means this is a fork()ed child,
     /// and the socket belongs to the parent.
     generation: u64,
+    /// Server-side cancel of an abandoned operation (see `cancel.rs`).
+    pub(crate) cancels: Cancels,
 }
 
 impl Shared {
     /// Whether this process is a fork()ed child of the one that opened the connection.
-    fn inherited(&self) -> bool {
+    pub(crate) fn inherited(&self) -> bool {
         self.generation != FORK_GENERATION.load(Ordering::Relaxed)
+    }
+
+    /// The driver is gone: closed, terminated or lost.
+    pub(crate) fn dead(&self) -> bool {
+        *self.dead.borrow()
+    }
+
+    /// Count `request`'s operation as on the wire until the guard drops (see `cancel.rs`):
+    /// call it once past the gates, i.e. right before it sends anything.
+    pub(crate) fn in_flight(&self, request: &Request) -> InFlight<'_> {
+        self.cancels.track(&request.future)
     }
 
     /// Queue a completion for `pump`. Only tasks post, and they only run inside `pump` on
@@ -319,8 +335,10 @@ impl Shared {
     }
 
     /// Keep the loop's writer registration in step with what the socket needs; once the
-    /// connection is dead, unregister and close the socket (Python owns the fd).
+    /// connection is dead, unregister and close the socket (Python owns the fd). The same for
+    /// a cancel's socket.
     fn sync_hooks(&self, py: Python<'_>, dead: bool) {
+        self.cancels.sync_hooks(py);
         let mut guard = self.hooks.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(hooks) = guard.as_mut() else { return };
         if dead {
@@ -419,8 +437,9 @@ pub(crate) fn plain_request(future: Py<PyAny>) -> Arc<Request> {
 }
 
 /// From "connect attempt finished" to "driver gone": resolves `connected`, runs the driver
-/// until the client is dropped or the server goes away, then marks the connection dead and
-/// resolves `closed`.
+/// until the client is dropped (once Terminate is written: see `net::Writes`), the server
+/// goes away or `terminate()` is called, then marks the connection dead and resolves
+/// `closed`.
 async fn serve(
     shared: Arc<Shared>,
     connection: Result<(Client, Driver, Arc<IoWatch>), QueryError>,
@@ -436,13 +455,14 @@ async fn serve(
                 shared.shutdown();
             }
             shared.post(connected, Outcome::Done);
-            // `biased` polls the driver first, so messages already received (e.g. the
-            // server's final ErrorResponse) are routed before the driver is dropped on EOF;
-            // `dead` (below) then fails every still-pending request.
+            // `biased`: `terminate()` wins over everything. Then the driver, so messages
+            // already received (e.g. the server's final ErrorResponse) are routed before the
+            // driver is dropped on EOF; `dead` (below) then fails every still-pending request.
             let driver = driver.into_future();
             tokio::pin!(driver);
             tokio::select! {
                 biased;
+                () = shared.abort.notified() => {}
                 _ = &mut driver => {}
                 () = watch.eof.notified() => {}
             }
@@ -475,6 +495,7 @@ impl Connection {
                 mailbox,
                 closing: AtomicBool::new(false),
                 abort_connect: tokio::sync::Notify::new(),
+                abort: tokio::sync::Notify::new(),
                 client: Mutex::new(None),
                 cache: StatementCache::new(statement_cache_size),
                 gate: tokio::sync::RwLock::new(()),
@@ -487,6 +508,7 @@ impl Connection {
                 flush_pending: AtomicBool::new(false),
                 spare_rows: Mutex::new((Vec::new(), 0)),
                 generation: FORK_GENERATION.load(Ordering::Relaxed),
+                cancels: Cancels::default(),
             }),
             active: None,
         })
@@ -568,10 +590,14 @@ impl Connection {
         self.shared.spawn(async move {
             let host = (!unix).then_some(host.as_str());
             let handshake = async {
-                match net::config(&dsn) {
-                    Ok((cfg, options)) => net::handshake(socket, cfg, &options.tls, host).await,
-                    Err(e) => Err(e),
+                let (cfg, options) = net::config(&dsn)?;
+                let connection = net::handshake(socket, cfg, &options.tls, host).await?;
+                if let Some(host) = host
+                    && connection.2.encrypted()
+                {
+                    shared.cancels.use_tls(&options.tls, host);
                 }
+                Ok(connection)
             };
             let connection = tokio::select! {
                 biased;
@@ -604,8 +630,9 @@ impl Connection {
         self.shared.flush(py);
     }
 
-    /// Stop accepting work. In-flight queries finish; then the connection is terminated. A
-    /// connect still in progress is abandoned, and its socket closed.
+    /// Stop accepting work. In-flight queries finish; then Terminate is written, and the
+    /// socket closed without waiting for the server. A connect still in progress is
+    /// abandoned, and its socket closed.
     /// In a fork()ed child it only stops accepting work: the session is the parent's.
     fn close(&self, py: Python<'_>) {
         self.shared.closing.store(true, Ordering::SeqCst);
@@ -615,6 +642,20 @@ impl Connection {
         // A permit for the handshake if it is still running; never looked at otherwise.
         self.shared.abort_connect.notify_one();
         self.shared.shutdown();
+        self.shared.pump(py);
+    }
+
+    /// Close at once: pending and in-flight operations fail with `ConnectionClosedError`, and
+    /// the socket is closed (no Terminate: the server notices the closed socket). Does
+    /// nothing more on a closed connection. In a fork()ed child it only stops accepting work.
+    fn terminate(&self, py: Python<'_>) {
+        self.shared.closing.store(true, Ordering::SeqCst);
+        if self.shared.inherited() {
+            return;
+        }
+        // Permits, looked at by the handshake if it is still running, and by `serve` after.
+        self.shared.abort_connect.notify_one();
+        self.shared.abort.notify_one();
         self.shared.pump(py);
     }
 
@@ -722,6 +763,8 @@ impl Connection {
         let req = request(future, Target::None);
         self.shared.spawn(async move {
             let _gate = shared.gate.read().await;
+            shared.cancels.settled().await;
+            let _flight = shared.in_flight(&req);
             let script = async { Ok(query.as_str().execute(&*client).await?) };
             let outcome = match shared.unless_dead(script).await {
                 Ok(_) => Outcome::Done,
@@ -820,6 +863,14 @@ impl Connection {
         Ok(bulk)
     }
 
+    /// The caller of the operation whose result future is `future` gave up on it. If it is
+    /// the only operation in flight, a server-side cancel begins (see `cancel.rs`): later
+    /// operations wait until it is over, and the returned handle sends it once Python has
+    /// connected its socket. `None`: nothing is sent.
+    fn begin_cancel(&self, future: &Bound<'_, PyAny>) -> Option<Cancel> {
+        cancel::begin(&self.shared, future)
+    }
+
     /// Run the tasks woken from another thread and resolve what completed: the loop's
     /// `add_reader` callback for `fileno()`.
     fn drain(&self, py: Python<'_>) {
@@ -878,6 +929,9 @@ impl Connection {
         self.shared.spawn(async move {
             // Released after posting: see `bulk::copy_in_task` on why that order matters.
             let _gate = shared.gate.read().await;
+            // Nothing is sent while a cancel is in progress (see `cancel.rs`).
+            shared.cancels.settled().await;
+            let _flight = shared.in_flight(&req);
             let outcome = shared
                 .unless_dead(run(&shared, &req, stream, client, source, &params, op))
                 .await
