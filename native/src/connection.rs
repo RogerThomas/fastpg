@@ -28,7 +28,7 @@ use crate::json;
 use crate::mailbox::Mailbox;
 use crate::msgpack;
 use crate::net::{self, IoWatch};
-use crate::params::{self, Param, indexed};
+use crate::params::{self, Param, ParamError, indexed};
 use crate::rows::RowBuffer;
 use crate::stmt_cache::{CachedStmt, StatementCache};
 use crate::structs::{StructBuilder, StructSpec, collect_list, scalar_columns, tuple_row};
@@ -787,6 +787,23 @@ fn is_stale_statement(e: &xitca_postgres::Error) -> bool {
     })
 }
 
+/// Parameters a cached statement can no longer take because their columns changed type
+/// since it was prepared (`ALTER TABLE ... ALTER COLUMN ... TYPE`): the statement keeps
+/// declaring the old types, so a value of the new type fails to encode here, before
+/// anything is sent.
+fn is_parameter_error(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<ParamError>().is_some()
+}
+
+/// The server re-planned a cached statement against changed columns, its parameters still
+/// typed as at prepare time, and found no operator or cast for them. Not retried: unlike
+/// the errors above it may also come from executing the statement.
+fn is_retyped_parameter(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<DbError>().is_some_and(|db| {
+        *db.code() == SqlState::UNDEFINED_FUNCTION || *db.code() == SqlState::DATATYPE_MISMATCH
+    })
+}
+
 fn is_in_failed_transaction(e: &xitca_postgres::Error) -> bool {
     e.downcast_ref::<DbError>()
         .is_some_and(|db| *db.code() == SqlState::IN_FAILED_SQL_TRANSACTION)
@@ -813,9 +830,10 @@ async fn run(
     params: &[Param],
     op: Op,
 ) -> Result<Outcome, QueryError> {
-    let mut stmt = match source {
-        StmtSource::Cached(stmt) => stmt,
-        StmtSource::Sql(sql) => prepare(shared, &client, &sql).await?,
+    // Whether `stmt` was prepared by an earlier query (so possibly before a schema change).
+    let (mut stmt, mut cached) = match source {
+        StmtSource::Cached(stmt) => (stmt, true),
+        StmtSource::Sql(sql) => (prepare(shared, &client, &sql).await?, false),
     };
     let mut retried = false;
     loop {
@@ -832,8 +850,13 @@ async fn run(
         )
         .await
         {
-            Err(QueryError::Pg(e)) if !retried && !delivered && is_stale_statement(&e) => {
+            Err(QueryError::Pg(e))
+                if !retried
+                    && !delivered
+                    && (is_stale_statement(&e) || (cached && is_parameter_error(&e))) =>
+            {
                 retried = true;
+                cached = false;
                 shared.cache.evict(&stmt);
                 match prepare(shared, &client, stmt.sql()).await {
                     Ok(fresh) => stmt = fresh,
@@ -845,6 +868,11 @@ async fn run(
                     }
                     Err(other) => return Err(other),
                 }
+            }
+            Err(QueryError::Pg(e)) if cached && is_retyped_parameter(&e) => {
+                // Prepared again on its next use, with its parameters' current types.
+                shared.cache.evict(&stmt);
+                return Err(QueryError::Pg(e));
             }
             outcome => return outcome,
         }

@@ -11,6 +11,32 @@ async def _add_column_and_select_in_a_transaction(conn: fastpg.Connection) -> No
         await tx.select_many("SELECT * FROM changing")
 
 
+async def test_parameter_retyped_under_a_cached_statement(conn: fastpg.Connection) -> None:
+    await conn.execute_script("CREATE TEMP TABLE retyped (x int); INSERT INTO retyped VALUES (5)")
+    query = "SELECT x FROM retyped WHERE x = $1"
+    assert await conn.select_many(query, 5) == [(5,)]
+    await conn.execute_script("ALTER TABLE retyped ALTER COLUMN x TYPE text")
+    # The cached statement still declares $1 as int4: a str is now right for it, so the
+    # statement is prepared again (nothing was sent) and the query retried.
+    assert await conn.select_many(query, "5") == [("5",)]
+
+
+async def test_parameter_retyped_under_a_cached_statement_heals_after_one_error(
+    conn: fastpg.Connection,
+) -> None:
+    await conn.execute_script("CREATE TEMP TABLE retyped (x int); INSERT INTO retyped VALUES (5)")
+    query = "SELECT x FROM retyped WHERE x = $1"
+    assert await conn.select_many(query, 5) == [(5,)]
+    await conn.execute_script("ALTER TABLE retyped ALTER COLUMN x TYPE text")
+    # The server re-plans the cached statement with $1 still int4 and finds no text = int4.
+    with pytest.raises(fastpg.ProgrammingError, match="operator does not exist: text = integer"):
+        await conn.select_many(query, 5)
+    # That dropped it from the cache: prepared afresh, $1 is now text.
+    with pytest.raises(fastpg.ParameterError, match="cannot encode int as PostgreSQL type text"):
+        await conn.select_many(query, 5)
+    assert await conn.select_many(query, "5") == [("5",)]
+
+
 async def test_stale_statement_in_a_transaction_reports_the_schema_change(
     conn: fastpg.Connection,
 ) -> None:

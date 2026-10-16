@@ -117,6 +117,13 @@ Statements are prepared on first use and kept in a per-connection LRU cache keye
 text. `statement_cache_size=256` on `connect` or `create_pool` sets its size; it can't be
 turned off.
 
+A cached statement outlives schema changes. When DDL changes its result columns, or
+`DEALLOCATE ALL` / `DISCARD ALL` drops it, it is prepared again and the query retried once.
+Its parameter types are fixed when it is prepared: after `ALTER COLUMN ... TYPE`, a value
+of the new type that doesn't encode for the old one also re-prepares it and retries, while
+a server error about the old type (`operator does not exist`) fails that one query and
+drops the statement, so the next query prepares it afresh.
+
 ## Gotchas
 
 * No array parameters: a `list` is sent as JSON, so `= ANY($1)` fails. Use
