@@ -7,11 +7,13 @@ like its compose service, and removed at the end of the session.
 """
 
 import asyncio
+import gc
 import os
 import secrets
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from testcontainers.core.container import DockerContainer
@@ -20,6 +22,22 @@ import fastpg
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Generator, Iterator
+
+
+@dataclass(slots=True)
+class LoopErrors:
+    """What the event loop's exception handler received: "Future exception was never
+    retrieved", "Task was destroyed but it is pending!", exceptions raised in callbacks."""
+
+    contexts: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    def __call__(self, _loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        self.contexts.append(context)
+
+    def messages(self) -> list[str]:
+        """The messages so far, after a garbage collection (finalizers report there)."""
+        gc.collect()
+        return [f"{c['message']}: {c.get('exception')!r}" for c in self.contexts]
 
 
 def _postgres_container(password: str) -> DockerContainer:
@@ -155,3 +173,15 @@ def tls_server(
 async def conn(dsn: str) -> AsyncIterator[fastpg.Connection]:
     async with await fastpg.connect(dsn) as connection:
         yield connection
+
+
+@pytest.fixture
+async def loop_errors() -> AsyncIterator[LoopErrors]:
+    """Records the running loop's exception handler calls while the test runs."""
+    loop = asyncio.get_running_loop()
+    previous = loop.get_exception_handler()
+    errors = LoopErrors()
+    loop.set_exception_handler(errors)
+    yield errors
+    gc.collect()
+    loop.set_exception_handler(previous)
