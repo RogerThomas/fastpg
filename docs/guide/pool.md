@@ -71,7 +71,8 @@ async with await fastpg.create_pool(dsn) as pool:
 
 * Both wait, first come first served, for an idle connection, growing the pool if they can.
   If none is idle, the pool stops sending new queries to a busy connection and hands it over
-  once it finishes.
+  once it finishes. A released connection first takes the shared queries waiting for one,
+  so callers that keep re-acquiring can't starve them.
 * On release, one round trip rolls back an open transaction and resets the session
   (settings, role, advisory locks, cursors, `LISTEN`s, temporary tables), keeping prepared
   statements. If that fails, the connection is closed.

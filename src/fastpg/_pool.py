@@ -553,16 +553,15 @@ class Pool:
         waiter.token = token
 
     def _dispatch(self) -> None:
-        """Hand freed capacity to waiters: idle connections to acquire(), slots to the rest."""
-        acquiring = self._acquiring
-        while acquiring:
-            entry = self._idle_entry()
-            if entry is None:
-                break
-            future = acquiring.popleft()
-            if not future.done():
-                self._set_state(entry, _Entry.EXCLUSIVE)
-                future.set_result(entry)
+        """Hand freed capacity to waiters: slots to shared statements, idle connections to
+        acquire().
+
+        Shared statements go first: a connection released by acquire() would otherwise go
+        straight to the next acquire() waiter, and callers that keep re-acquiring would
+        starve shared statements forever. An acquire() waiter isn't starved in turn: the
+        connection is drained for it (``_rebalance``) once its statements are sent, and
+        those only ever wait for one round of them.
+        """
         waiting = self._waiting
         while waiting:
             waiter = waiting[0]
@@ -574,6 +573,15 @@ class Pool:
                 break
             waiting.popleft()
             self._hand(entry, waiter)
+        acquiring = self._acquiring
+        while acquiring:
+            entry = self._idle_entry()
+            if entry is None:
+                break
+            future = acquiring.popleft()
+            if not future.done():
+                self._set_state(entry, _Entry.EXCLUSIVE)
+                future.set_result(entry)
         if acquiring or waiting:
             self._grow()
         if acquiring or self._draining:
