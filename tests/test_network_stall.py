@@ -144,6 +144,19 @@ async def test_timeout_bounds_an_acquired_connection(
         assert (stats.size, stats.acquired, stats.in_flight) == (1, 0, 0)
 
 
+async def test_cancelled_connect_to_a_stalled_server_closes_its_socket(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    fault_proxy.stall()  # the TCP connect succeeds, the startup is never answered
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await fastpg.connect(proxied_dsn)
+    async with asyncio.timeout(2):  # the socket is closed now, not once the server answers
+        while fault_proxy.to_server.ended < 1:
+            await asyncio.sleep(0.01)
+
+
 async def test_pool_close_does_not_wait_for_a_stalled_connect(
     proxied_dsn: str,
     fault_proxy: FaultProxy,

@@ -134,6 +134,8 @@ pub(crate) struct Shared {
     mailbox: Mailbox<Completion>,
     /// Set by `close()`; a connect still in progress closes itself once established.
     closing: AtomicBool,
+    /// Notified by `close()`: a handshake still in progress is abandoned (see `attach`).
+    close_requested: tokio::sync::Notify,
     client: Mutex<Option<Arc<Client>>>,
     cache: StatementCache,
     /// Ordinary operations hold it shared for their whole run; bulk writes (`bulk.rs`) hold it
@@ -410,6 +412,7 @@ impl Connection {
             shared: Arc::new(Shared {
                 mailbox,
                 closing: AtomicBool::new(false),
+                close_requested: tokio::sync::Notify::new(),
                 client: Mutex::new(None),
                 cache: StatementCache::new(statement_cache_size),
                 gate: tokio::sync::RwLock::new(()),
@@ -475,9 +478,19 @@ impl Connection {
         let closed = request(closed, Target::None);
         self.shared.spawn(async move {
             let host = (!unix).then_some(host.as_str());
-            let connection = match net::config(&dsn) {
-                Ok((cfg, tls)) => net::handshake(socket, cfg, &tls, host).await,
-                Err(e) => Err(e),
+            let handshake = async {
+                match net::config(&dsn) {
+                    Ok((cfg, tls)) => net::handshake(socket, cfg, &tls, host).await,
+                    Err(e) => Err(e),
+                }
+            };
+            // A close() during the handshake (connect() cancelled or timed out) abandons it,
+            // which detaches and closes the socket now: a server that doesn't answer would
+            // otherwise keep both until it does, if ever.
+            let connection = tokio::select! {
+                biased;
+                connection = handshake => connection,
+                () = shared.close_requested.notified() => Err(QueryError::Closed),
             };
             serve(shared, connection, connected, closed).await;
         });
@@ -502,9 +515,11 @@ impl Connection {
         self.shared.flush(py);
     }
 
-    /// Stop accepting work. In-flight queries finish; then the connection is terminated.
+    /// Stop accepting work. In-flight queries finish; then the connection is terminated. A
+    /// handshake still in progress is abandoned.
     fn close(&self, py: Python<'_>) {
         self.shared.closing.store(true, Ordering::SeqCst);
+        self.shared.close_requested.notify_one();
         self.shared.shutdown();
         self.shared.pump(py);
     }
