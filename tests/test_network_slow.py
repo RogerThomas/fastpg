@@ -263,6 +263,16 @@ async def test_a_cancel_uses_tls_when_the_connection_does(
         assert time.monotonic() - start < 1
 
 
+async def test_a_cancel_over_a_unix_socket(unix_dsn: str) -> None:
+    async with await fastpg.connect(unix_dsn) as conn:
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await conn.select_one("SELECT pg_sleep(5)")
+        assert await conn.select_one("SELECT 1") == (1,)
+        assert time.monotonic() - start < 1
+
+
 async def test_a_cancel_to_an_unreachable_address_gives_up_after_connect_timeout(
     proxied_dsn: str,
     fault_proxy: FaultProxy,

@@ -10,11 +10,12 @@ import asyncio
 import gc
 import os
 import secrets
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from faults import DisposableServer, FaultProxy, disposable_server, with_params
@@ -203,6 +204,20 @@ async def fault_proxy(dsn: str) -> AsyncIterator[FaultProxy]:
 def proxied_dsn(dsn: str, fault_proxy: FaultProxy) -> str:
     """`dsn` through `fault_proxy`, without TLS (so the bytes on the wire are the protocol's)."""
     return with_params(fault_proxy.route(dsn), sslmode="disable")
+
+
+@pytest.fixture(name="unix_dsn")
+async def _unix_dsn(dsn: str) -> AsyncIterator[str]:
+    """`dsn` over a unix socket: a `FaultProxy` listening on one, forwarding to the server."""
+    target = urlsplit(dsn)
+    proxy = FaultProxy((target.hostname or "localhost", target.port or 5432))
+    # Not pytest's tmp_path: a unix socket path is limited to about 100 bytes.
+    with tempfile.TemporaryDirectory() as directory:
+        await proxy.start_unix(f"{directory}/.s.PGSQL.5432")
+        credentials = target.netloc.rpartition("@")[0]
+        without_host = urlunsplit(target._replace(netloc=f"{credentials}@"))
+        yield with_params(without_host, host=directory, port="5432")
+        await proxy.close()
 
 
 @pytest.fixture

@@ -5,32 +5,16 @@ no forwarder in user space can arrange (its kernel acknowledges them): these tes
 that every connection takes the keys, and how they're read.
 """
 
-import tempfile
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
-from faults import FaultProxy, with_params
+from faults import with_params
 
 import fastpg
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
     from pathlib import Path
-
-
-@pytest.fixture(name="unix_dsn")
-async def _unix_dsn(dsn: str) -> AsyncIterator[str]:
-    """`dsn` over a unix socket: a `FaultProxy` listening on one, forwarding to the server."""
-    target = urlsplit(dsn)
-    proxy = FaultProxy((target.hostname or "localhost", target.port or 5432))
-    # Not pytest's tmp_path: a unix socket path is limited to about 100 bytes.
-    with tempfile.TemporaryDirectory() as directory:
-        await proxy.start_unix(f"{directory}/.s.PGSQL.5432")
-        credentials = target.netloc.rpartition("@")[0]
-        without_host = urlunsplit(target._replace(netloc=f"{credentials}@"))
-        yield with_params(without_host, host=directory, port="5432")
-        await proxy.close()
 
 
 @pytest.mark.parametrize(
