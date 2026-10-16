@@ -12,6 +12,28 @@ class Opaque:
     """Not serialisable as JSON."""
 
 
+def _array_of_parameters(count: int) -> str:
+    """A query taking `count` int parameters (an array, so the parse tree stays flat)."""
+    return "SELECT cardinality(ARRAY[" + ",".join(f"${i}::int" for i in range(1, count + 1)) + "])"
+
+
+async def test_65535_parameters(conn: fastpg.Connection) -> None:
+    assert await conn.select_one(_array_of_parameters(65_535), *[1] * 65_535) == (65_535,)
+
+
+@pytest.mark.parametrize("count", [65_536, 70_000])
+async def test_more_than_65535_parameters_are_refused_before_preparing(
+    conn: fastpg.Connection,
+    count: int,
+) -> None:
+    query = "SELECT count(*) FROM pg_prepared_statements"
+    (prepared,) = await conn.select_one(query)
+    expected = rf"^PostgreSQL takes at most 65535 parameters per statement, got {count}$"
+    with pytest.raises(fastpg.ParameterError, match=expected):
+        await conn.select_one(_array_of_parameters(count), *[1] * count)
+    assert await conn.select_one(query) == (prepared,)  # nothing left on the server
+
+
 @pytest.mark.parametrize("value", [2**64, -(2**70), 10**100])
 async def test_int_beyond_64_bits_for_numeric(conn: fastpg.Connection, value: int) -> None:
     assert await conn.select_one("SELECT $1::numeric", value) == (Decimal(value),)

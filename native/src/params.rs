@@ -291,7 +291,21 @@ pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     Ok(encoded.cast::<PyBytes>()?.as_bytes().to_vec())
 }
 
+/// The protocol counts a statement's parameters in 16 bits. Past that, the server would
+/// prepare the statement but describe its parameters with a wrapped-around count.
+const MAX_PARAMS: usize = u16::MAX as usize;
+
 pub fn from_py_tuple(params: &Bound<'_, PyTuple>) -> PyResult<Vec<Param>> {
+    if params.len() > MAX_PARAMS {
+        return Err(py_err(
+            params.py(),
+            "ParameterError",
+            format!(
+                "PostgreSQL takes at most {MAX_PARAMS} parameters per statement, got {}",
+                params.len()
+            ),
+        ));
+    }
     params
         .iter()
         .enumerate()
