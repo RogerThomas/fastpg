@@ -315,5 +315,5 @@ Desktop) the difference was inside the noise.
   on the loop thread that connects, once per process: measured
   ~7 ms on Debian (ca-certificates) and ~130 ms on macOS (keychain).
 * Unix sockets never use TLS (libpq semantics).
-* Server-side cancel (not implemented in fastpg) would need its own TLS connection when it
-  comes.
+* A server-side cancel on a TLS connection uses TLS too (`sslmode` at least `require`, the
+  connection's other TLS settings), as libpq 17 does.

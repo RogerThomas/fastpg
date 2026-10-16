@@ -54,4 +54,7 @@ in the call itself, such as a bad `into=` type or template, raise `TypeError` or
   is retried, because a statement may already have run.
 * To cap every query on a connection, put `statement_timeout` in the DSN:
   `?options=-c%20statement_timeout%3D50` (milliseconds).
+* A query cancelled by its caller (`asyncio.timeout(...)`, a cancelled task) is cancelled on
+  the server too when it's the only one in flight on its connection, and the connection's
+  next queries wait until the server has answered the cancel.
 * Bulk-write errors carry `row_index` (see [Writes](writes.md#atomicity-and-errors)).
