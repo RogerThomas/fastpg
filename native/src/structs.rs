@@ -128,6 +128,8 @@ enum Mode {
 struct FieldSpec {
     attr: Py<PyString>,
     attr_name: String,
+    /// The column name it is matched by (`rename=`, an alias), when not `attr_name`.
+    column_name: Option<String>,
     kind: FieldKind,
     nullable: bool,
     required: bool,
@@ -236,15 +238,17 @@ impl StructSpec {
             let kind = FieldKind::from_code(kind).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!("unknown field kind {kind}"))
             })?;
-            by_name.insert(encode_name, i);
+            let attr_name = attr.to_str()?.to_owned();
             specs.push(FieldSpec {
-                attr_name: attr.to_str()?.to_owned(),
+                column_name: (encode_name != attr_name).then(|| encode_name.clone()),
+                attr_name,
                 attr: attr.unbind(),
                 kind,
                 nullable,
                 required,
                 json_decoder: json_decoder.map(Bound::unbind),
             });
+            by_name.insert(encode_name, i);
         }
         let mode = match (pydantic_defaults, named_tuple_defaults) {
             (Some(_), Some(_)) => {
@@ -317,6 +321,9 @@ struct BoundColumn {
     /// A `str` field fed from json/jsonb: it gets the raw JSON text (ADR 0003).
     json_as_text: bool,
     nullable: bool,
+    /// A pydantic `Decimal` field: pydantic validation refuses NaN and infinities (unless
+    /// `allow_inf_nan=True`, which needs validation), so direct construction does too.
+    finite_decimal: bool,
 }
 
 struct PydanticPlan {
@@ -414,6 +421,7 @@ impl Binding {
                 int_as_float: false,
                 json_as_text: false,
                 nullable: true,
+                finite_decimal: false,
             });
         }
         Ok(Self {
@@ -517,9 +525,11 @@ impl Binding {
                 json_as_text: f.kind == FieldKind::Str
                     && matches!(codec, Codec::Json | Codec::Jsonb),
                 nullable: f.nullable,
+                finite_decimal: f.kind == FieldKind::Decimal
+                    && matches!(spec.mode, Mode::Pydantic { .. }),
             });
         }
-        let missing: Vec<&str> = spec
+        let missing: Vec<String> = spec
             .fields
             .iter()
             .enumerate()
@@ -532,7 +542,11 @@ impl Binding {
                     .is_some_and(|d| d.get(*i).is_none_or(Option::is_none));
                 !**seen && (f.required || no_default)
             })
-            .map(|((_, f), _)| f.attr_name.as_str())
+            // A renamed or aliased field names the column it needs.
+            .map(|((_, f), _)| match &f.column_name {
+                Some(column) => format!("{} (column {column:?})", f.attr_name),
+                None => f.attr_name.clone(),
+            })
             .collect();
         if !missing.is_empty() {
             return Err(py_err(
@@ -677,6 +691,23 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
                         format!(
                             "column {:?} is NULL but {}.{} is not optional",
                             self.columns[b.col].name(),
+                            self.spec.cls_name,
+                            f.attr_name
+                        ),
+                    ));
+                }
+                Some(raw) if b.finite_decimal && decode::numeric_special(raw).is_some() => {
+                    let f = &self.spec.fields[b.field];
+                    let column = &self.columns[b.col];
+                    return Err(py_err(
+                        py,
+                        "DecodeError",
+                        format!(
+                            "column {:?} ({}) is {}, but {}.{} is a pydantic Decimal, which must \
+                             be finite (Field(allow_inf_nan=True) accepts NaN and infinities)",
+                            column.name(),
+                            column.r#type().name(),
+                            decode::numeric_special(raw).unwrap_or("not finite"),
                             self.spec.cls_name,
                             f.attr_name
                         ),

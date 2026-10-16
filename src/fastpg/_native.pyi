@@ -77,6 +77,7 @@ class Connection:
         params: tuple[object, ...],
         shape: int,
         text_columns: tuple[str, ...] = (),
+        field_columns: tuple[str, ...] = (),
     ) -> None: ...
     def fetch_json(
         self,
@@ -85,6 +86,9 @@ class Connection:
         params: tuple[object, ...],
         shape: int,
         text_columns: tuple[str, ...] = (),
+        field_columns: tuple[str, ...] = (),
+        *,
+        non_finite_floats: bool = True,
     ) -> None: ...
     def execute(
         self,

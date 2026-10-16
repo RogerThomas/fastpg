@@ -205,6 +205,8 @@ def case_id(value: object) -> str:
             Decimal("123456789012345678901234567890.123456789"),
         ),
         ("numeric", 42, Decimal(42)),
+        ("numeric", -(2**70), Decimal(-(2**70))),
+        ("float8", 2**70, 2.0**70),
         ("numeric", "1.25", Decimal("1.25")),
         ("numeric(12, 2)", Decimal("1.50"), Decimal("1.50")),
         ("jsonb", {"key": [1, 2.5, None, True]}, {"key": [1, 2.5, None, True]}),
@@ -248,6 +250,19 @@ async def test_value_errors_name_row_and_column(
         match=r"row 0, .*cannot encode str as PostgreSQL type int4",
     ):
         await write(conn, tier, table, [("i", 1)], ["i", "v"])
+
+
+async def test_float_beyond_float4_range_is_out_of_range(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+) -> None:
+    table = await make_table("i int, v float4")
+    with pytest.raises(
+        fastpg.ParameterError,
+        match=r"row 1, .*float out of range for PostgreSQL type float4",
+    ):
+        await write(conn, tier, table, [(0, 1.5), (1, 1e300)], ["i", "v"])
     tz_table = await make_table("t timestamptz")
     with pytest.raises(fastpg.ParameterError, match="naive datetime"):
         await write(conn, tier, tz_table, [(dt.datetime(2000, 1, 1),)], ["t"])  # noqa: DTZ001

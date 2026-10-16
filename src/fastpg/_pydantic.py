@@ -68,7 +68,8 @@ class ModelPlanner:
             if extra.pop("microseconds_precision", "truncate") != "truncate" or extra:
                 msg = f"schema options {extra} need pydantic validation"
                 raise NeedsValidationError(msg)
-            return kind, nullable
+            # `Any` takes None, as pydantic validation does: NULL is no error there.
+            return kind, nullable or kind is Kind.ANY
         if schema["type"] in cls._JSON_SHAPED:
             return Kind.JSON, nullable
         msg = f"{schema['type']!r} fields need pydantic validation"
@@ -96,6 +97,20 @@ class ModelPlanner:
             raise NeedsValidationError(msg)
         if model.model_config.get("extra") == "allow" or model.__private_attributes__:
             msg = "extra='allow' / private attributes need pydantic validation"
+            raise NeedsValidationError(msg)
+        # Direct construction matches a column to a field's alias only. With these settings
+        # validation also (or only) matches the field's name.
+        config = model.model_config
+        by_name = config.get("validate_by_name") or config.get("populate_by_name")
+        aliased = any(
+            (info.validation_alias or info.alias) not in (None, name)
+            for name, info in model.model_fields.items()
+        )
+        if aliased and (by_name or config.get("validate_by_alias") is False):
+            msg = (
+                "validate_by_name / populate_by_name / validate_by_alias=False with aliases"
+                " need pydantic validation"
+            )
             raise NeedsValidationError(msg)
         return schema["schema"]
 
@@ -184,6 +199,8 @@ class ModelPlanner:
             for name, info in model.model_fields.items()
             if cls._is_str(info.annotation) and (alias := cls.write_alias(name, info)) is not None
         )
+        aliases = (cls.write_alias(name, info) for name, info in model.model_fields.items())
+        field_columns = tuple(alias for alias in aliases if alias is not None)
         return Plan(
             spec=spec,
             direct_error=direct_error,
@@ -194,6 +211,8 @@ class ModelPlanner:
             json_one=TypeAdapter(model).validate_json,
             json_many=TypeAdapter[list[BaseModel]](list_of).validate_json,
             json_error=None,
+            json_non_finite_floats=True,
             validation_error=ValidationError,
             text_columns=text_columns,
+            field_columns=field_columns,
         )

@@ -40,7 +40,7 @@ use tokio::sync::mpsc;
 use xitca_postgres::dev::{r#Copy as _, Encode as _};
 use xitca_postgres::error::{DbError, UnexpectedMessage};
 use xitca_postgres::iter::AsyncLendingIterator;
-use xitca_postgres::types::{IsNull, Kind, ToSql, Type, to_sql_checked};
+use xitca_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 use xitca_postgres::{Client, Execute, RowSimpleStream, Statement};
 
 use crate::connection::{Outcome, Request, Shared, plain_request};
@@ -103,17 +103,9 @@ pub struct ColumnCodec {
     label: String,
 }
 
-/// Domains are sent in their base type's binary format.
-fn base_type(ty: &Type) -> &Type {
-    match ty.kind() {
-        Kind::Domain(inner) => base_type(inner),
-        _ => ty,
-    }
-}
-
 impl ColumnCodec {
     fn new(ty: &Type, label: String) -> Self {
-        let ty = base_type(ty).clone();
+        let ty = params::base_type(ty).clone();
         let fast = match ty {
             Type::BOOL => Fast::Bool,
             Type::INT2 => Fast::Int2,
@@ -162,29 +154,33 @@ impl ColumnCodec {
                 out.put_slice(s.to_str()?.as_bytes());
                 return Ok(true);
             }
+            // An int beyond 64 bits falls through to the generic path's range error.
             Fast::Int2 | Fast::Int4 | Fast::Int8 if exact_int => {
-                let v = match obj.extract::<i64>() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(ConvertError::Invalid("int does not fit in 64 bits".into()));
+                if let Ok(v) = obj.extract::<i64>() {
+                    match self.fast {
+                        Fast::Int2 => {
+                            out.put_i16(i16::try_from(v).map_err(|_| self.range_error())?);
+                        }
+                        Fast::Int4 => {
+                            out.put_i32(i32::try_from(v).map_err(|_| self.range_error())?);
+                        }
+                        _ => out.put_i64(v),
                     }
-                };
-                match self.fast {
-                    Fast::Int2 => out.put_i16(i16::try_from(v).map_err(|_| self.range_error())?),
-                    Fast::Int4 => out.put_i32(i32::try_from(v).map_err(|_| self.range_error())?),
-                    _ => out.put_i64(v),
+                    return Ok(true);
                 }
-                return Ok(true);
             }
             Fast::Float8 if exact_float => {
                 // SAFETY: `p` is an exact float.
                 out.put_f64(unsafe { ffi::PyFloat_AS_DOUBLE(p) });
                 return Ok(true);
             }
+            // A float beyond float4's range falls through to the generic path's range error.
             Fast::Float4 if exact_float => {
                 // SAFETY: `p` is an exact float.
-                out.put_f32(unsafe { ffi::PyFloat_AS_DOUBLE(p) } as f32);
-                return Ok(true);
+                if let Some(v) = params::float4(unsafe { ffi::PyFloat_AS_DOUBLE(p) }) {
+                    out.put_f32(v);
+                    return Ok(true);
+                }
             }
             Fast::Bool if obj.is_exact_instance_of::<pyo3::types::PyBool>() => {
                 out.put_u8(u8::from(obj.is_truthy()?));

@@ -28,7 +28,7 @@ use crate::json;
 use crate::mailbox::Mailbox;
 use crate::msgpack;
 use crate::net::{self, IoWatch};
-use crate::params::{self, Param, indexed};
+use crate::params::{self, Param, ParamError, indexed};
 use crate::rows::RowBuffer;
 use crate::stmt_cache::{CachedStmt, StatementCache};
 use crate::structs::{StructBuilder, StructSpec, collect_list, scalar_columns, tuple_row};
@@ -82,10 +82,37 @@ enum Target {
     None,
     Tuple,
     Struct(Py<StructSpec>),
-    /// Rows encoded for a validating decoder. The names are the columns that feed `str`
-    /// fields: a json/jsonb value there is encoded as its text (ADR 0003).
-    Msgpack(Vec<String>),
-    Json(Vec<String>),
+    /// Rows encoded for a validating decoder.
+    Msgpack(EncodedFields),
+    /// As `Msgpack`; the flag: the decoder takes `NaN`/`Infinity` tokens (pydantic does,
+    /// msgspec doesn't).
+    Json(EncodedFields, bool),
+}
+
+/// What the msgpack and JSON routes know of the target type's fields.
+struct EncodedFields {
+    /// The columns that feed `str` fields: a json/jsonb value there is encoded as its text
+    /// (ADR 0003).
+    text_columns: Vec<String>,
+    /// The column name of every field. One appearing twice in a result raises
+    /// `TypeMismatchError`, as in direct construction: a decoder would keep one of the
+    /// values and silently drop the other.
+    field_columns: Vec<String>,
+}
+
+impl EncodedFields {
+    fn check_distinct(&self, py: Python<'_>, names: &[&str]) -> PyResult<()> {
+        for (i, name) in names.iter().enumerate() {
+            if self.field_columns.iter().any(|f| f == name) && names[..i].contains(name) {
+                return Err(py_err(
+                    py,
+                    "TypeMismatchError",
+                    format!("column {name:?} appears more than once in the result"),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -618,7 +645,9 @@ impl Connection {
         )
     }
 
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
+    /// `text_columns`: the columns feeding `str` fields; `field_columns`: every field's
+    /// column (see [`EncodedFields`]).
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new()))]
     fn fetch_msgpack(
         &self,
         future: Py<PyAny>,
@@ -626,17 +655,25 @@ impl Connection {
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
+        field_columns: Vec<String>,
     ) -> PyResult<()> {
+        let fields = EncodedFields {
+            text_columns,
+            field_columns,
+        };
         self.submit(
             future,
             query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
-            Target::Msgpack(text_columns),
+            Target::Msgpack(fields),
         )
     }
 
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
+    /// As `fetch_msgpack`. `non_finite_floats`: the decoder takes `NaN`/`Infinity` tokens;
+    /// otherwise a non-finite float4/float8 value fails the query with a `DecodeError`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new(), *, non_finite_floats = true))]
     fn fetch_json(
         &self,
         future: Py<PyAny>,
@@ -644,13 +681,19 @@ impl Connection {
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
+        field_columns: Vec<String>,
+        non_finite_floats: bool,
     ) -> PyResult<()> {
+        let fields = EncodedFields {
+            text_columns,
+            field_columns,
+        };
         self.submit(
             future,
             query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
-            Target::Json(text_columns),
+            Target::Json(fields, non_finite_floats),
         )
     }
 
@@ -852,6 +895,28 @@ fn is_stale_statement(e: &xitca_postgres::Error) -> bool {
     })
 }
 
+/// Parameters a cached statement can no longer take because their columns changed type
+/// since it was prepared (`ALTER TABLE ... ALTER COLUMN ... TYPE`): the statement keeps
+/// declaring the old types, so a value of the new type fails to encode here, before
+/// anything is sent.
+fn is_parameter_error(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<ParamError>().is_some()
+}
+
+/// The server re-planned a cached statement against changed columns, its parameters still
+/// typed as at prepare time, and found no operator or cast for them. Not retried: unlike
+/// the errors above it may also come from executing the statement.
+fn is_retyped_parameter(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<DbError>().is_some_and(|db| {
+        *db.code() == SqlState::UNDEFINED_FUNCTION || *db.code() == SqlState::DATATYPE_MISMATCH
+    })
+}
+
+fn is_in_failed_transaction(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<DbError>()
+        .is_some_and(|db| *db.code() == SqlState::IN_FAILED_SQL_TRANSACTION)
+}
+
 async fn prepare(
     shared: &Shared,
     client: &Arc<Client>,
@@ -873,9 +938,10 @@ async fn run(
     params: &[Param],
     op: Op,
 ) -> Result<Outcome, QueryError> {
-    let mut stmt = match source {
-        StmtSource::Cached(stmt) => stmt,
-        StmtSource::Sql(sql) => prepare(shared, &client, &sql).await?,
+    // Whether `stmt` was prepared by an earlier query (so possibly before a schema change).
+    let (mut stmt, mut cached) = match source {
+        StmtSource::Cached(stmt) => (stmt, true),
+        StmtSource::Sql(sql) => (prepare(shared, &client, &sql).await?, false),
     };
     let mut retried = false;
     loop {
@@ -892,10 +958,29 @@ async fn run(
         )
         .await
         {
-            Err(QueryError::Pg(e)) if !retried && !delivered && is_stale_statement(&e) => {
+            Err(QueryError::Pg(e))
+                if !retried
+                    && !delivered
+                    && (is_stale_statement(&e) || (cached && is_parameter_error(&e))) =>
+            {
                 retried = true;
+                cached = false;
                 shared.cache.evict(&stmt);
-                stmt = prepare(shared, &client, stmt.sql()).await?;
+                match prepare(shared, &client, stmt.sql()).await {
+                    Ok(fresh) => stmt = fresh,
+                    // In a transaction block the stale-statement error has aborted the
+                    // transaction, so re-preparing can only fail with 25P02 ("current
+                    // transaction is aborted"): report the error that says why instead.
+                    Err(QueryError::Pg(retry)) if is_in_failed_transaction(&retry) => {
+                        return Err(QueryError::Pg(e));
+                    }
+                    Err(other) => return Err(other),
+                }
+            }
+            Err(QueryError::Pg(e)) if cached && is_retyped_parameter(&e) => {
+                // Prepared again on its next use, with its parameters' current types.
+                shared.cache.evict(&stmt);
+                return Err(QueryError::Pg(e));
             }
             outcome => return outcome,
         }
@@ -1107,7 +1192,15 @@ fn materialize_rows<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     match &request.target {
         Target::None => Ok(py.None().into_bound(py)),
-        target @ (Target::Msgpack(text_columns) | Target::Json(text_columns)) => {
+        target @ (Target::Msgpack(fields) | Target::Json(fields, _)) => {
+            let names: Vec<&str> = stmt
+                .statement()
+                .columns()
+                .iter()
+                .map(|c| c.name())
+                .collect();
+            // Even for an empty result, as direct construction's binding does.
+            fields.check_distinct(py, &names)?;
             let single = shape != Shape::All;
             if single && rows.nrows() == 0 {
                 return Ok(py.None().into_bound(py));
@@ -1115,22 +1208,18 @@ fn materialize_rows<'py>(
             let codecs = stmt
                 .codecs()
                 .map_err(|m| py_err(py, "UnsupportedTypeError", m))?;
-            let names: Vec<&str> = stmt
-                .statement()
-                .columns()
-                .iter()
-                .map(|c| c.name())
-                .collect();
             let as_text: Vec<bool> = names
                 .iter()
                 .zip(codecs.iter())
                 .map(|(name, codec)| {
                     matches!(codec, decode::Codec::Json | decode::Codec::Jsonb)
-                        && text_columns.iter().any(|t| t == name)
+                        && fields.text_columns.iter().any(|t| t == name)
                 })
                 .collect();
             let encoded = match target {
-                Target::Json(_) => json::encode_rows(rows, &names, &codecs, &as_text, single),
+                Target::Json(_, non_finite) => {
+                    json::encode_rows(rows, &names, &codecs, &as_text, single, *non_finite)
+                }
                 _ => msgpack::encode_rows(rows, &names, &codecs, &as_text, single),
             }
             .map_err(|m| py_err(py, "DecodeError", m))?;

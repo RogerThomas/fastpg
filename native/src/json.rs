@@ -6,19 +6,22 @@
 //! dates/times as ISO-8601, timestamptz with a `Z` suffix, bytea as base64 (msgspec's JSON
 //! convention; pydantic needs `val_json_bytes='base64'`), json/jsonb embedded verbatim
 //! (or as a string of their text, for `str` fields).
-//! Non-finite floats use the `NaN`/`Infinity` tokens pydantic accepts (msgspec rejects them).
+//! Non-finite floats use the `NaN`/`Infinity` tokens pydantic accepts. msgspec rejects them,
+//! and has no other JSON form for them: for msgspec (`non_finite = false`) they are an error.
 
 use crate::decode::{Codec, char_text, read_i64, write_numeric};
 use crate::pgtime;
 use crate::rows::RowBuffer;
 
 /// Encode `rows` as a single object (`single`, one row expected) or an array of objects.
+/// `non_finite`: the decoder accepts `NaN` / `Infinity` / `-Infinity` tokens (pydantic).
 pub fn encode_rows(
     rows: &RowBuffer,
     names: &[&str],
     codecs: &[Codec],
     as_text: &[bool],
     single: bool,
+    non_finite: bool,
 ) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(64 + rows.nrows() * names.len() * 24);
     // Column names are escaped once, as `"name":` prefixes.
@@ -47,8 +50,17 @@ pub fn encode_rows(
             out.extend_from_slice(key);
             match rows.cell(row, col) {
                 None => out.extend_from_slice(b"null"),
-                Some(raw) => encode_value(&mut out, &mut scratch, *codec, as_text[col], raw)
-                    .map_err(|e| format!("column {:?}: {e}", names[col]))?,
+                Some(raw) => {
+                    encode_value(
+                        &mut out,
+                        &mut scratch,
+                        *codec,
+                        as_text[col],
+                        non_finite,
+                        raw,
+                    )
+                    .map_err(|e| format!("column {:?}: {e}", names[col]))?;
+                }
             }
         }
         out.push(b'}');
@@ -64,16 +76,27 @@ fn fixed<const N: usize>(raw: &[u8]) -> Result<[u8; N], String> {
         .map_err(|_| format!("malformed binary value ({} bytes)", raw.len()))
 }
 
-fn write_f64(out: &mut Vec<u8>, v: f64) {
+/// `codec` names the column type in the error for a non-finite value msgspec can't take.
+fn write_f64(out: &mut Vec<u8>, v: f64, non_finite: bool, codec: &str) -> Result<(), String> {
     if v.is_finite() {
         out.extend_from_slice(ryu::Buffer::new().format_finite(v).as_bytes());
-    } else if v.is_nan() {
-        out.extend_from_slice(b"NaN");
-    } else if v > 0.0 {
-        out.extend_from_slice(b"Infinity");
-    } else {
-        out.extend_from_slice(b"-Infinity");
+        return Ok(());
     }
+    let token = if v.is_nan() {
+        "NaN"
+    } else if v > 0.0 {
+        "Infinity"
+    } else {
+        "-Infinity"
+    };
+    if !non_finite {
+        return Err(format!(
+            "{codec} {token} has no JSON form msgspec accepts; use strategy=\"direct\" or \
+             \"msgpack\""
+        ));
+    }
+    out.extend_from_slice(token.as_bytes());
+    Ok(())
 }
 
 /// Write `s` as a JSON string literal; unescaped runs are copied in bulk.
@@ -135,12 +158,14 @@ fn write_base64(out: &mut Vec<u8>, data: &[u8]) {
 }
 
 /// `as_text`: a json/jsonb value is written as a string literal holding its JSON text (it
-/// feeds a `str` field, ADR 0003) instead of embedded verbatim.
+/// feeds a `str` field, ADR 0003) instead of embedded verbatim. `non_finite`: see
+/// [`encode_rows`].
 fn encode_value(
     out: &mut Vec<u8>,
     scratch: &mut String,
     codec: Codec,
     as_text: bool,
+    non_finite: bool,
     raw: &[u8],
 ) -> Result<(), String> {
     scratch.clear();
@@ -153,8 +178,11 @@ fn encode_value(
         Codec::Int2 | Codec::Int4 | Codec::Int8 | Codec::Oid => {
             out.extend_from_slice(itoa::Buffer::new().format(read_i64(codec, raw)?).as_bytes());
         }
-        Codec::Float4 => write_f64(out, f64::from(f32::from_be_bytes(fixed(raw)?))),
-        Codec::Float8 => write_f64(out, f64::from_be_bytes(fixed(raw)?)),
+        Codec::Float4 => {
+            let v = f64::from(f32::from_be_bytes(fixed(raw)?));
+            write_f64(out, v, non_finite, "float4")?;
+        }
+        Codec::Float8 => write_f64(out, f64::from_be_bytes(fixed(raw)?), non_finite, "float8")?,
         Codec::Text => write_str(out, std::str::from_utf8(raw).map_err(|e| e.to_string())?),
         Codec::Char => {
             let [b] = fixed::<1>(raw)?;

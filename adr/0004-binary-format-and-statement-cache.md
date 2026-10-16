@@ -19,7 +19,12 @@ on every call costs a round trip. An unbounded statement cache leaks server memo
 - A cached statement that has gone stale, after `DEALLOCATE ALL` / `DISCARD ALL` (SQLSTATE
   26000) or DDL that changes its result type (0A000), is re-prepared and retried once. Both
   errors occur at Bind, before execution, and the retry happens only if no rows were
-  delivered.
+  delivered. Inside a transaction block the error has aborted the transaction, so the
+  original error is raised instead.
+- A cached statement keeps the parameter types it was prepared with. A value that fails to
+  encode for them (nothing has been sent) re-prepares the statement and retries once, in
+  case a column changed type; a server error about them (42883, 42804) evicts the
+  statement without a retry, as those can also be raised while executing.
 
 ## Consequences
 

@@ -28,6 +28,8 @@ pub enum Param {
     Null,
     Bool(bool),
     Int(i64),
+    /// `str(int)` of an int outside the 64-bit range (for numeric and float parameters).
+    BigInt(String),
     Float(f64),
     Str(String),
     Bytes(Vec<u8>),
@@ -51,7 +53,7 @@ impl Param {
         match self {
             Self::Null => "None",
             Self::Bool(_) => "bool",
-            Self::Int(_) => "int",
+            Self::Int(_) | Self::BigInt(_) => "int",
             Self::Float(_) => "float",
             Self::Str(_) => "str",
             Self::Bytes(_) => "bytes",
@@ -169,9 +171,16 @@ fn param_error(py: Python<'_>, index: usize, msg: impl fmt::Display) -> PyErr {
 }
 
 pub fn from_py(obj: &Bound<'_, PyAny>, index: usize) -> PyResult<Param> {
+    let py = obj.py();
     convert(obj).map_err(|e| match e {
-        ConvertError::Py(e) => e,
-        ConvertError::Invalid(msg) => param_error(obj.py(), index, msg),
+        // As in bulk writes: a ParameterError naming the parameter, caused by the Python
+        // exception (an unencodable str, a value msgspec can't serialise as JSON, ...).
+        ConvertError::Py(e) => {
+            let err = param_error(py, index, &e);
+            err.set_cause(py, Some(e));
+            err
+        }
+        ConvertError::Invalid(msg) => param_error(py, index, msg),
     })
 }
 
@@ -207,9 +216,14 @@ pub fn convert(obj: &Bound<'_, PyAny>) -> Result<Param, ConvertError> {
     if obj.is_instance_of::<PyInt>() {
         return match obj.extract::<i64>() {
             Ok(v) => Ok(Param::Int(v)),
-            Err(e) if e.is_instance_of::<PyOverflowError>(py) => {
-                Err(ConvertError::Invalid("int does not fit in 64 bits".into()))
-            }
+            // Still fine for a numeric or float parameter: kept as its decimal digits
+            // (`int.__repr__`, which a subclass can't change). Past
+            // `sys.get_int_max_str_digits()` Python refuses to convert it.
+            Err(e) if e.is_instance_of::<PyOverflowError>(py) => py
+                .get_type::<PyInt>()
+                .call_method1(intern!(py, "__repr__"), (obj,))
+                .and_then(|digits| Ok(Param::BigInt(digits.extract::<String>()?)))
+                .map_err(|e| ConvertError::Invalid(format!("int too large to encode: {e}"))),
             Err(e) => Err(e.into()),
         };
     }
@@ -277,7 +291,21 @@ pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     Ok(encoded.cast::<PyBytes>()?.as_bytes().to_vec())
 }
 
+/// The protocol counts a statement's parameters in 16 bits. Past that, the server would
+/// prepare the statement but describe its parameters with a wrapped-around count.
+const MAX_PARAMS: usize = u16::MAX as usize;
+
 pub fn from_py_tuple(params: &Bound<'_, PyTuple>) -> PyResult<Vec<Param>> {
+    if params.len() > MAX_PARAMS {
+        return Err(py_err(
+            params.py(),
+            "ParameterError",
+            format!(
+                "PostgreSQL takes at most {MAX_PARAMS} parameters per statement, got {}",
+                params.len()
+            ),
+        ));
+    }
     params
         .iter()
         .enumerate()
@@ -308,6 +336,14 @@ pub fn indexed(params: &[Param]) -> impl ExactSizeIterator<Item = Indexed<'_>> +
     params.iter().enumerate().map(|(i, p)| Indexed(i, p))
 }
 
+/// Domains are sent in their base type's binary format.
+pub fn base_type(ty: &Type) -> &Type {
+    match ty.kind() {
+        Kind::Domain(inner) => base_type(inner),
+        _ => ty,
+    }
+}
+
 pub fn is_text(ty: &Type) -> bool {
     matches!(
         *ty,
@@ -326,20 +362,25 @@ pub fn put_json(ty: &Type, json: &[u8], out: &mut BytesMut) {
 type BoxError = Box<dyn Error + Sync + Send>;
 
 impl ToSql for Indexed<'_> {
-    fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, BoxError> {
+    fn to_sql(&self, declared: &Type, out: &mut BytesMut) -> Result<IsNull, BoxError> {
         let Indexed(index, param) = *self;
+        let ty = base_type(declared);
+        // Errors name the declared type, and a domain's base type too.
+        let type_name = if ty == declared {
+            ty.name().to_owned()
+        } else {
+            format!("{} (a domain over {})", declared.name(), ty.name())
+        };
         let fail = |message: String| -> BoxError { Box::new(ParamError { index, message }) };
         let mismatch = || {
             fail(format!(
-                "cannot encode {} as PostgreSQL type {}",
-                param.describe(),
-                ty.name()
+                "cannot encode {} as PostgreSQL type {type_name}",
+                param.describe()
             ))
         };
         let range = |what: &str| {
             fail(format!(
-                "{what} out of range for PostgreSQL type {}",
-                ty.name()
+                "{what} out of range for PostgreSQL type {type_name}"
             ))
         };
 
@@ -356,8 +397,23 @@ impl ToSql for Indexed<'_> {
                 Type::NUMERIC => encode_numeric(&v.to_string(), out).map_err(fail)?,
                 _ => return Err(mismatch()),
             },
+            Param::BigInt(digits) => match *ty {
+                Type::INT2 | Type::INT4 | Type::INT8 | Type::OID => return Err(range("int")),
+                Type::FLOAT4 | Type::FLOAT8 => {
+                    // Correctly rounded, like Python's `float(int)`; past f64's range it is
+                    // `inf`, where Python raises OverflowError.
+                    let v = digits.parse::<f64>().map_err(|e| fail(e.to_string()))?;
+                    match float4(v) {
+                        Some(f) if *ty == Type::FLOAT4 && f.is_finite() => out.put_f32(f),
+                        _ if *ty == Type::FLOAT8 && v.is_finite() => out.put_f64(v),
+                        _ => return Err(range("int")),
+                    }
+                }
+                Type::NUMERIC => encode_numeric(digits, out).map_err(fail)?,
+                _ => return Err(mismatch()),
+            },
             Param::Float(v) => match *ty {
-                Type::FLOAT4 => out.put_f32(*v as f32),
+                Type::FLOAT4 => out.put_f32(float4(*v).ok_or_else(|| range("float"))?),
                 Type::FLOAT8 => out.put_f64(*v),
                 Type::NUMERIC => encode_numeric(&float_repr(*v), out).map_err(fail)?,
                 _ => return Err(mismatch()),
@@ -405,6 +461,13 @@ impl ToSql for Indexed<'_> {
     }
 
     to_sql_checked!();
+}
+
+/// `v` as a float4, unless it is finite but beyond float4's range: PostgreSQL's float8 to
+/// float4 cast refuses those too, rather than rounding them to infinity or zero.
+pub fn float4(v: f64) -> Option<f32> {
+    let f = v as f32;
+    (!v.is_finite() || (f.is_finite() && (f != 0.0 || v == 0.0))).then_some(f)
 }
 
 fn float_repr(v: f64) -> String {

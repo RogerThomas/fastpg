@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
     from types import TracebackType
 
+    from fastpg._spec import Plan
+
 type Strategy = Literal["auto", "direct", "msgpack", "json"]
 """How rows become ``into=`` objects (``msgspec.Struct`` or pydantic ``BaseModel``).
 
@@ -100,6 +102,48 @@ class _Queries:
         except error as e:
             raise DecodeError(str(e)) from e
 
+    def _fetch_encoded(
+        self,
+        future: asyncio.Future[Any],
+        query: str,
+        params: tuple[object, ...],
+        shape: int,
+        plan: Plan[Any],
+        strategy: Strategy,
+    ) -> Awaitable[Any]:
+        """The msgpack and json routes: Rust encodes the rows, msgspec/pydantic decodes them."""
+        if strategy == "msgpack":
+            one, many, error = plan.msgpack_one, plan.msgpack_many, plan.msgpack_error
+        elif strategy != "json":
+            msg = f"invalid strategy {strategy!r}: expected 'auto', 'direct', 'msgpack' or 'json'"
+            raise ValueError(msg)
+        else:
+            one, many, error = plan.json_one, plan.json_many, plan.json_error
+        if one is None or many is None or error is not None:
+            detail = f"; direct construction unavailable: {plan.direct_error}"
+            msg = f"strategy={strategy!r} unavailable: {error}{detail if plan.direct_error else ''}"
+            raise UnsupportedTypeError(msg)
+        if strategy == "msgpack":
+            self._native.fetch_msgpack(
+                future,
+                query,
+                params,
+                shape,
+                plan.text_columns,
+                plan.field_columns,
+            )
+        else:
+            self._native.fetch_json(
+                future,
+                query,
+                params,
+                shape,
+                plan.text_columns,
+                plan.field_columns,
+                non_finite_floats=plan.json_non_finite_floats,
+            )
+        return self._decoded(future, many if shape == _ALL else one, plan.validation_error)
+
     def _fetch(
         self,
         query: str | Template,
@@ -131,21 +175,7 @@ class _Queries:
                 raise UnsupportedTypeError(msg)
             self._native.fetch(future, query, params, shape, plan.spec)
             return future
-        if strategy == "msgpack":
-            one, many, error = plan.msgpack_one, plan.msgpack_many, plan.msgpack_error
-            self_fetch = self._native.fetch_msgpack
-        elif strategy != "json":
-            msg = f"invalid strategy {strategy!r}: expected 'auto', 'direct', 'msgpack' or 'json'"
-            raise ValueError(msg)
-        else:
-            one, many, error = plan.json_one, plan.json_many, plan.json_error
-            self_fetch = self._native.fetch_json
-        if one is None or many is None or error is not None:
-            detail = f"; direct construction unavailable: {plan.direct_error}"
-            msg = f"strategy={strategy!r} unavailable: {error}{detail if plan.direct_error else ''}"
-            raise UnsupportedTypeError(msg)
-        self_fetch(future, query, params, shape, plan.text_columns)
-        return self._decoded(future, many if shape == _ALL else one, plan.validation_error)
+        return self._fetch_encoded(future, query, params, shape, plan, strategy)
 
     @overload
     async def select_one(

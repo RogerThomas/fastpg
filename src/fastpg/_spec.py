@@ -79,11 +79,17 @@ class Plan[T]:
     json_one: Callable[[bytes], T] | None
     json_many: Callable[[bytes], list[T]] | None
     json_error: str | None
+    json_non_finite_floats: bool
+    """The JSON decoders take `NaN`/`Infinity` tokens (pydantic's do, msgspec's don't: a
+    non-finite float then fails the query, naming its column)."""
     validation_error: type[Exception]
     """Raised by the validating decoders; re-raised as `fastpg.DecodeError`."""
     text_columns: tuple[str, ...]
     """Columns feeding `str` fields: the msgpack/json routes encode a json/jsonb value there
     as its text, which is what direct construction gives such a field (ADR 0003)."""
+    field_columns: tuple[str, ...]
+    """The column of every field: the msgpack/json routes refuse a result naming one twice,
+    as direct construction does (a decoder would keep one value and drop the other)."""
 
 
 class StructPlanner:
@@ -146,7 +152,8 @@ class StructPlanner:
             if constraints:
                 msg = f"constraints {constraints} need msgspec validation"
                 raise NeedsValidationError(msg)
-            return kind, nullable
+            # `Any` takes None, as msgspec validation does: NULL is no error there.
+            return kind, nullable or kind is Kind.ANY
         if isinstance(t, cls._JSON_SHAPED):
             return Kind.JSON, nullable
         msg = f"{type(t).__name__} needs msgspec validation"
@@ -271,8 +278,11 @@ class StructPlanner:
             json_one=msgspec.json.Decoder(struct).decode,
             json_many=msgspec.json.Decoder(list[struct]).decode,
             json_error=map_error,
-            validation_error=msgspec.ValidationError,
+            json_non_finite_floats=False,
+            # Its base class: malformed input becomes a fastpg error too.
+            validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
+            field_columns=tuple(f.encode_name for f in info.fields),
         )
 
     @classmethod
@@ -315,8 +325,10 @@ class StructPlanner:
             json_one=None,
             json_many=None,
             json_error=route_error,
+            json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
+            field_columns=(),
         )
 
 
@@ -346,8 +358,10 @@ class Planner:
             json_one=None,
             json_many=None,
             json_error=route_error,
+            json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
+            field_columns=(),
         )
 
     @staticmethod

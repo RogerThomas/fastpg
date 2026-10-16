@@ -73,6 +73,9 @@ Columns bind to fields once per (prepared statement, Struct type), before any ro
 decoded, so mismatches raise even for an empty result:
 
 * A column matches a field's encoded name, so `rename=` applies. Column order doesn't matter.
+* A field's column may appear only once: a repeated name (`SELECT a.*, b.*` with an `id`
+  in both) raises `TypeMismatchError` under every strategy, rather than one value silently
+  replacing the other.
 * A field with a default may be missing; a required one raises `MissingColumnError`.
 * Extra columns are ignored, unless `forbid_unknown_fields=True` makes them raise
   `UnknownColumnError`.
@@ -135,5 +138,8 @@ Both are built directly only: `strategy="msgpack"` or `"json"` raises
 * A `str` field fed from a `json`/`jsonb` column gets the raw JSON text, under every strategy.
 * `"msgpack"` and `"json"` encode rows as maps, so `array_like=True` Structs can only be
   built directly.
+* JSON has no form of `NaN` or `±Infinity` that msgspec accepts, so under `"json"` a
+  non-finite `float4`/`float8` value raises `DecodeError` naming its column; `"direct"`
+  and `"msgpack"` decode it.
 * A NULL in a non-optional field raises `NullValueError` only when its row is decoded. All
   decode errors are listed in [Errors](errors.md).
