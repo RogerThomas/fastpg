@@ -163,9 +163,8 @@ async def test_naive_and_aware_datetimes(conn: fastpg.Connection) -> None:
 
 
 async def test_none_compares_as_sql_null(conn: fastpg.Connection) -> None:
-    await conn.execute_script(
-        "CREATE TEMP TABLE maybe (value int); INSERT INTO maybe VALUES (NULL)"
-    )
+    await conn.execute_script("CREATE TEMP TABLE maybe (value int); INSERT INTO maybe VALUES (1)")
+    await conn.execute("INSERT INTO maybe VALUES ($1)", None)
     # NULL = NULL is unknown, so `= $1` with None matches nothing, even the NULL row.
     assert await conn.select_many("SELECT value FROM maybe WHERE value = $1", None) == []
     null_safe = "SELECT value FROM maybe WHERE value IS NOT DISTINCT FROM $1"
