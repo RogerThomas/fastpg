@@ -12,7 +12,7 @@ import asyncio
 import os
 import socket
 import warnings
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -70,6 +70,23 @@ type IsolationLevel = Literal[
 _ONE = 0
 _ONE_OR_NONE = 1
 _ALL = 2
+
+
+def cancelling() -> bool:
+    """Whether the running task is being cancelled (``asyncio.timeout``, ``Task.cancel()``).
+
+    Clean-up on the way out of a cancelled call (a rollback, a session reset) is then sent
+    but not waited for: the caller must not wait for a server that may be slow or not
+    answering at all, which is what the cancellation is often about.
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+def _forget(future: asyncio.Future[None]) -> None:
+    """Retrieve the outcome of a statement nobody awaits (else asyncio logs its error)."""
+    if not future.cancelled():
+        future.exception()
 
 
 @dataclass(slots=True, eq=False)
@@ -494,8 +511,22 @@ class Transaction(_Queries):
         self._native.execute_script(future, query)
         await future
 
+    def _send_rollback(self, query: str) -> None:
+        """Send a rollback without waiting for it: the connection runs it before anything
+        sent after it. A connection already closed has nothing left to roll back."""
+        future: asyncio.Future[None] = self._loop.create_future()
+        future.add_done_callback(_forget)
+        with suppress(FastPGError):
+            self._native.execute_script(future, query)
+
     async def _rollback(self, query: str, exc: BaseException) -> None:
-        """Run a rollback while ``exc`` propagates; a failure is noted on ``exc``, not raised."""
+        """Run a rollback while ``exc`` propagates; a failure is noted on ``exc``, not raised.
+
+        Not waited for when the caller is being cancelled (see `cancelling`).
+        """
+        if cancelling():
+            self._send_rollback(query)
+            return
         try:
             await self._script(query)
         except FastPGError as e:

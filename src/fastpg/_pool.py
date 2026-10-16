@@ -45,6 +45,7 @@ from fastpg._connection import (
     IsolationLevel,
     Strategy,
     Transaction,
+    cancelling,
     connect,
 )
 from fastpg._named import NamedBinder, NamedParams
@@ -733,6 +734,15 @@ class Pool:
             self._router.touch(entry.slot)  # idle from now
         self._dispatch()
 
+    async def _give_back(self, entry: _Entry, *, reset: bool) -> None:
+        """``_release`` a checked-out connection, in the background if the caller is being
+        cancelled (see `cancelling`): the connection then stays out of rotation until its
+        reset is done, and the caller doesn't wait for a server that may not answer."""
+        if cancelling():
+            self._spawn(self._release(entry, reset=reset))
+        else:
+            await self._release(entry, reset=reset)
+
     # --- lifecycle ----------------------------------------------------------------------
 
     async def _shutdown(self) -> None:
@@ -963,7 +973,7 @@ class Pool:
         try:
             yield entry.conn
         finally:
-            await self._release(entry, reset=True)
+            await self._give_back(entry, reset=True)
 
     @asynccontextmanager
     async def transaction(
@@ -991,7 +1001,7 @@ class Pool:
                 yield tx
             clean = True
         finally:
-            await self._release(entry, reset=not clean)
+            await self._give_back(entry, reset=not clean)
 
     async def close(self) -> None:
         """Close gracefully: new calls and waiters fail with ConnectionClosedError, shared
