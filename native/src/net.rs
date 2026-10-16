@@ -11,6 +11,11 @@
 //! TLS (`tls.rs`) sits between the socket and the watch: `EofWatch<TlsStream<socket>>`, so
 //! the watch sees plaintext (a `close_notify` is a 0-byte read, a TLS error a fatal one).
 //!
+//! The driver also waits for the server's EOF after writing Terminate, which a stalled or
+//! unreachable server never sends. So [`EofWatch`] follows the messages written too, and once
+//! a complete Terminate has been written and flushed it reports EOF itself: the driver then
+//! shuts the stream down (a TLS `close_notify`, then the socket's write half) and ends.
+//!
 //! xitca keeps `Host` in a private module, so hosts are read from their `Debug` form
 //! (`Tcp("db")`, `Unix("/run/postgresql")`). If that ever stops parsing (e.g. after an
 //! upgrade), [`targets`] fails with an `InterfaceError` naming the host (the
@@ -62,6 +67,8 @@ pub struct IoWatch {
     /// Wakes waiters after every successful write.
     pub progress: Notify,
     written: AtomicU64,
+    /// The startup is over: every message written from now on is tagged (see [`Writes`]).
+    started: AtomicBool,
     collecting: AtomicBool,
     tap: Mutex<Tap>,
 }
@@ -237,12 +244,70 @@ impl Framer {
     }
 }
 
+/// Follows the framing of the messages written after the startup, to notice the session's
+/// end: xitca writes Terminate (`X`) when the client is dropped, and nothing after it.
+#[derive(Default)]
+struct Writes {
+    /// The current message's header (tag + 4-byte length), as far as written.
+    header: [u8; 5],
+    header_len: usize,
+    /// Body bytes of the current message still to come.
+    remaining: usize,
+    /// The last complete message written is a Terminate.
+    terminated: bool,
+    /// ... and was flushed: the session is over, and reads report EOF.
+    over: bool,
+    /// The bytes didn't parse as messages: stop following them (closing then waits for the
+    /// server's EOF, as xitca does).
+    lost: bool,
+}
+
+impl Writes {
+    fn feed(&mut self, mut data: &[u8]) {
+        while !data.is_empty() && !self.lost {
+            if self.header_len < self.header.len() {
+                let take = (self.header.len() - self.header_len).min(data.len());
+                self.header[self.header_len..self.header_len + take].copy_from_slice(&data[..take]);
+                self.header_len += take;
+                data = &data[take..];
+                if self.header_len < self.header.len() {
+                    return;
+                }
+                let [_, len @ ..] = self.header;
+                let len = i32::from_be_bytes(len);
+                let Some(body_len) = usize::try_from(len).ok().and_then(|n| n.checked_sub(4))
+                else {
+                    self.lost = true;
+                    return;
+                };
+                self.remaining = body_len;
+            }
+            let take = self.remaining.min(data.len());
+            self.remaining -= take;
+            data = &data[take..];
+            if self.remaining == 0 {
+                self.header_len = 0;
+                self.terminated = self.header[0] == b'X';
+            }
+        }
+    }
+
+    /// A flush succeeded: everything written so far is on its way.
+    fn flushed(&mut self) {
+        if self.terminated {
+            self.over = true;
+        }
+    }
+}
+
 /// Transparent `AsyncIo` wrapper that fires `eof` when the peer closes the stream, counts
-/// written bytes and follows the messages read (for [`IoWatch::take_cycle`]).
+/// written bytes, follows the messages read (for [`IoWatch::take_cycle`]), and reports EOF
+/// once Terminate is written (see [`Writes`]).
 pub struct EofWatch<Io> {
     io: Io,
     eof: Arc<IoWatch>,
     framer: Framer,
+    writes: Writes,
 }
 
 /// Whether an I/O error means the stream is unusable (as opposed to "try again").
@@ -258,10 +323,24 @@ impl<Io> EofWatch<Io> {
         self.eof.eof.notify_one();
         self.eof.progress.notify_waiters();
     }
+
+    /// `n` bytes of `buf` were written.
+    fn wrote(&mut self, buf: &[u8], n: usize) {
+        self.eof.wrote(n);
+        if self.eof.started.load(Ordering::Acquire) {
+            self.writes.feed(&buf[..n]);
+        }
+    }
 }
 
 impl<Io: io::Read> io::Read for EofWatch<Io> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.writes.over {
+            // Terminate is on its way: nothing the server sends now matters, and a server
+            // that stopped answering would never close. No `eof` signal: the driver is left
+            // to shut the stream down (`poll_shutdown`) and end by itself.
+            return Ok(0);
+        }
         // A peer close shows up as a 0-byte read, or (on Linux, once our write after the
         // server's FIN has drawn an RST) as ECONNRESET: both end the connection.
         match self.io.read(buf) {
@@ -286,7 +365,7 @@ impl<Io: io::Write> io::Write for EofWatch<Io> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self.io.write(buf) {
             Ok(n) => {
-                self.eof.wrote(n);
+                self.wrote(buf, n);
                 Ok(n)
             }
             Err(e) => {
@@ -301,7 +380,12 @@ impl<Io: io::Write> io::Write for EofWatch<Io> {
     fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         match self.io.write_vectored(bufs) {
             Ok(n) => {
-                self.eof.wrote(n);
+                let mut left = n;
+                for buf in bufs {
+                    let part = left.min(buf.len());
+                    self.wrote(buf, part);
+                    left -= part;
+                }
                 Ok(n)
             }
             Err(e) => {
@@ -316,10 +400,10 @@ impl<Io: io::Write> io::Write for EofWatch<Io> {
     fn flush(&mut self) -> io::Result<()> {
         // A no-op on a plain socket; over TLS it writes the last records.
         let result = self.io.flush();
-        if let Err(e) = &result
-            && is_fatal(e)
-        {
-            self.signal_eof();
+        match &result {
+            Ok(()) => self.writes.flushed(),
+            Err(e) if is_fatal(e) => self.signal_eof(),
+            Err(_) => {}
         }
         result
     }
@@ -327,10 +411,21 @@ impl<Io: io::Write> io::Write for EofWatch<Io> {
 
 impl<Io: AsyncIo + Send> AsyncIo for EofWatch<Io> {
     fn ready(&mut self, interest: Interest) -> impl Future<Output = io::Result<Ready>> + Send {
-        self.io.ready(interest)
+        // Readable at once when over: the read reports EOF.
+        let over = self.writes.over && interest.is_readable();
+        let io = &mut self.io;
+        async move {
+            if over {
+                return Ok(Ready::READABLE);
+            }
+            io.ready(interest).await
+        }
     }
 
     fn poll_ready(&mut self, interest: Interest, cx: &mut Context<'_>) -> Poll<io::Result<Ready>> {
+        if self.writes.over && interest.is_readable() {
+            return Poll::Ready(Ok(Ready::READABLE));
+        }
         self.io.poll_ready(interest, cx)
     }
 
@@ -442,8 +537,11 @@ async fn startup<Io: AsyncIo + Send + 'static>(
         io,
         eof: eof.clone(),
         framer: Framer::default(),
+        writes: Writes::default(),
     };
     let (client, driver) = Postgres::new(cfg).connect_io(watched).await?;
+    // The startup wrote each message in full: the next byte written starts a message.
+    eof.started.store(true, Ordering::Release);
     Ok((client, driver, eof))
 }
 
@@ -589,6 +687,99 @@ mod tests {
         watch.stop_collecting();
         framer.feed(&[complete("SELECT 3"), ready()].concat(), &watch);
         assert_eq!(watch.take_cycle(), None);
+    }
+
+    /// A stream whose reads always have server bytes, and whose writes take at most `cap`
+    /// bytes at a time.
+    struct Peer {
+        cap: usize,
+        written: Vec<u8>,
+    }
+
+    impl io::Read for Peer {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            buf[0] = b'Z';
+            Ok(1)
+        }
+    }
+
+    impl io::Write for Peer {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let n = buf.len().min(self.cap);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn watched(cap: usize) -> EofWatch<Peer> {
+        let eof = Arc::new(IoWatch::default());
+        eof.started.store(true, Ordering::Release);
+        EofWatch {
+            io: Peer {
+                cap,
+                written: Vec::new(),
+            },
+            eof,
+            framer: Framer::default(),
+            writes: Writes::default(),
+        }
+    }
+
+    fn write_all(watch: &mut EofWatch<Peer>, mut data: &[u8]) {
+        use std::io::Write;
+        while !data.is_empty() {
+            let n = watch.write(data).unwrap();
+            data = &data[n..];
+        }
+    }
+
+    #[test]
+    fn a_flushed_terminate_ends_reads_however_the_writes_are_split() {
+        use std::io::{Read, Write};
+        // Bodies holding a Terminate's bytes are not a Terminate.
+        let terminate = message(b'X', b"");
+        let before = [
+            message(
+                b'P',
+                &[b"\0SELECT $1\0\0\0".as_slice(), &terminate].concat(),
+            ),
+            message(b'd', &terminate),
+            message(b'S', b""),
+        ]
+        .concat();
+        for cap in [1, 2, 3, 5, 7, 4096] {
+            let mut watch = watched(cap);
+            write_all(&mut watch, &before);
+            watch.flush().unwrap();
+            let mut buf = [0u8; 16];
+            assert_eq!(watch.read(&mut buf).unwrap(), 1, "cap {cap}");
+            write_all(&mut watch, &terminate);
+            assert_eq!(
+                watch.read(&mut buf).unwrap(),
+                1,
+                "cap {cap}: not flushed yet"
+            );
+            watch.flush().unwrap();
+            assert_eq!(watch.read(&mut buf).unwrap(), 0, "cap {cap}");
+            assert_eq!(watch.io.written, [before.as_slice(), &terminate].concat());
+        }
+    }
+
+    #[test]
+    fn writes_during_the_startup_are_not_followed() {
+        use std::io::{Read, Write};
+        let mut watch = watched(4096);
+        watch.eof.started.store(false, Ordering::Release);
+        // An untagged startup message whose bytes end like a Terminate.
+        write_all(&mut watch, &[0, 0, 0, 9, 0, 3, 0, 0, b'X']);
+        write_all(&mut watch, &message(b'X', b""));
+        watch.flush().unwrap();
+        let mut buf = [0u8; 16];
+        assert_eq!(watch.read(&mut buf).unwrap(), 1);
     }
 
     #[test]

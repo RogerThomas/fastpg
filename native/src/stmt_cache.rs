@@ -4,6 +4,7 @@
 //! the column codecs for tuple rows and the column→field bindings per Struct type.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use pyo3::prelude::*;
@@ -18,6 +19,9 @@ pub struct CachedStmt {
     client: Arc<Client>,
     codecs: OnceLock<Result<Arc<[Codec]>, String>>,
     bindings: Mutex<Vec<(Py<StructSpec>, Arc<Binding>)>>,
+    /// The connection is closing: the session's end frees the server-side statement, so
+    /// dropping it sends no Close (whose answer nobody would read once the socket closes).
+    session_ending: AtomicBool,
 }
 
 impl CachedStmt {
@@ -28,6 +32,7 @@ impl CachedStmt {
             client,
             codecs: OnceLock::new(),
             bindings: Mutex::new(Vec::new()),
+            session_ending: AtomicBool::new(false),
         }
     }
 
@@ -77,7 +82,9 @@ impl CachedStmt {
 impl Drop for CachedStmt {
     fn drop(&mut self) {
         // Deallocate the server-side statement (no-op if the connection is already gone).
-        if let Some(stmt) = self.stmt.take() {
+        if let Some(stmt) = self.stmt.take()
+            && !self.session_ending.load(Ordering::Acquire)
+        {
             drop(stmt.into_guarded(&*self.client));
         }
     }
@@ -122,6 +129,7 @@ impl StatementCache {
             let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             let (map, clock, closed) = &mut *guard;
             if *closed {
+                stmt.session_ending.store(true, Ordering::Release);
                 return stmt;
             }
             *clock += 1;
@@ -175,13 +183,17 @@ impl StatementCache {
     }
 
     /// Drop every entry, and keep none from now on (the connection is closing: a cached
-    /// statement would keep its client, and so the connection, alive).
+    /// statement would keep its client, and so the connection, alive). Their server-side
+    /// statements are left to the session's end.
     pub fn close(&self) {
         let drained: Vec<Entry> = {
             let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             guard.2 = true;
             guard.0.drain().map(|(_, e)| e).collect()
         };
+        for entry in &drained {
+            entry.stmt.session_ending.store(true, Ordering::Release);
+        }
         drop(drained);
     }
 }
