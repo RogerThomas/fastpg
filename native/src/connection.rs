@@ -10,7 +10,7 @@
 //! rows received so far, so chunk N is decoded while chunk N+1 is still on the wire.
 
 use std::future::IntoFuture;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use pyo3::intern;
@@ -42,6 +42,18 @@ const CHUNK_ROWS: usize = 512;
 /// Most bytes of row buffers a connection keeps for reuse (see [`Shared::row_buffer`]): a
 /// 512-row chunk of rows of a few hundred bytes, or hundreds of point-lookup rows.
 const SPARE_ROW_BYTES: usize = 256 * 1024;
+
+/// Bumped in a child process right after `os.fork()` (see [`after_fork_in_child`]): the
+/// connections of an earlier generation were inherited from the parent process.
+static FORK_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// `os.register_at_fork(after_in_child=...)` hook. The parent keeps using the sockets of the
+/// connections that exist now (the child shares them), so in the child they must never be
+/// read or written: their operations raise, and closing or dropping one sends nothing.
+#[pyfunction]
+pub fn after_fork_in_child() {
+    FORK_GENERATION.fetch_add(1, Ordering::Relaxed);
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -164,9 +176,17 @@ pub(crate) struct Shared {
     /// Row buffers of resolved results and the bytes they hold, for the next queries (loop
     /// thread only).
     spare_rows: Mutex<(Vec<RowBuffer>, usize)>,
+    /// [`FORK_GENERATION`] when created: another one now means this is a fork()ed child,
+    /// and the socket belongs to the parent.
+    generation: u64,
 }
 
 impl Shared {
+    /// Whether this process is a fork()ed child of the one that opened the connection.
+    fn inherited(&self) -> bool {
+        self.generation != FORK_GENERATION.load(Ordering::Relaxed)
+    }
+
     /// Queue a completion for `pump`. Only tasks post, and they only run inside `pump` on
     /// the loop thread, which drains right after: no wake-up needed.
     pub(crate) fn post(&self, request: Arc<Request>, outcome: Outcome) {
@@ -222,9 +242,10 @@ impl Shared {
     /// (`flush_pending`): the flush writes them all at once. A lone result (sequential use)
     /// schedules nothing, so its next query is written at once as before.
     pub(crate) fn pump(&self, py: Python<'_>) {
-        if !self.exec.on_loop_thread() {
+        if !self.exec.on_loop_thread() || self.inherited() {
             // E.g. a garbage-collector `__del__` on another thread: the task it woke poked
-            // the mailbox, so the loop pumps instead.
+            // the mailbox, so the loop pumps instead. In a fork()ed child, nothing may run:
+            // the socket is the parent's.
             return;
         }
         // Resolving completions can wake tasks again: a completion's `Arc<CachedStmt>` may
@@ -429,6 +450,7 @@ impl Connection {
                 scratch: Mutex::new(Vec::new()),
                 flush_pending: AtomicBool::new(false),
                 spare_rows: Mutex::new((Vec::new(), 0)),
+                generation: FORK_GENERATION.load(Ordering::Relaxed),
             }),
             active: None,
         })
@@ -458,9 +480,16 @@ impl Connection {
         self.shared.mailbox.fileno()
     }
 
+    /// Closed, or inherited by a fork()ed child (where it can't be used).
     #[getter]
     fn closed(&self) -> bool {
-        self.shared.client().is_none()
+        self.shared.inherited() || self.shared.client().is_none()
+    }
+
+    /// Whether this process is a fork()ed child of the one that opened the connection.
+    #[getter]
+    fn inherited(&self) -> bool {
+        self.shared.inherited()
     }
 
     /// Connect over `fd`, a connected non-blocking socket that Python keeps open: run TLS
@@ -541,8 +570,12 @@ impl Connection {
 
     /// Stop accepting work. In-flight queries finish; then the connection is terminated. A
     /// connect still in progress is abandoned, and its socket closed.
+    /// In a fork()ed child it only stops accepting work: the session is the parent's.
     fn close(&self, py: Python<'_>) {
         self.shared.closing.store(true, Ordering::SeqCst);
+        if self.shared.inherited() {
+            return;
+        }
         // A permit for the handshake if it is still running; never looked at otherwise.
         self.shared.abort_connect.notify_one();
         self.shared.shutdown();
@@ -555,6 +588,9 @@ impl Connection {
     /// it right away; then the tasks are dropped unpolled and the socket is closed.
     fn abandon(&self, py: Python<'_>) {
         self.shared.closing.store(true, Ordering::SeqCst);
+        if self.shared.inherited() {
+            return; // the socket and its loop registrations are the parent's
+        }
         self.shared.abort_connect.notify_one();
         self.shared.shutdown();
         self.shared.pump(py);
@@ -746,6 +782,14 @@ impl Connection {
 
 impl Connection {
     fn require_client(&self, py: Python<'_>) -> PyResult<Arc<Client>> {
+        if self.shared.inherited() {
+            return Err(py_err(
+                py,
+                "InterfaceError",
+                "the connection was opened by another process (this one was fork()ed from \
+                 it, and shares its socket): open a new connection in this process",
+            ));
+        }
         if let Some(active) = &self.active
             && !active.load(Ordering::Acquire)
         {

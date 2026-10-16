@@ -57,6 +57,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<router::Router>()?;
     m.add_function(wrap_pyfunction!(rust_allocations, m)?)?;
     m.add_function(wrap_pyfunction!(dsn_targets, m)?)?;
+    m.add_function(wrap_pyfunction!(connection::after_fork_in_child, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

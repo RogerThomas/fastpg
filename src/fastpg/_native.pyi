@@ -9,6 +9,9 @@ __version__: str
 def rust_allocations() -> int | None:
     """Rust heap allocations so far, or None unless built with the `alloc-stats` feature."""
 
+def after_fork_in_child() -> None:
+    """Mark every existing connection as inherited (``os.register_at_fork`` hook)."""
+
 def dsn_targets(dsn: str) -> list[tuple[str, str, int]]:
     """The hosts of `dsn` as `("tcp" | "unix", host or path, port)`, in connection order."""
 
@@ -37,6 +40,8 @@ class Connection:
     def set_active(self, active: bool) -> None: ...
     @property
     def closed(self) -> bool: ...
+    @property
+    def inherited(self) -> bool: ...
     def fileno(self) -> int: ...
     def attach(
         self,

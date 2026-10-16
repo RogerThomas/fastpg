@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 from fastpg import _writes
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Connection as NativeConnection
-from fastpg._native import dsn_targets
+from fastpg._native import after_fork_in_child, dsn_targets
 from fastpg._spec import Planner
 from fastpg._template import TemplateCompiler
 from fastpg.errors import (
@@ -70,6 +70,10 @@ type IsolationLevel = Literal[
 _ONE = 0
 _ONE_OR_NONE = 1
 _ALL = 2
+
+# In a fork()ed child, connections inherited from the parent share its sockets: they refuse
+# to run anything, and closing or dropping one leaves the parent's session alone.
+os.register_at_fork(after_in_child=after_fork_in_child)
 
 
 @dataclass(slots=True, eq=False)
@@ -383,6 +387,9 @@ class Connection(_Queries):
                 self._loop.remove_reader(self._native.fileno())
 
     async def _close(self) -> None:
+        if self._native.inherited:  # a fork()ed child: the session is the parent's to close
+            self._released = True
+            return
         self._native.close()
         await self._closed
         self._release()
@@ -431,8 +438,10 @@ class Connection(_Queries):
     def __del__(self) -> None:
         if self._released:
             return
-        warnings.warn(f"unclosed fastpg connection {self!r}", ResourceWarning, stacklevel=1)
         self._released = True
+        if self._native.inherited:  # a fork()ed child: not ours to close (nor its loop's)
+            return
+        warnings.warn(f"unclosed fastpg connection {self!r}", ResourceWarning, stacklevel=1)
         if self._loop.is_closed():
             # No loop callback will finish a close: end the session and free the socket now.
             self._native.abandon()
