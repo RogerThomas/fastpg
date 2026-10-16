@@ -1,6 +1,8 @@
 """Closing while busy, closing twice, and using a connection or pool after close."""
 
 import asyncio
+import gc
+import warnings
 from typing import TYPE_CHECKING
 
 import pytest
@@ -62,6 +64,28 @@ async def _hold(pool: fastpg.Pool, gate: asyncio.Future[None]) -> int:
 async def _acquire_one(pool: fastpg.Pool) -> None:
     async with pool.acquire():
         pass
+
+
+def _live_connections() -> int:
+    gc.collect()
+    return sum(1 for o in gc.get_objects() if isinstance(o, fastpg.Connection))
+
+
+async def _close_with_a_timeout(dsn: str) -> bool:
+    """Close while a query runs, giving up on the close; whether it timed out. Run it as a
+    task of its own (a task cancelled by asyncio.timeout keeps the frames it interrupted)."""
+    conn = await fastpg.connect(dsn)
+    slow = asyncio.create_task(conn.select_one("SELECT pg_sleep(0.2)"))
+    await asyncio.sleep(0.01)
+    timed_out = False
+    try:
+        async with asyncio.timeout(0.02):
+            await conn.close()
+    except TimeoutError:
+        timed_out = True
+    assert await slow == (None,)  # the in-flight query still completes
+    assert conn.closed
+    return timed_out
 
 
 async def _raise_inside(resource: fastpg.Connection | fastpg.Pool) -> None:
@@ -126,6 +150,32 @@ async def test_close_during_a_transaction_rolls_it_back(
         await block
     assert exc.value.__notes__ == ["fastpg: 'ROLLBACK' failed too: connection is closed"]
     assert await conn.select_one("SELECT count(*)::int FROM edge_close") == (0,)
+
+
+async def test_a_close_that_timed_out_still_counts_as_closed(dsn: str) -> None:
+    # close() waits for queries in flight; giving up on it (asyncio.timeout) must not make
+    # the connection look unclosed once it's collected.
+    live = _live_connections()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert await asyncio.create_task(_close_with_a_timeout(dsn))
+        assert _live_connections() == live  # collected...
+    assert [str(w.message) for w in caught if w.category is ResourceWarning] == []  # quietly
+
+
+async def test_cancelling_one_close_leaves_the_others_waiting(dsn: str) -> None:
+    conn = await fastpg.connect(dsn)
+    slow = asyncio.create_task(conn.select_one("SELECT pg_sleep(0.1)"))
+    await asyncio.sleep(0.01)
+    first = asyncio.create_task(conn.close())
+    second = asyncio.create_task(conn.close())
+    await asyncio.sleep(0.01)
+    first.cancel()
+    async with asyncio.timeout(5):
+        await second  # still waits for the close, rather than raising CancelledError
+        await conn.close()  # and later calls return at once
+    assert first.cancelled()
+    assert await slow == (None,)
 
 
 async def test_close_twice_and_concurrently(dsn: str, loop_errors: LoopErrors) -> None:

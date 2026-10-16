@@ -391,8 +391,14 @@ class Connection(_Queries):
             self._released = True
             return
         self._native.close()
-        await self._closed
-        self._release()
+        try:
+            # Shielded: every close() call awaits the one future, so a caller giving up (a
+            # timeout: close() waits for queries in flight) must not cancel it for the rest.
+            await asyncio.shield(self._closed)
+        finally:
+            # Even then the close goes on; the mailbox reader (for wake-ups from other
+            # threads) can go, and the connection doesn't count as unclosed.
+            self._release()
 
     @property
     def closed(self) -> bool:
