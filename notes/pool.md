@@ -201,7 +201,9 @@ Without draining, an acquire could starve under constant shared load.
     * New calls and all waiters fail with `ConnectionClosedError("pool is closed")`.
     * Shared statements in flight complete; idle connections close.
     * Checked-out connections close when released, and `close()` waits for them.
-    * It's idempotent and shielded: cancelling one `close()` caller doesn't abort the close.
+    * It's idempotent and shielded: cancelling one `close()` caller doesn't abort the
+      shutdown, but it terminates every connection still open, checked-out ones included
+      (`Connection.terminate()`, as asyncpg's `Pool.close` does).
 17. **A failed background connect fails the waiters only if nothing else can serve them**
     (no live and no opening connections). Otherwise they keep waiting for slots.
     `create_pool` raises if any of the `min_size` initial connects fails, and closes the

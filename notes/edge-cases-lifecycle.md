@@ -49,10 +49,10 @@ keeps the traceback's frames alive.
 | 2 | `conn.close()` with pipelined queries and a streamed result in flight | they complete | no | | `close::test_close_lets_pipelined_queries_and_a_streamed_result_finish` |
 | 2 | `conn.close()` during a bulk write | the write commits, a query queued behind it completes | no | | `close::test_close_during_a_bulk_write_lets_it_commit` |
 | 2 | `conn.close()` from another task during a transaction | block fails with `ConnectionClosedError` (+ note: ROLLBACK failed too), nothing committed | no | | `close::test_close_during_a_transaction_rolls_it_back` |
-| 2 | `close()` bounded by `asyncio.timeout` / one of several `close()` calls cancelled | the shared `_closed` future got cancelled: the other callers raised `CancelledError`, and dropping the connection later warned "unclosed" | **yes** | `beec020` | `close::test_a_close_that_timed_out_still_counts_as_closed`, `close::test_cancelling_one_close_leaves_the_others_waiting` |
+| 2 | `close()` bounded by `asyncio.timeout` / one of several `close()` calls cancelled | the shared `_closed` future got cancelled: the other callers raised `CancelledError`, and dropping the connection later warned "unclosed" | **yes** | `beec020` | `close::test_a_close_that_timed_out_still_counts_as_closed`, `close::test_cancelling_one_close_terminates_the_connection` |
 | 2 | close twice, concurrently; every method after close | `ConnectionClosedError("connection is closed")` | no | | `close::test_close_twice_and_concurrently`, `close::test_every_method_fails_clearly_after_close` |
 | 2 | `async with conn` / `async with pool` exiting on an exception | closed, exception propagates | no | | `close::test_async_with_closes_when_the_block_raises`, `close::test_pool_async_with_closes_when_the_block_raises` |
-| 2 | `pool.close()` with statements in flight, waiters, acquire waiters, a checkout, an open transaction, a bulk write, connections opening; twice; cancelled | in-flight work finishes, waiters fail `ConnectionClosedError("pool is closed")`, close waits for checkouts, shutdown survives a cancelled `close()` | no | | `close::test_pool_close_*` |
+| 2 | `pool.close()` with statements in flight, waiters, acquire waiters, a checkout, an open transaction, a bulk write, connections opening; twice; cancelled | in-flight work finishes, waiters fail `ConnectionClosedError("pool is closed")`, close waits for checkouts, shutdown survives a cancelled `close()` (which terminates the connections, `84d75e2`) | no | | `close::test_pool_close_*`, `close::test_cancelled_pool_close_terminates_checked_out_connections` |
 | 3 | exception in the block | rolled back | no | | `tx::test_an_exception_in_the_block_rolls_back` |
 | 3 | server error inside, then more queries | each fails with `DatabaseError` 25P02 "current transaction is aborted"; exit raises 25P02 with a note | no | | `tx::test_queries_after_a_server_error_inside_fail_with_25p02` |
 | 3 | COMMIT fails (deferred unique constraint) | `UniqueViolationError` from the block; connection usable | no | | `tx::test_a_failing_commit_surfaces_and_leaves_the_connection_usable` |
@@ -150,7 +150,10 @@ it once those finish: each side waits at most a round of the other. Nothing chan
 only one kind is waiting.
 
 **`close()` cancelled** (`beec020`). `close()` awaits the shared `_closed` future through
-`asyncio.shield`, and releases the mailbox registration in a `finally`.
+`asyncio.shield`, and releases the mailbox registration in a `finally`. Since `84d75e2` the
+cancelled caller also terminates the connection (`Connection.terminate()`, as asyncpg
+does): queries in flight fail with `ConnectionClosedError`, and the other `close()`
+callers return.
 
 **Pool query that isn't a str** (`186e543`). `Router.begin()` raises `TypeError` for it,
 after the connection was taken off the idle stack. Both call sites now put the connection
