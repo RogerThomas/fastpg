@@ -130,6 +130,9 @@ class _Queries:
         if strategy == "msgpack":
             one, many, error = plan.msgpack_one, plan.msgpack_many, plan.msgpack_error
             self_fetch = self._native.fetch_msgpack
+        elif strategy != "json":
+            msg = f"invalid strategy {strategy!r}: expected 'auto', 'direct', 'msgpack' or 'json'"
+            raise ValueError(msg)
         else:
             one, many, error = plan.json_one, plan.json_many, plan.json_error
             self_fetch = self._native.fetch_json
