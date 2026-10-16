@@ -32,6 +32,7 @@ nanoseconds of Python (``notes/perf-pool.md``).
 """
 
 import asyncio
+import math
 import time
 from collections import deque
 from contextlib import asynccontextmanager, suppress
@@ -130,13 +131,32 @@ class PoolStats:
     """``acquire()`` / ``transaction()`` calls waiting for an idle connection."""
 
 
-def _check_sizes(min_size: int, max_size: int, max_inflight_per_conn: int) -> None:
+def _check_seconds(name: str, value: float | None) -> None:
+    if value is not None and not 0 < value < math.inf:  # NaN fails both comparisons
+        msg = f"{name} must be a positive number of seconds, or None (never), got {value!r}"
+        raise ValueError(msg)
+
+
+def _check_config(
+    min_size: int,
+    max_size: int,
+    max_inflight_per_conn: int,
+    statement_cache_size: int,
+    max_lifetime: float | None,
+    max_idle: float | None,
+) -> None:
+    """Reject an invalid configuration (before any connection is opened)."""
     if max_size < 1 or not 0 <= min_size <= max_size:
         msg = f"need 0 <= min_size <= max_size and max_size >= 1, got {min_size}, {max_size}"
         raise ValueError(msg)
     if max_inflight_per_conn < 1:
         msg = f"max_inflight_per_conn must be >= 1, got {max_inflight_per_conn}"
         raise ValueError(msg)
+    if statement_cache_size < 0:
+        msg = f"statement_cache_size must be >= 0, got {statement_cache_size}"
+        raise ValueError(msg)
+    _check_seconds("max_lifetime", max_lifetime)
+    _check_seconds("max_idle", max_idle)
 
 
 async def _connect_all(dsn: str, count: int, statement_cache_size: int) -> list[Connection]:
@@ -264,7 +284,14 @@ class Pool:
     _maintainer: asyncio.Task[None] = field(init=False, repr=False)
 
     def __post_init__(self, connections: Sequence[Connection]) -> None:
-        _check_sizes(self.min_size, self.max_size, self.max_inflight_per_conn)
+        _check_config(
+            self.min_size,
+            self.max_size,
+            self.max_inflight_per_conn,
+            self.statement_cache_size,
+            self.max_lifetime,
+            self.max_idle,
+        )
         self._loop = asyncio.get_running_loop()
         self._max_lifetime_ns = int(self.max_lifetime * 1e9) if self.max_lifetime else 0
         self._max_idle_ns = int(self.max_idle * 1e9) if self.max_idle else 0
@@ -1036,7 +1063,15 @@ async def create_pool(
         max_lifetime: Seconds after which a connection is replaced once idle (None: never).
         max_idle: Seconds after which an idle connection above ``min_size`` is closed.
     """
-    _check_sizes(min_size, max_size, max_inflight_per_conn)
+    # Before connecting: a configuration Pool() rejects would leave the connections open.
+    _check_config(
+        min_size,
+        max_size,
+        max_inflight_per_conn,
+        statement_cache_size,
+        max_lifetime,
+        max_idle,
+    )
     return Pool(
         dsn,
         min_size=min_size,
