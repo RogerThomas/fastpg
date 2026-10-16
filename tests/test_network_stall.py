@@ -15,7 +15,7 @@ import fastpg
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Coroutine
 
-    from faults import FaultProxy
+    from faults import DisposableServer, FaultProxy
 
 
 async def _settle(pool: fastpg.Pool) -> None:
@@ -171,3 +171,71 @@ async def test_pool_close_does_not_wait_for_a_stalled_connect(
         await pool.close()
     stats = pool.stats()
     assert (stats.size, stats.opening) == (0, 0)
+
+
+async def test_pool_recovers_once_the_server_answers_again(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    async with await fastpg.create_pool(proxied_dsn, min_size=1, max_size=2) as pool:
+        fault_proxy.stall()
+        for i in range(3):
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.2):
+                    await pool.select_one("SELECT $1::int", i)
+        # The abandoned statements keep their slots until the server is past them (there's
+        # no server-side cancel), and the connection opened meanwhile waits for its startup.
+        stats = pool.stats()
+        assert (stats.in_flight, stats.opening) == (3, 1)
+        fault_proxy.resume()
+        await _settle(pool)
+        async with asyncio.timeout(5):
+            assert await pool.select_one("SELECT 4") == (4,)
+        stats = pool.stats()
+        assert (stats.size, stats.in_flight, stats.waiting) == (2, 0, 0)
+
+
+async def test_stalled_tls_connection_recovers(
+    tls_proxied_dsn: str,
+    tls_fault_proxy: FaultProxy,
+) -> None:
+    async with await fastpg.connect(tls_proxied_dsn) as conn:
+        tls_fault_proxy.stall()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await conn.select_one("SELECT 1")
+        tls_fault_proxy.resume()
+        async with asyncio.timeout(5):
+            assert await conn.select_one("SELECT 2") == (2,)
+
+
+# --- a paused server (docker pause: TCP stays up, nothing answers) --------------------------
+
+
+@pytest.mark.timeout(60)
+async def test_paused_server(edge: DisposableServer) -> None:
+    async with (
+        await fastpg.connect(edge.dsn) as conn,
+        await fastpg.create_pool(edge.dsn, min_size=1, max_size=2) as pool,
+    ):
+        await edge.pause()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.3):
+                await conn.select_one("SELECT 1")
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.3):
+                await pool.select_one("SELECT 1")
+        # A new connection gets through TCP (Docker's port forwarder answers) but its
+        # startup waits: only connect_timeout bounds it.
+        start = time.monotonic()
+        with pytest.raises(fastpg.InterfaceError, match="timeout expired"):
+            await fastpg.connect(f"{edge.dsn}?connect_timeout=2")
+        assert time.monotonic() - start < 3
+        await edge.unpause()
+        async with asyncio.timeout(10):
+            assert await conn.select_one("SELECT 2") == (2,)
+            assert await pool.select_one("SELECT 3") == (3,)
+        await _settle(pool)
+        stats = pool.stats()
+        assert stats.size <= 2
+        assert (stats.in_flight, stats.waiting) == (0, 0)

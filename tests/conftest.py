@@ -175,6 +175,23 @@ def proxied_dsn(dsn: str, fault_proxy: FaultProxy) -> str:
     return with_params(fault_proxy.route(dsn), sslmode="disable")
 
 
+@pytest.fixture
+async def tls_fault_proxy(tls_server: tuple[str, Path]) -> AsyncIterator[FaultProxy]:
+    """A started `FaultProxy` to the TLS-only server."""
+    target = urlsplit(tls_server[0])
+    proxy = FaultProxy((target.hostname or "localhost", target.port or 5432))
+    await proxy.start()
+    yield proxy
+    await proxy.close()
+
+
+@pytest.fixture
+def tls_proxied_dsn(tls_server: tuple[str, Path], tls_fault_proxy: FaultProxy) -> str:
+    """The TLS server's DSN through `tls_fault_proxy`, encrypted but unverified (the proxy's
+    address isn't in the server's certificate)."""
+    return with_params(tls_fault_proxy.route(tls_server[0]), sslmode="require")
+
+
 @pytest.fixture(scope="session")
 def edge_server(container_password: str) -> Iterator[DisposableServer]:
     """A server of the network tests' own, which they pause, kill and restart: never the
