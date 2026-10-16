@@ -351,7 +351,16 @@ enum Target {
 /// Parse `dsn` into xitca's config and the TLS settings (which xitca never sees).
 pub fn config(dsn: &str) -> Result<(Config, TlsOptions), QueryError> {
     let (rest, tls) = tls::split_dsn(dsn)?;
-    Ok((Config::try_from(rest.as_ref())?, tls))
+    // Every key is known by now (`split_dsn` names an unknown one), and xitca's parse errors
+    // carry no detail at all ("WIP error type ...").
+    let cfg = Config::try_from(rest.as_ref()).map_err(|_| {
+        QueryError::Interface(
+            "invalid connection string: malformed, or an invalid port or \
+             target_session_attrs value"
+                .to_owned(),
+        )
+    })?;
+    Ok((cfg, tls))
 }
 
 /// The hosts of `dsn` as `("tcp" | "unix", host or directory/path, port)`, in connection

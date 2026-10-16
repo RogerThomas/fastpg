@@ -318,6 +318,18 @@ impl ServerCertVerifier for Verifier {
 
 // --- DSN -------------------------------------------------------------------------------
 
+/// The DSN keys xitca's parser accepts besides `sslmode` and `sslnegotiation` (taken here).
+const XITCA_KEYS: &[&str] = &[
+    "user",
+    "password",
+    "dbname",
+    "options",
+    "application_name",
+    "host",
+    "port",
+    "target_session_attrs",
+];
+
 /// TLS keys found in a DSN (last one wins, as in xitca's parser).
 #[derive(Default)]
 struct Raw {
@@ -329,6 +341,8 @@ struct Raw {
     sslcert: Option<String>,
     sslkey: Option<String>,
     sslpassword: Option<String>,
+    /// The first key neither fastpg nor xitca knows (xitca's own error for it says nothing).
+    unknown: Option<String>,
 }
 
 impl Raw {
@@ -343,13 +357,21 @@ impl Raw {
             "sslcert" => &mut self.sslcert,
             "sslkey" => &mut self.sslkey,
             "sslpassword" => &mut self.sslpassword,
-            _ => return false,
+            _ => {
+                if self.unknown.is_none() && !XITCA_KEYS.contains(&key) {
+                    self.unknown = Some(key.to_owned());
+                }
+                return false;
+            }
         };
         *slot = Some(value);
         true
     }
 
     fn into_options(self) -> Result<TlsOptions, QueryError> {
+        if let Some(key) = self.unknown {
+            return Err(interface(format!("unsupported connection option {key:?}")));
+        }
         if self.sslpassword.is_some() {
             return Err(interface(
                 "sslpassword is not supported (encrypted client keys); use an unencrypted key",
@@ -1057,6 +1079,23 @@ mod tests {
         assert_eq!(rest, "postgresql://u:p@db/x");
         assert_eq!(opts.mode, SslMode::Prefer, "libpq's default");
         assert!(Config::try_from(rest.as_str()).is_ok());
+    }
+
+    #[test]
+    fn unknown_keys_are_named() {
+        let unknown = "unsupported connection option \"keepalives\"";
+        assert_eq!(
+            error("postgresql://db/x?keepalives=1&sslmode=require"),
+            unknown
+        );
+        assert_eq!(error("host=db keepalives=1 user=u"), unknown);
+        let (rest, _) = split(
+            "postgresql://u@db/x?application_name=a&options=-c%20x%3D1&target_session_attrs=any",
+        );
+        assert!(
+            Config::try_from(rest.as_str()).is_ok(),
+            "xitca's own keys pass"
+        );
     }
 
     #[test]
