@@ -343,6 +343,20 @@ class _Queries:
         return await _writes.copy_in(self._native, self._loop, table, rows, columns)
 
 
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    """The event loop running on this thread, if any."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _close_dropped(native: NativeConnection, loop: asyncio.AbstractEventLoop) -> None:
+    """Close a connection garbage-collected while open; on its loop's thread."""
+    native.close()
+    loop.remove_reader(native.fileno())
+
+
 @dataclass(slots=True, eq=False)
 class Connection(_Queries):
     """A single PostgreSQL connection bound to the event loop it was opened on.
@@ -418,13 +432,19 @@ class Connection(_Queries):
         if self._released:
             return
         warnings.warn(f"unclosed fastpg connection {self!r}", ResourceWarning, stacklevel=1)
+        self._released = True
         if self._loop.is_closed():
             # No loop callback will finish a close: end the session and free the socket now.
-            self._released = True
             self._native.abandon()
-            return
-        self._native.close()
-        self._release()
+        elif _running_loop() is self._loop:
+            _close_dropped(self._native, self._loop)
+        else:
+            # E.g. the garbage collector ran on another thread: the close must run on the
+            # loop's (unregistering the mailbox from here would also lose its wake-up).
+            try:
+                self._loop.call_soon_threadsafe(_close_dropped, self._native, self._loop)
+            except RuntimeError:  # the loop closed in the meantime
+                self._native.abandon()
 
     async def __aenter__(self) -> Self:
         return self
