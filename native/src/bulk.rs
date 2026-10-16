@@ -1140,10 +1140,9 @@ impl DeadWatch {
             })
             .await;
         if finished.is_err() {
-            self.shared
-                .post(self.ready, Outcome::Failed(QueryError::Closed));
-            self.shared
-                .post(self.done, Outcome::Failed(QueryError::Closed));
+            let shared = &self.shared;
+            shared.post(self.ready, Outcome::Failed(shared.closed_error()));
+            shared.post(self.done, Outcome::Failed(shared.closed_error()));
         }
     }
 }

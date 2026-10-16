@@ -151,9 +151,22 @@ class FaultProxy:
             sink.write(data[start : start + size])
             await sink.drain()
             if cut is not None:
+                if cut:
+                    await self._drained(sink)
                 self.drop(rst=cut)
                 return False
         return True
+
+    async def _drained(self, sink: asyncio.StreamWriter) -> None:
+        """Wait until `sink`'s receiver has (most likely) read everything sent to it.
+
+        macOS drops an RST that arrives while the receiver's window is closed (its buffer
+        full), which leaves the receiver's socket open forever, as a lost RST on a real
+        network would: no client can notice that without TCP keepalives or a timeout.
+        """
+        while sink.transport.get_write_buffer_size():
+            await asyncio.sleep(0.001)
+        await asyncio.sleep(0.1)
 
     async def _write(
         self,

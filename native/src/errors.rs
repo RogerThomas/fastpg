@@ -30,7 +30,10 @@ pub enum QueryError {
     Pg(xitca_postgres::Error),
     NoRows,
     TooManyRows,
+    /// Closed by `close()`.
     Closed,
+    /// Ended by the server or the network, not by `close()`.
+    Lost,
     Parameter(String),
     Interface(String),
     /// A bulk write failed at this (0-based) row of the caller's input.
@@ -56,6 +59,11 @@ impl QueryError {
                 "query returned more than one row; use select_many() or add LIMIT 1",
             ),
             Self::Closed => py_err(py, "ConnectionClosedError", "connection is closed"),
+            Self::Lost => py_err(
+                py,
+                "ConnectionClosedError",
+                "connection lost: closed by the server or the network",
+            ),
             Self::Parameter(msg) => py_err(py, "ParameterError", msg),
             Self::Interface(msg) => py_err(py, "InterfaceError", msg),
             Self::Pg(e) => pg_error(py, &e),
