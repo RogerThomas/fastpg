@@ -8,8 +8,8 @@ fastpg is an early prototype, with these known gaps.
   opened it (which may run on any thread). Awaiting it from another loop raises asyncio's
   `RuntimeError` ("attached to a different loop"), but the statement has already been sent
   and still runs. A pool isn't thread-safe at all. In a child process after `fork()`, an
-  inherited connection raises `InterfaceError`, and closing or dropping it there leaves the
-  parent's session alone: open new connections (and pools) in the child.
+  inherited connection raises `InterfaceError`, and closing, terminating or dropping it there
+  leaves the parent's session alone: open new connections (and pools) in the child.
 * **Free-threaded CPython** (3.14t) isn't targeted: the extension declares
   `gil_used = true`, as it hasn't been audited for running without the GIL, so importing
   fastpg re-enables the GIL.
