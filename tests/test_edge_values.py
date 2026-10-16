@@ -319,7 +319,7 @@ async def test_numeric_digits_survive_exactly(
     query = "SELECT $1::text::numeric AS value"
     row = await conn.select_one(query, text, into=into, strategy=strategy)
     assert row.value.as_tuple() == Decimal(text).as_tuple()  # every digit, and the exponent
-    ((value,),) = [await conn.select_one("SELECT $1::text::numeric", text)]
+    (value,) = await conn.select_one("SELECT $1::text::numeric", text)
     assert value.as_tuple() == Decimal(text).as_tuple()
     assert await conn.select_one("SELECT $1::numeric::text", Decimal(text)) == (text,)
 
@@ -410,7 +410,7 @@ async def test_negative_zero_float8_keeps_its_sign(
 ) -> None:
     row = await conn.select_one("SELECT '-0'::float8 AS value", into=into, strategy=strategy)
     assert math.copysign(1, row.value) == -1
-    ((value,),) = [await conn.select_one("SELECT '-0'::float8")]
+    (value,) = await conn.select_one("SELECT '-0'::float8")
     assert math.copysign(1, value) == -1
 
 
