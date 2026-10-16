@@ -19,7 +19,8 @@ fastpg is an early prototype, with these known gaps.
 * **No pgbouncer** in transaction-pooling mode: statements are always prepared and named.
 * **No LISTEN/NOTIFY**, and no `COPY TO`.
 * **No server-side cancel**: a cancelled query keeps its connection busy until it finishes.
-  No connect timeout or backoff either.
+  Connecting is bounded only by libpq's `connect_timeout` DSN key (off by default), and a
+  pool retries a down database without backoff.
 * **Concurrent queries on one connection aren't ordered** with respect to each other: a
   statement that needs preparing can be overtaken by one that's prepared.
 * **TLS gaps**: see [TLS](guide/tls.md#not-supported).

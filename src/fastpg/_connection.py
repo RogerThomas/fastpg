@@ -12,7 +12,7 @@ import asyncio
 import os
 import socket
 import warnings
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 from fastpg import _writes
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Connection as NativeConnection
-from fastpg._native import after_fork_in_child, dsn_targets
+from fastpg._native import after_fork_in_child, dsn_connect_timeout, dsn_targets
 from fastpg._spec import Planner
 from fastpg._template import TemplateCompiler
 from fastpg.errors import (
@@ -76,6 +76,23 @@ _ALL = 2
 # In a fork()ed child, connections inherited from the parent share its sockets: they refuse
 # to run anything, and closing or dropping one leaves the parent's session alone.
 os.register_at_fork(after_in_child=after_fork_in_child)
+
+
+def cancelling() -> bool:
+    """Whether the running task is being cancelled (``asyncio.timeout``, ``Task.cancel()``).
+
+    Clean-up on the way out of a cancelled call (a rollback, a session reset) is then sent
+    but not waited for: the caller must not wait for a server that may be slow or not
+    answering at all, which is what the cancellation is often about.
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+def _forget(future: asyncio.Future[None]) -> None:
+    """Retrieve the outcome of a statement nobody awaits (else asyncio logs its error)."""
+    if not future.cancelled():
+        future.exception()
 
 
 @dataclass(slots=True, eq=False)
@@ -573,8 +590,22 @@ class Transaction(_Queries):
         self._session.execute_script(future, query)
         await future
 
+    def _send_rollback(self, query: str) -> None:
+        """Send a rollback without waiting for it: the connection runs it before anything
+        sent after it. A connection already closed has nothing left to roll back."""
+        future: asyncio.Future[None] = self._loop.create_future()
+        future.add_done_callback(_forget)
+        with suppress(FastPGError):
+            self._session.execute_script(future, query)
+
     async def _rollback(self, query: str, exc: BaseException) -> None:
-        """Run a rollback while ``exc`` propagates; a failure is noted on ``exc``, not raised."""
+        """Run a rollback while ``exc`` propagates; a failure is noted on ``exc``, not raised.
+
+        Not waited for when the caller is being cancelled (see `cancelling`).
+        """
+        if cancelling():
+            self._send_rollback(query)
+            return
         try:
             await self._script(query)
         except FastPGError as e:
@@ -769,10 +800,13 @@ async def _resolve(
 async def _open_socket(
     loop: asyncio.AbstractEventLoop,
     dsn: str,
-) -> tuple[socket.socket, str]:
+    timeout: float | None,
+) -> tuple[socket.socket, str, _Address, float | None]:
     """Connect the database socket from the loop (numeric hosts need no thread).
 
-    Returns the socket and the DSN host it reached (the TLS server name).
+    Returns the socket, the DSN host it reached (the TLS server name), its address, and the
+    deadline of the attempt: as in libpq, ``connect_timeout`` (`timeout`) applies to each
+    address tried, from its TCP connect to the end of the startup.
     """
     failures: list[str] = []
     for kind, host, port in dsn_targets(dsn):
@@ -790,13 +824,40 @@ async def _open_socket(
                 failures.append(str(e))
                 continue
         for family, address in candidates:
+            deadline = None if timeout is None else loop.time() + timeout
+            limit = asyncio.timeout_at(deadline)
             try:
-                return await _connect_candidate(loop, family, address), host
-            except OSError as e:
-                failures.append(str(e))
+                async with limit:
+                    sock = await _connect_candidate(loop, family, address)
+            except OSError as e:  # TimeoutError too
+                if limit.expired():
+                    expired = "timeout expired (connect_timeout)"
+                    failures.append(f"connect to {address!r} failed: {expired}")
+                else:
+                    failures.append(str(e))
+            else:
+                return sock, host, address, deadline
     reason = "; ".join(failures) or "no host to connect to"
     msg = f"could not connect to server: {reason}"
     raise InterfaceError(msg)
+
+
+async def _started(
+    connected: asyncio.Future[None],
+    deadline: float | None,
+    address: _Address,
+) -> None:
+    """Wait for the handshake (TLS, startup, authentication) until `deadline`."""
+    limit = asyncio.timeout_at(deadline)
+    try:
+        async with limit:
+            await connected
+    except TimeoutError:
+        if not limit.expired():
+            raise
+        expired = "timeout expired (connect_timeout)"
+        msg = f"could not connect to server: startup with {address!r} failed: {expired}"
+        raise InterfaceError(msg) from None
 
 
 def _detach_socket(loop: asyncio.AbstractEventLoop, sock: socket.socket) -> None:
@@ -816,11 +877,16 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     ``sslcert``/``sslkey``, ``sslsni`` and ``channel_binding`` (``prefer`` (the default),
     ``require``, ``disable``). Unix sockets never use TLS. See ``notes/tls.md``.
 
+    ``connect_timeout`` (seconds, as in libpq: 0 or absent waits indefinitely, 1 means 2)
+    bounds each address tried, from its TCP connect to the end of the startup; when it
+    expires, ``InterfaceError`` says so.
+
     The connection is bound to the running event loop, whose thread runs its protocol and
     waits on the database socket directly: no extra threads, and a query costs no thread
     hand-offs.
     """
     loop = asyncio.get_running_loop()
+    timeout = dsn_connect_timeout(dsn)
     native = NativeConnection(statement_cache_size)
     # Wakes the loop for the rare task woken from another thread (e.g. by a `__del__` there).
     fd = native.fileno()
@@ -828,7 +894,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     connected: asyncio.Future[None] = loop.create_future()
     closed: asyncio.Future[None] = loop.create_future()
     try:
-        sock, host = await _open_socket(loop, dsn)
+        sock, host, address, deadline = await _open_socket(loop, dsn, timeout)
         sfd = sock.fileno()
         # Registered first: attach() can fail at once (e.g. a TLS file is missing), and then
         # detaches (unregisters and closes) the socket before returning.
@@ -845,7 +911,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
             connected=connected,
             closed=closed,
         )
-        await connected
+        await _started(connected, deadline, address)
     except BaseException:
         native.close()  # once attached, the socket is detached and closed by native
         loop.remove_reader(fd)

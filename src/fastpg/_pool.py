@@ -46,6 +46,7 @@ from fastpg._connection import (
     IsolationLevel,
     Strategy,
     Transaction,
+    cancelling,
     connect,
 )
 from fastpg._named import NamedBinder, NamedParams
@@ -267,7 +268,12 @@ class Pool:
         repr=False,
         default_factory=dict[_Entry, None],
     )
-    _opening: int = field(init=False, repr=False, default=0)
+    _opening: set[asyncio.Task[Connection]] = field(
+        init=False,
+        repr=False,
+        default_factory=set[asyncio.Task[Connection]],
+    )
+    """Connections being opened (cancelled if the pool closes meanwhile)."""
     # Waiting shared statements, first come first served.
     _waiting: deque[_Waiter] = field(init=False, repr=False, default_factory=deque[_Waiter])
     # Shared statements in flight per connection, and the SQL texts' service times.
@@ -377,14 +383,13 @@ class Pool:
 
     def _grow(self) -> None:
         """Start opening one more connection, unless at max_size (rule 2)."""
-        if self._closing is None and len(self._entries) + self._opening < self.max_size:
-            self._opening += 1
-            self._spawn(
-                connect(self.dsn, statement_cache_size=self.statement_cache_size),
-            ).add_done_callback(self._opened)
+        if self._closing is None and len(self._entries) + len(self._opening) < self.max_size:
+            task = self._spawn(connect(self.dsn, statement_cache_size=self.statement_cache_size))
+            self._opening.add(task)
+            task.add_done_callback(self._opened)
 
     def _opened(self, task: asyncio.Task[Connection]) -> None:
-        self._opening -= 1
+        self._opening.discard(task)
         if task.cancelled():
             return
         error = task.exception()
@@ -409,7 +414,11 @@ class Pool:
         if not self._router.load(entry.slot):
             self._free_slot(entry)  # else once its last statement finishes
         self._spawn(entry.conn.close())
-        if len(self._entries) + self._opening < self.min_size or self._waiting or self._acquiring:
+        if (
+            len(self._entries) + len(self._opening) < self.min_size
+            or self._waiting
+            or self._acquiring
+        ):
             self._grow()
 
     def _expired(self, entry: _Entry) -> bool:
@@ -434,7 +443,7 @@ class Pool:
                 )
             ):
                 self._discard(entry)
-        if len(self._entries) + self._opening < self.min_size:
+        if len(self._entries) + len(self._opening) < self.min_size:
             self._grow()
 
     async def _maintain(self) -> None:
@@ -489,7 +498,7 @@ class Pool:
 
     def _rebalance(self) -> None:
         """Drain as many busy connections as acquire() waiters can't get otherwise."""
-        need = len(self._acquiring) - self._opening
+        need = len(self._acquiring) - len(self._opening)
         draining = [e for e in self._entries if e.state == _Entry.DRAINING]
         if need > len(draining):
             shared = [e for e in self._entries if e.state == _Entry.SHARED]
@@ -777,10 +786,21 @@ class Pool:
             self._router.touch(entry.slot)  # idle from now
         self._dispatch()
 
+    async def _give_back(self, entry: _Entry, *, reset: bool) -> None:
+        """``_release`` a checked-out connection, in the background if the caller is being
+        cancelled (see `cancelling`): the connection then stays out of rotation until its
+        reset is done, and the caller doesn't wait for a server that may not answer."""
+        if cancelling():
+            self._spawn(self._release(entry, reset=reset))
+        else:
+            await self._release(entry, reset=reset)
+
     # --- lifecycle ----------------------------------------------------------------------
 
     async def _shutdown(self) -> None:
         self._fail_waiters(ConnectionClosedError("pool is closed"))
+        for task in list(self._opening):  # unused now; one stalled by the server never ends
+            task.cancel()
         self._maintainer.cancel()
         with suppress(asyncio.CancelledError):
             await self._maintainer
@@ -811,7 +831,7 @@ class Pool:
         entries = self._entries
         return PoolStats(
             size=len(entries),
-            opening=self._opening,
+            opening=len(self._opening),
             idle=len(self._idle),
             acquired=sum(1 for e in entries if e.state == _Entry.EXCLUSIVE),
             in_flight=sum(self._load(e) for e in entries),
@@ -1007,7 +1027,7 @@ class Pool:
         try:
             yield entry.conn
         finally:
-            await self._release(entry, reset=True)
+            await self._give_back(entry, reset=True)
 
     @asynccontextmanager
     async def transaction(
@@ -1035,7 +1055,7 @@ class Pool:
                 yield tx
             clean = True
         finally:
-            await self._release(entry, reset=not clean)
+            await self._give_back(entry, reset=not clean)
 
     async def close(self) -> None:
         """Close gracefully: new calls and waiters fail with ConnectionClosedError, shared

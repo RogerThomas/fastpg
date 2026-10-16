@@ -107,6 +107,7 @@ known-slow queries on `acquire()` or a separate pool, set `statement_timeout`, a
   above `min_size` after `max_idle`, and tops the pool up to `min_size`.
 * `pool.close()` is graceful: new calls fail with `ConnectionClosedError`, queries already
   running complete, and connections taken with `acquire()` close when their block ends.
-* A cancelled query keeps running on the server, and its connection stays busy. There's no
-  connect timeout either: wrap calls in `asyncio.timeout(...)`.
+* A cancelled query keeps running on the server, and its connection stays busy. Wrap calls
+  in `asyncio.timeout(...)`, and put libpq's `connect_timeout` (seconds) in the DSN, or a
+  connection being opened to a database that doesn't answer waits indefinitely.
 * Each process and loop has its own pool: allow `processes × max_size` connections.

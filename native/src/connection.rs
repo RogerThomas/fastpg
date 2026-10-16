@@ -362,7 +362,16 @@ impl Shared {
         finished
     }
 
-    /// Run `op` unless (or until) the connection dies; then fail with `Closed`.
+    /// The error for an operation on a dead connection: closed by `close()`, or lost.
+    pub(crate) fn closed_error(&self) -> QueryError {
+        if self.closing.load(Ordering::SeqCst) {
+            QueryError::Closed
+        } else {
+            QueryError::Lost
+        }
+    }
+
+    /// Run `op` unless (or until) the connection dies; then fail (see `closed_error`).
     pub(crate) async fn unless_dead<T>(
         &self,
         op: impl Future<Output = Result<T, QueryError>>,
@@ -371,7 +380,7 @@ impl Shared {
         tokio::select! {
             biased;
             result = op => result,
-            _ = dead.wait_for(|dead| *dead) => Err(QueryError::Closed),
+            _ = dead.wait_for(|dead| *dead) => Err(self.closed_error()),
         }
     }
 
@@ -560,7 +569,7 @@ impl Connection {
             let host = (!unix).then_some(host.as_str());
             let handshake = async {
                 match net::config(&dsn) {
-                    Ok((cfg, tls)) => net::handshake(socket, cfg, &tls, host).await,
+                    Ok((cfg, options)) => net::handshake(socket, cfg, &options.tls, host).await,
                     Err(e) => Err(e),
                 }
             };
@@ -844,7 +853,7 @@ impl Connection {
         }
         self.shared
             .client()
-            .ok_or_else(|| QueryError::Closed.into_pyerr(py))
+            .ok_or_else(|| self.shared.closed_error().into_pyerr(py))
     }
 
     fn submit(

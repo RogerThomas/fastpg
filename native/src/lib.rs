@@ -46,6 +46,12 @@ fn dsn_targets(py: Python<'_>, dsn: &str) -> PyResult<Vec<(&'static str, String,
     net::targets(dsn).map_err(|e| e.into_pyerr(py))
 }
 
+/// libpq's `connect_timeout` of `dsn` in seconds (`None`: wait indefinitely); checks the DSN.
+#[pyfunction]
+fn dsn_connect_timeout(py: Python<'_>, dsn: &str) -> PyResult<Option<u32>> {
+    net::connect_timeout(dsn).map_err(|e| e.into_pyerr(py))
+}
+
 /// Keeps the GIL on free-threaded Python (`gil_used = true`; PyO3's default is `false`): this
 /// crate hasn't been audited for running without it, and a connection is bound to one event loop.
 #[pymodule(gil_used = true)]
@@ -58,6 +64,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rust_allocations, m)?)?;
     m.add_function(wrap_pyfunction!(dsn_targets, m)?)?;
     m.add_function(wrap_pyfunction!(connection::after_fork_in_child, m)?)?;
+    m.add_function(wrap_pyfunction!(dsn_connect_timeout, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
