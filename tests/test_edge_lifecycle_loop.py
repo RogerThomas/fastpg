@@ -65,6 +65,29 @@ async def _open_and_leave_open(dsn: str, holder: list[object]) -> None:
     holder.append(await fastpg.create_pool(dsn, min_size=2, max_size=2))
 
 
+async def _leave_a_query_in_flight(dsn: str, holder: list[object]) -> None:
+    """Open a connection and leave a query running on it (asyncio.run then cancels its task
+    when this returns)."""
+    conn = await fastpg.connect(dsn)
+    holder.append(asyncio.create_task(conn.select_one("SELECT pg_sleep(0.2)")))
+    holder.append(conn)
+    await asyncio.sleep(0.01)
+
+
+async def _leave_a_shared_query_in_flight(dsn: str, holder: list[object]) -> None:
+    """The same with a pool's shared query (cancelling it spawns the pool's ghost flush)."""
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1)
+    holder.append(asyncio.create_task(pool.select_one("SELECT pg_sleep(0.2)")))
+    holder.append(pool)
+    await asyncio.sleep(0.01)
+
+
+async def _wait_for_no_backends(dsn: str, name: str) -> None:
+    async with asyncio.timeout(5):
+        while await _backends(dsn, name):
+            await asyncio.sleep(0.05)
+
+
 async def _open_and_drop(dsn: str) -> None:
     conn = await fastpg.connect(dsn)
     await conn.select_one("SELECT 1")
@@ -198,6 +221,36 @@ def test_connections_left_open_when_the_loop_closes_release_everything(dsn: str)
         _drop_all(holder)
     assert _open_fds() == fds
     assert asyncio.run(_backends(dsn, name)) == 0
+
+
+def test_a_query_in_flight_when_the_loop_closes(dsn: str) -> None:
+    name = "edge_loop_closed_busy"
+    fds = _open_fds()
+    holder: list[object] = []
+    asyncio.run(_leave_a_query_in_flight(_tagged(dsn, name), holder))
+    with pytest.warns(ResourceWarning, match="unclosed fastpg connection"):
+        _drop_all(holder)
+    assert _open_fds() == fds
+    asyncio.run(_wait_for_no_backends(dsn, name))  # once its pg_sleep is over
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="open: a task pending when the loop closes, awaiting a native future, forms a "
+    "reference cycle through the native connection that the GC can't see (notes/"
+    "edge-cases-lifecycle.md, 'Uncollectable cycles through a native connection')",
+)
+def test_a_shared_query_in_flight_when_the_loop_closes(dsn: str) -> None:
+    # asyncio.run() cancels the query's task; the pool then spawns its ghost flush (a task
+    # awaiting a no-op on the connection), which asyncio.run never sees or cancels.
+    name = "edge_loop_closed_shared"
+    fds = _open_fds()
+    holder: list[object] = []
+    asyncio.run(_leave_a_shared_query_in_flight(_tagged(dsn, name), holder))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        _drop_all(holder)
+    assert _open_fds() == fds
 
 
 def test_a_loop_run_on_another_thread_keeps_serving_its_connection(dsn: str) -> None:
