@@ -18,12 +18,12 @@ if TYPE_CHECKING:
     ("dsn", "message"),
     [
         (
-            "postgresql://fastpg@127.0.0.1:1/fastpg?keepalives=1",
-            'unsupported connection option "keepalives"',
+            "postgresql://fastpg@127.0.0.1:1/fastpg?gssencmode=disable",
+            'unsupported connection option "gssencmode"',
         ),
         (
-            "host=127.0.0.1 tcp_user_timeout=1000",
-            'unsupported connection option "tcp_user_timeout"',
+            "host=127.0.0.1 tcp_user_timeout=x",
+            'invalid integer value "x" for connection option "tcp_user_timeout"',
         ),
         ("host=127.0.0.1 port=x", "invalid connection string"),
         (
