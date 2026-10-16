@@ -70,12 +70,37 @@ enum Target {
     None,
     Tuple,
     Struct(Py<StructSpec>),
-    /// Rows encoded for a validating decoder. The names are the columns that feed `str`
-    /// fields: a json/jsonb value there is encoded as its text (ADR 0003).
-    Msgpack(Vec<String>),
+    /// Rows encoded for a validating decoder.
+    Msgpack(EncodedFields),
     /// As `Msgpack`; the flag: the decoder takes `NaN`/`Infinity` tokens (pydantic does,
     /// msgspec doesn't).
-    Json(Vec<String>, bool),
+    Json(EncodedFields, bool),
+}
+
+/// What the msgpack and JSON routes know of the target type's fields.
+struct EncodedFields {
+    /// The columns that feed `str` fields: a json/jsonb value there is encoded as its text
+    /// (ADR 0003).
+    text_columns: Vec<String>,
+    /// The column name of every field. One appearing twice in a result raises
+    /// `TypeMismatchError`, as in direct construction: a decoder would keep one of the
+    /// values and silently drop the other.
+    field_columns: Vec<String>,
+}
+
+impl EncodedFields {
+    fn check_distinct(&self, py: Python<'_>, names: &[&str]) -> PyResult<()> {
+        for (i, name) in names.iter().enumerate() {
+            if self.field_columns.iter().any(|f| f == name) && names[..i].contains(name) {
+                return Err(py_err(
+                    py,
+                    "TypeMismatchError",
+                    format!("column {name:?} appears more than once in the result"),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -530,7 +555,9 @@ impl Connection {
         )
     }
 
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new()))]
+    /// `text_columns`: the columns feeding `str` fields; `field_columns`: every field's
+    /// column (see [`EncodedFields`]).
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new()))]
     fn fetch_msgpack(
         &self,
         future: Py<PyAny>,
@@ -538,19 +565,25 @@ impl Connection {
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
+        field_columns: Vec<String>,
     ) -> PyResult<()> {
+        let fields = EncodedFields {
+            text_columns,
+            field_columns,
+        };
         self.submit(
             future,
             query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
-            Target::Msgpack(text_columns),
+            Target::Msgpack(fields),
         )
     }
 
-    /// `non_finite_floats`: the decoder takes `NaN`/`Infinity` tokens; otherwise a non-finite
-    /// float4/float8 value fails the query with a `DecodeError`.
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), *, non_finite_floats = true))]
+    /// As `fetch_msgpack`. `non_finite_floats`: the decoder takes `NaN`/`Infinity` tokens;
+    /// otherwise a non-finite float4/float8 value fails the query with a `DecodeError`.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new(), *, non_finite_floats = true))]
     fn fetch_json(
         &self,
         future: Py<PyAny>,
@@ -558,14 +591,19 @@ impl Connection {
         params: &Bound<'_, PyTuple>,
         shape: u8,
         text_columns: Vec<String>,
+        field_columns: Vec<String>,
         non_finite_floats: bool,
     ) -> PyResult<()> {
+        let fields = EncodedFields {
+            text_columns,
+            field_columns,
+        };
         self.submit(
             future,
             query,
             params,
             Op::Fetch(Shape::from_code(shape)?),
-            Target::Json(text_columns, non_finite_floats),
+            Target::Json(fields, non_finite_floats),
         )
     }
 
@@ -1018,7 +1056,15 @@ fn materialize_rows<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     match &request.target {
         Target::None => Ok(py.None().into_bound(py)),
-        target @ (Target::Msgpack(text_columns) | Target::Json(text_columns, _)) => {
+        target @ (Target::Msgpack(fields) | Target::Json(fields, _)) => {
+            let names: Vec<&str> = stmt
+                .statement()
+                .columns()
+                .iter()
+                .map(|c| c.name())
+                .collect();
+            // Even for an empty result, as direct construction's binding does.
+            fields.check_distinct(py, &names)?;
             let single = shape != Shape::All;
             if single && rows.nrows() == 0 {
                 return Ok(py.None().into_bound(py));
@@ -1026,18 +1072,12 @@ fn materialize_rows<'py>(
             let codecs = stmt
                 .codecs()
                 .map_err(|m| py_err(py, "UnsupportedTypeError", m))?;
-            let names: Vec<&str> = stmt
-                .statement()
-                .columns()
-                .iter()
-                .map(|c| c.name())
-                .collect();
             let as_text: Vec<bool> = names
                 .iter()
                 .zip(codecs.iter())
                 .map(|(name, codec)| {
                     matches!(codec, decode::Codec::Json | decode::Codec::Jsonb)
-                        && text_columns.iter().any(|t| t == name)
+                        && fields.text_columns.iter().any(|t| t == name)
                 })
                 .collect();
             let encoded = match target {

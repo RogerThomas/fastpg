@@ -87,6 +87,9 @@ class Plan[T]:
     text_columns: tuple[str, ...]
     """Columns feeding `str` fields: the msgpack/json routes encode a json/jsonb value there
     as its text, which is what direct construction gives such a field (ADR 0003)."""
+    field_columns: tuple[str, ...]
+    """The column of every field: the msgpack/json routes refuse a result naming one twice,
+    as direct construction does (a decoder would keep one value and drop the other)."""
 
 
 class StructPlanner:
@@ -279,6 +282,7 @@ class StructPlanner:
             # Its base class: malformed input becomes a fastpg error too.
             validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
+            field_columns=tuple(f.encode_name for f in info.fields),
         )
 
     @classmethod
@@ -324,6 +328,7 @@ class StructPlanner:
             json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
+            field_columns=(),
         )
 
 
@@ -356,6 +361,7 @@ class Planner:
             json_non_finite_floats=False,
             validation_error=msgspec.ValidationError,
             text_columns=(),
+            field_columns=(),
         )
 
     @staticmethod

@@ -185,6 +185,8 @@ class ModelPlanner:
             for name, info in model.model_fields.items()
             if cls._is_str(info.annotation) and (alias := cls.write_alias(name, info)) is not None
         )
+        aliases = (cls.write_alias(name, info) for name, info in model.model_fields.items())
+        field_columns = tuple(alias for alias in aliases if alias is not None)
         return Plan(
             spec=spec,
             direct_error=direct_error,
@@ -198,4 +200,5 @@ class ModelPlanner:
             json_non_finite_floats=True,
             validation_error=ValidationError,
             text_columns=text_columns,
+            field_columns=field_columns,
         )
