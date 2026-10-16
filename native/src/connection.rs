@@ -412,7 +412,7 @@ impl Connection {
     #[pyo3(signature = (statement_cache_size = 256))]
     fn new(statement_cache_size: usize) -> PyResult<Self> {
         let mailbox = Mailbox::new()?;
-        let exec = event_loop::Executor::new(mailbox.poker()?, std::thread::current().id());
+        let exec = event_loop::Executor::new(mailbox.poker()?);
         Ok(Self {
             shared: Arc::new(Shared {
                 mailbox,
@@ -521,18 +521,21 @@ impl Connection {
     /// The socket is readable (`loop.add_reader` callback).
     fn on_readable(&self, py: Python<'_>) {
         self.shared.readiness.on_readable();
+        self.shared.exec.rehome();
         self.shared.pump(py);
     }
 
     /// The socket is writable (`loop.add_writer` callback).
     fn on_writable(&self, py: Python<'_>) {
         self.shared.readiness.on_writable();
+        self.shared.exec.rehome();
         self.shared.pump(py);
     }
 
     /// Write the queries queued since the flush was scheduled (`loop.call_soon` callback;
     /// see `Shared::pump`).
     fn flush(&self, py: Python<'_>) {
+        self.shared.exec.rehome();
         self.shared.flush(py);
     }
 
@@ -718,6 +721,7 @@ impl Connection {
     /// Run the tasks woken from another thread and resolve what completed: the loop's
     /// `add_reader` callback for `fileno()`.
     fn drain(&self, py: Python<'_>) {
+        self.shared.exec.rehome();
         self.shared.pump(py);
     }
 

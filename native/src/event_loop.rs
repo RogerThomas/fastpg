@@ -22,10 +22,9 @@ use std::net::Shutdown;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Wake, Waker};
-use std::thread::{self, ThreadId};
 
 use xitca_io::io::{AsyncIo, Interest, Ready};
 
@@ -33,10 +32,22 @@ use crate::mailbox::Poker;
 
 type Task = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
+/// A number for the current thread, cheaper to read and compare than `thread::current().id()`
+/// (and storable in an atomic; `ThreadId::as_u64` is unstable).
+fn thread_key() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    thread_local! {
+        static KEY: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    KEY.with(|key| *key)
+}
+
 /// Task ids woken since the last run, plus how to wake the loop from another thread.
 struct ReadyQueue {
     queue: Mutex<VecDeque<usize>>,
-    loop_thread: ThreadId,
+    /// The `thread_key` of the thread running the loop: where the connection was created,
+    /// then wherever the loop last called back (see `Executor::rehome`).
+    loop_thread: AtomicU64,
     /// Wakes the loop through the connection's mailbox (see `mailbox.rs`).
     poke: Poker,
 }
@@ -47,7 +58,7 @@ impl ReadyQueue {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(id);
-        if thread::current().id() != self.loop_thread {
+        if thread_key() != self.loop_thread.load(Ordering::Acquire) {
             // Off-thread wake: make the loop call `drain()`, which runs the executor.
             self.poke.poke();
         }
@@ -87,13 +98,13 @@ pub struct Executor {
 }
 
 impl Executor {
-    /// `poke` wakes the connection's mailbox; `loop_thread` is the asyncio thread.
-    pub fn new(poke: Poker, loop_thread: ThreadId) -> Self {
+    /// Create it on the asyncio loop's thread; `poke` wakes the connection's mailbox.
+    pub fn new(poke: Poker) -> Self {
         Self {
             slots: Mutex::new(Vec::new()),
             ready: Arc::new(ReadyQueue {
                 queue: Mutex::new(VecDeque::new()),
-                loop_thread,
+                loop_thread: AtomicU64::new(thread_key()),
                 poke,
             }),
             running: AtomicBool::new(false),
@@ -101,7 +112,18 @@ impl Executor {
     }
 
     pub fn on_loop_thread(&self) -> bool {
-        thread::current().id() == self.ready.loop_thread
+        thread_key() == self.ready.loop_thread.load(Ordering::Acquire)
+    }
+
+    /// Note that the loop runs on the current thread: call it from the loop's own callbacks
+    /// (readiness, `call_soon`), which only ever run there. A loop may be run from another
+    /// thread than the one it ran on when the connection was opened; without this, every
+    /// poll would be left to a `drain()` that never polls (it would think itself off-thread),
+    /// and the loop would spin on the mailbox.
+    pub fn rehome(&self) {
+        self.ready
+            .loop_thread
+            .store(thread_key(), Ordering::Release);
     }
 
     /// Whether a task was woken since the last `run()` (e.g. by a drop during `drain`).
@@ -391,13 +413,14 @@ impl AsyncIo for LoopSocket {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
+    use std::thread;
 
     use super::*;
 
     #[test]
     fn executor_runs_tasks_to_completion_and_reuses_slots() {
         let mailbox = crate::mailbox::Mailbox::<()>::new().unwrap();
-        let exec = Executor::new(mailbox.poker().unwrap(), thread::current().id());
+        let exec = Executor::new(mailbox.poker().unwrap());
         let count = Arc::new(AtomicUsize::new(0));
         for _ in 0..3 {
             let count = count.clone();
@@ -487,7 +510,7 @@ mod tests {
     #[test]
     fn off_thread_wake_pokes_the_mailbox() {
         let mailbox = crate::mailbox::Mailbox::<()>::new().unwrap();
-        let exec = Executor::new(mailbox.poker().unwrap(), thread::current().id());
+        let exec = Executor::new(mailbox.poker().unwrap());
         let (tx, rx_watch) = tokio::sync::watch::channel(false);
         let mut rx_watch = rx_watch;
         exec.spawn(async move {
@@ -500,5 +523,23 @@ mod tests {
         mailbox.take_into(&mut sink);
         exec.run();
         assert!(exec.slots.lock().unwrap().iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn rehome_moves_the_loop_thread() {
+        let mailbox = crate::mailbox::Mailbox::<()>::new().unwrap();
+        let exec = Arc::new(Executor::new(mailbox.poker().unwrap()));
+        assert!(exec.on_loop_thread());
+        let moved = exec.clone();
+        let (elsewhere, rehomed) = thread::spawn(move || {
+            let elsewhere = moved.on_loop_thread();
+            moved.rehome();
+            (elsewhere, moved.on_loop_thread())
+        })
+        .join()
+        .unwrap();
+        assert!(!elsewhere);
+        assert!(rehomed);
+        assert!(!exec.on_loop_thread());
     }
 }
