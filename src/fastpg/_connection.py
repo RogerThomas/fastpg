@@ -367,7 +367,9 @@ class Connection(_Queries):
 
     async def _close(self) -> None:
         self._native.close()
-        await self._closed
+        # Shielded: a close() cancelled while it waits (e.g. by asyncio.timeout on a server
+        # that stopped answering) must not cancel `_closed`, which later closes await too.
+        await asyncio.shield(self._closed)
         self._release()
 
     @property
