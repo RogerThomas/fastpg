@@ -16,6 +16,7 @@
 mod alloc_stats;
 mod auth;
 mod bulk;
+mod cancel;
 mod connection;
 mod decode;
 mod errors;
@@ -61,6 +62,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<structs::StructSpec>()?;
     m.add_class::<bulk::RowReader>()?;
     m.add_class::<bulk::Bulk>()?;
+    m.add_class::<cancel::Cancel>()?;
     m.add_class::<router::Router>()?;
     m.add_class::<tls::SocketOptions>()?;
     m.add_function(wrap_pyfunction!(rust_allocations, m)?)?;

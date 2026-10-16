@@ -1146,6 +1146,10 @@ impl DeadWatch {
 async fn execute_many_task(mut task: Task, statements: Statements) {
     let shared = task.shared.clone();
     let _gate = shared.gate.write().await;
+    // Nothing is sent while a cancel is in progress, and the call can be cancelled itself
+    // (see `cancel.rs`): it is alone on the wire while it holds the gate.
+    shared.cancels.settled().await;
+    let _flight = shared.in_flight(&task.done);
     let client = task.client.clone();
 
     // One round trip: transaction probe + prepare (fresh statements per call, so a stale
@@ -1308,6 +1312,8 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
     }
 
     drop(collecting);
+    // An aborted call may have been cancelled on the server: its clean-up must not be.
+    shared.cancels.settled().await;
     // Undo whatever didn't commit. A COMMIT in an aborted transaction already rolled back.
     let cleanup = match (began, in_txn) {
         (true, false) if !ended => Some("ROLLBACK"),
@@ -1405,6 +1411,9 @@ async fn next_copy_message(
 async fn copy_in_task(mut task: Task, table: String, columns: Option<Vec<String>>) {
     let shared = task.shared.clone();
     let _gate = shared.gate.write().await;
+    // As in `execute_many_task`.
+    shared.cancels.settled().await;
+    let _flight = shared.in_flight(&task.done);
     let client = task.client.clone();
 
     let select_list = match &columns {
@@ -1577,6 +1586,8 @@ async fn copy_in_task(mut task: Task, table: String, columns: Option<Vec<String>
         }
     }
     if in_txn && stream.is_some() && (failed || aborted) {
+        // An aborted COPY may have been cancelled on the server: its clean-up must not be.
+        shared.cancels.settled().await;
         let _ = ROLLBACK_TO.execute(&*client).await;
     }
     task.drain_input();

@@ -26,7 +26,7 @@ use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::task::{Context, Poll};
 
 use tokio::sync::Notify;
@@ -59,8 +59,8 @@ struct Tap {
 }
 
 /// Signals from the socket wrapper: server EOF, how many bytes were written so far (COPY uses
-/// that for backpressure, since xitca's write buffer is not observable), and the response
-/// cycles a bulk write collects.
+/// that for backpressure, since xitca's write buffer is not observable), the response cycles
+/// a bulk write collects, and the session's cancel key.
 #[derive(Default)]
 pub struct IoWatch {
     pub eof: Notify,
@@ -71,9 +71,24 @@ pub struct IoWatch {
     started: AtomicBool,
     collecting: AtomicBool,
     tap: Mutex<Tap>,
+    /// The process id and secret key of the server's `BackendKeyData`, read as the startup
+    /// passes through (xitca keeps its copy private): what a CancelRequest names.
+    key: OnceLock<(i32, i32)>,
+    /// The session runs over TLS.
+    encrypted: bool,
 }
 
 impl IoWatch {
+    /// The session's `BackendKeyData`: process id and secret key (none from a server that
+    /// sent none, or a key longer than protocol 3.0's 4 bytes).
+    pub fn backend_key(&self) -> Option<(i32, i32)> {
+        self.key.get().copied()
+    }
+
+    pub fn encrypted(&self) -> bool {
+        self.encrypted
+    }
+
     /// Bytes written to the socket so far.
     pub fn written(&self) -> u64 {
         self.written.load(Ordering::Acquire)
@@ -162,7 +177,7 @@ fn affected_rows(body: &[u8]) -> u64 {
 /// Follows the message framing of everything read from the server (always: it is cheap, a
 /// header per message, and so it is at a message boundary whenever a bulk write starts
 /// collecting), and reports to [`IoWatch::record`] the complete messages of the cycles that
-/// began while it collects.
+/// began while it collects. It also keeps the `BackendKeyData` of the startup.
 ///
 /// Whether a cycle is reported is decided once, when its first non-asynchronous message
 /// arrives: a cycle already under way when collecting starts is never reported, however
@@ -180,6 +195,7 @@ struct Framer {
     began_collecting: bool,
     /// The current message is reported: its cycle began while collecting, and still is.
     reporting: bool,
+    /// The body of a reported `CommandComplete`, or of a `BackendKeyData`.
     body: Vec<u8>,
     /// The stream didn't parse as messages: stop following it (xitca fails too).
     lost: bool,
@@ -207,7 +223,8 @@ impl Framer {
                 self.start_message(watch);
             }
             let take = self.remaining.min(data.len());
-            if self.reporting && self.header[0] == b'C' {
+            let tag = self.header[0];
+            if (self.reporting && tag == b'C') || tag == b'K' {
                 self.body.extend_from_slice(&data[..take]);
             }
             self.remaining -= take;
@@ -236,6 +253,12 @@ impl Framer {
         self.header_len = 0;
         if self.reporting && matches!(tag, b'C' | b'I' | b'E' | b'Z') {
             watch.record(tag, self.first, &self.body);
+        }
+        if tag == b'K'
+            && let Ok([p0, p1, p2, p3, k0, k1, k2, k3]) = <[u8; 8]>::try_from(self.body.as_slice())
+        {
+            let pid = i32::from_be_bytes([p0, p1, p2, p3]);
+            let _ = watch.key.set((pid, i32::from_be_bytes([k0, k1, k2, k3])));
         }
         if tag == b'Z' {
             self.first = None;
@@ -522,17 +545,21 @@ async fn login<Io: AsyncIo + Send + 'static>(
     encrypted: bool,
 ) -> Result<(Client, Driver, Arc<IoWatch>), QueryError> {
     if binding == ChannelBinding::Prefer {
-        return startup(io, cfg).await;
+        return startup(io, cfg, encrypted).await;
     }
     let io = auth::authenticate(io, &cfg, binding, encrypted).await?;
-    startup(io, cfg).await
+    startup(io, cfg, encrypted).await
 }
 
 async fn startup<Io: AsyncIo + Send + 'static>(
     io: Io,
     cfg: Config,
+    encrypted: bool,
 ) -> Result<(Client, Driver, Arc<IoWatch>), QueryError> {
-    let eof = Arc::new(IoWatch::default());
+    let eof = Arc::new(IoWatch {
+        encrypted,
+        ..IoWatch::default()
+    });
     let watched = EofWatch {
         io,
         eof: eof.clone(),
@@ -674,6 +701,29 @@ mod tests {
         let next = [complete("ROLLBACK"), ready()].concat();
         framer.feed(&next, &watch);
         assert_eq!(watch.take_cycle().map(|c| c.completed), Some(1));
+    }
+
+    #[test]
+    fn framer_keeps_the_backend_key_however_the_startup_is_split() {
+        let startup = [
+            message(b'R', b"\0\0\0\0"), // AuthenticationOk
+            message(b'S', b"server_version\x0018\0"),
+            message(b'K', &[0, 0, 0x30, 0x39, 0xde, 0xad, 0xbe, 0xef]),
+            ready(),
+        ]
+        .concat();
+        for piece in [1, 2, 3, 7, 4096] {
+            let watch = IoWatch::default();
+            let mut framer = Framer::default();
+            feed(&mut framer, &watch, &startup, piece);
+            let key = Some((12345, i32::from_be_bytes([0xde, 0xad, 0xbe, 0xef])));
+            assert_eq!(watch.backend_key(), key, "piece {piece}");
+        }
+        // A protocol 3.2 key (longer than 4 bytes) can't go in a 16-byte request: none kept.
+        let watch = IoWatch::default();
+        let mut framer = Framer::default();
+        framer.feed(&message(b'K', &[0; 36]), &watch);
+        assert_eq!(watch.backend_key(), None);
     }
 
     #[test]
