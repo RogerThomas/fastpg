@@ -42,7 +42,7 @@ an RST. In production this is the "lost RST" case below (half-open connection).
 | 2e | | `close()` (and so `async with` exit, `pool.close()`) waits for the server's EOF after Terminate: forever on a stalled or partitioned server | yes | **open** (design below) | `test_close_completes_after_...` (documents it) |
 | 3 | RST / FIN mid `select_many`, COPY, `execute_many`, transaction | fails at once with `ConnectionClosedError`; connection closed; nothing of the write committed; a pool replaces the connection | message only | yes (306de25): it said "connection is closed", as after the caller's own `close()`; now "connection lost: closed by the server or the network" | `test_network_drop.py` |
 | 4 | `docker restart` / `kill` / `stop`, `pg_terminate_backend` | statements in flight fail at once (57P01 `OperationalError`, or `ConnectionClosedError` after a kill); a pool recovers by itself, 0.27 s after `docker restart` began, 0.1 s after `docker start` returned; terminating every idle session at once is absorbed | no | - | `test_network_server.py`, plus existing `test_pool.py` / `test_connection.py` / `test_tls.py` terminate tests |
-| 5 | database down / refusing / unreachable | refused: every statement fails at once with its own connect attempt (no backoff); unreachable (SYNs dropped): connect waited for the OS (75 s on macOS); accepts TCP but never answers the startup: waited forever | yes | `connect_timeout` added (69c3bda); unknown DSN keys now named (7e8214c); backoff **open** | `test_network_connect.py` |
+| 5 | database down / refusing / unreachable | refused: every statement fails at once with its own connect attempt (no backoff); unreachable (SYNs dropped): connect waited for the OS (75 s on macOS); accepts TCP but never answers the startup: waited forever | yes | `connect_timeout` added (69c3bda); unknown DSN keys now named (7e8214c); one connect per waiting statement (bac365b); backoff **open** | `test_network_connect.py` |
 | 6 | `pg_sleep`, lock waits, `statement_timeout` | timeout returns on time; the statement runs on server-side and its connection stays busy; a cancelled UPDATE waiting on a lock still commits when the lock is released; `statement_timeout` from the DSN raises `QueryCanceledError` and the pool keeps the connection; the pool routes around a busy connection | no (known: no server-side cancel) | cancel **open** | `test_network_slow.py` |
 | 7 | 1- and 7-byte fragments (plain, and TLS records byte by byte) | correct: startup, rows across chunks, structs, 20 kB values, errors, pipelining, `execute_many`, COPY, transactions | no | - | `test_responses_in_tiny_fragments`, `test_tls_records_in_one_byte_fragments` |
 | 8 | TLS variants | stall + recovery, 1-byte records, pool replacing a terminated busy TLS session; cut without close_notify and terminate were already covered by `test_tls.py` | no | - | `test_stalled_tls_connection_recovers`, `test_pool_replaces_a_terminated_busy_tls_connection` |
@@ -201,21 +201,22 @@ Implemented:
   xitca parse failure says `invalid connection string: malformed, or an invalid port or
   target_session_attrs value`.
 
-Open: **no backoff.** With nothing open (all connections dead, or `min_size=0`), every
-statement starts a connect and fails with it: against a refusing database, 20 statements
-made 40 connect attempts in under 2 s, i.e. a reconnect storm at the request rate when
-the database comes back. Two per statement: `_route` grows the pool for a statement that
-must wait, and `_wait`'s `_dispatch` grows it again. Proposed:
+* **One connect attempt per waiting statement** (bac365b): `_route` no longer grows the
+  pool for a statement it can't place, since the statement waits and its dispatch grows it.
+  Against a refusing database, 20 statements in a row made 40 connect attempts, now 20;
+  10 concurrent ones make at most 10 (and at most `max_size`), each failing with a connect
+  error. `acquire()` already made one. A saturated pool grows as fast as before: from 1 to
+  16 connections under 256 tasks took 13.7-24.0 ms (median 16.0) before, 13.3-22.1 ms
+  (median 18.8) after, i.e. noise, since it mostly grows on the pipelining path, which is
+  unchanged.
 
-1. grow once per waiting statement: `_route` doesn't call `_grow()` when it returns None
-   (the waiting statement's dispatch does). This changes how fast a saturated pool grows
-   (one connection per waiting statement instead of two), which `notes/pool.md` measured,
-   so it should be re-benchmarked rather than changed here;
-2. after a failed connect, no new connect for `min(0.1 s * 2^failures, 10 s)` (with
-   jitter); meanwhile, a statement that finds no usable connection fails at once with the
-   last connect error, and `_tidy` retries when the backoff ends; a success resets it.
-   With `connect_timeout`, an unreachable database then costs one bounded wait per backoff
-   step instead of one per statement.
+Open (optional): **no backoff.** With nothing open (all connections dead, or `min_size=0`),
+every statement starts a connect and fails with it: a reconnect storm at the request rate
+when the database comes back. A possible design: after a failed connect, no new connect for
+`min(0.1 s * 2^failures, 10 s)` (with jitter); meanwhile, a statement that finds no usable
+connection fails at once with the last connect error, and `_tidy` retries when the backoff
+ends; a success resets it. With `connect_timeout`, an unreachable database then costs one
+bounded wait per backoff step instead of one per statement.
 
 When the database refuses new connections but some are open, growth failures are dropped
 quietly and the open connections keep serving (pipelined).
