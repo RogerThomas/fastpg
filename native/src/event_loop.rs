@@ -171,9 +171,10 @@ impl Executor {
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front();
             let Some(id) = id else { break };
+            // `get_mut`: a waker can outlive its slot (see `clear`).
             let taken = {
                 let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-                slots[id].as_mut().and_then(|slot| {
+                slots.get_mut(id).and_then(Option::as_mut).and_then(|slot| {
                     slot.waker.queued.store(false, Ordering::Release);
                     slot.task.take().map(|task| (task, slot.waker.clone()))
                 })
@@ -187,13 +188,32 @@ impl Executor {
                 .poll(&mut Context::from_waker(&std_waker))
                 .is_ready();
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-            if done {
-                slots[id] = None;
-            } else if let Some(slot) = slots[id].as_mut() {
-                slot.task = Some(task);
+            if let Some(slot) = slots.get_mut(id) {
+                if done {
+                    *slot = None;
+                } else if let Some(slot) = slot.as_mut() {
+                    slot.task = Some(task);
+                }
             }
         }
         self.running.store(false, Ordering::Release);
+    }
+
+    /// Drop every task unpolled: for a connection whose loop is gone, so nothing would poll
+    /// them again (and they hold the connection's shared state, which holds them). Does
+    /// nothing during a `run()`. The tasks are dropped after the lock is released, since
+    /// dropping one releases Python objects, whose finalizers may spawn work.
+    pub fn clear(&self) {
+        if self.running.load(Ordering::Acquire) {
+            return;
+        }
+        let tasks = std::mem::take(&mut *self.slots.lock().unwrap_or_else(PoisonError::into_inner));
+        self.ready
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        drop(tasks);
     }
 }
 

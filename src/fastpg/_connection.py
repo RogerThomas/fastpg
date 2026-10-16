@@ -415,10 +415,16 @@ class Connection(_Queries):
         await self._close()
 
     def __del__(self) -> None:
-        if not self._released:
-            warnings.warn(f"unclosed fastpg connection {self!r}", ResourceWarning, stacklevel=1)
-            self._native.close()
-            self._release()
+        if self._released:
+            return
+        warnings.warn(f"unclosed fastpg connection {self!r}", ResourceWarning, stacklevel=1)
+        if self._loop.is_closed():
+            # No loop callback will finish a close: end the session and free the socket now.
+            self._released = True
+            self._native.abandon()
+            return
+        self._native.close()
+        self._release()
 
     async def __aenter__(self) -> Self:
         return self

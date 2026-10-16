@@ -549,6 +549,20 @@ impl Connection {
         self.shared.pump(py);
     }
 
+    /// Close at once, for a connection whose event loop is closed (`__del__` after the loop
+    /// is gone): no callback will run its tasks again, and they hold its shared state (its
+    /// descriptors included), which holds them. A Terminate is written if the socket takes
+    /// it right away; then the tasks are dropped unpolled and the socket is closed.
+    fn abandon(&self, py: Python<'_>) {
+        self.shared.closing.store(true, Ordering::SeqCst);
+        self.shared.abort_connect.notify_one();
+        self.shared.shutdown();
+        self.shared.pump(py);
+        self.shared.dead.send_replace(true);
+        self.shared.exec.clear();
+        self.shared.sync_hooks(py, true);
+    }
+
     #[pyo3(signature = (future, query, params, shape, spec = None))]
     fn fetch(
         &self,
