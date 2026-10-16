@@ -41,7 +41,8 @@ def _drop(writer: asyncio.StreamWriter, *, rst: bool) -> None:
         return
     if rst:
         sock = writer.get_extra_info("socket")
-        if sock is not None:
+        # EINVAL on macOS once the peer has reset the connection: nothing left to reset.
+        with contextlib.suppress(OSError):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
     writer.transport.abort()
 
