@@ -13,6 +13,11 @@ Every call is atomic: on an error, or if the awaiting task is cancelled before t
 chunk was handed over, nothing is written, and a transaction opened by the caller is left
 as it was (the rows run inside a savepoint). Errors carry `row_index`, the 0-based index of
 the failing input row, when it is known.
+
+A call cancelled before its last chunk was handed over is also cancelled on the server (it
+is alone on its connection, which it holds exclusively), so a chunk waiting there, e.g. for
+a row lock, doesn't hold up the rollback. Once the last chunk is handed over, the call
+commits even if its caller is cancelled, as before: a cancel could land on the COMMIT.
 """
 
 import asyncio
@@ -44,6 +49,10 @@ type _Fields = tuple[tuple[str, str | None], ...]
 
 type _Starter = Callable[[asyncio.Future[None], asyncio.Future[int | None]], Bulk]
 """Starts the native operation, given its `ready` and `done` futures."""
+
+type _Abandon = Callable[[asyncio.Future[Any]], None]
+"""Cancels the operation whose result future it is given on the server, if it is alone in
+flight on its connection (`_Canceller.abandon`)."""
 
 
 class BulkSettings:
@@ -221,6 +230,7 @@ class _BulkRun:
     _bulk: Bulk
     _ready: asyncio.Future[None]
     _done: asyncio.Future[int | None]
+    _abandon: _Abandon
 
     async def _feed(self, first: list[object], rest: Iterator[list[object]]) -> None:
         await self._ready
@@ -249,6 +259,9 @@ class _BulkRun:
         try:
             await self._feed(first, rest)
         except BaseException as e:
+            if isinstance(e, asyncio.CancelledError):
+                # Before the abort: its rollback then waits until the cancel is over.
+                self._abandon(self._done)
             self._bulk.abort()  # rolls back; `done` resolves to None unless the server failed
             self._done.add_done_callback(_retrieve)
             server_error = self._server_error(e)
@@ -263,10 +276,11 @@ async def _run(
     start: _Starter,
     first: list[object],
     rest: Iterator[list[object]],
+    abandon: _Abandon,
 ) -> int:
     ready: asyncio.Future[None] = loop.create_future()
     done: asyncio.Future[int | None] = loop.create_future()
-    return await _BulkRun(loop, start(ready, done), ready, done).run(first, rest)
+    return await _BulkRun(loop, start(ready, done), ready, done, abandon).run(first, rest)
 
 
 def quote_ident(name: str) -> str:
@@ -291,12 +305,13 @@ async def execute_many(
     loop: asyncio.AbstractEventLoop,
     query: str,
     rows: Iterable[Sequence[object]],
+    abandon: _Abandon,
 ) -> int:
     chunks = _chunks(rows, BulkSettings.execute_chunk)
     first = next(chunks, None)
     if first is None:
         return 0
-    return await _run(loop, partial(native.execute_many, query=query), first, chunks)
+    return await _run(loop, partial(native.execute_many, query=query), first, chunks, abandon)
 
 
 async def insert_many(
@@ -305,6 +320,7 @@ async def insert_many(
     table: Table,
     rows: Iterable[object],
     columns: Sequence[str] | None,
+    abandon: _Abandon,
 ) -> int:
     target = quote_table(table)
     chunks = _chunks(rows, BulkSettings.execute_chunk)
@@ -319,7 +335,7 @@ async def insert_many(
         group=_insert_group(plan.width),
         reader=plan.reader,
     )
-    return await _run(loop, start, first, chunks)
+    return await _run(loop, start, first, chunks, abandon)
 
 
 async def copy_in(
@@ -328,6 +344,7 @@ async def copy_in(
     table: Table,
     rows: Iterable[object],
     columns: Sequence[str] | None,
+    abandon: _Abandon,
 ) -> int:
     target = quote_table(table)
     chunks = _chunks(rows, BulkSettings.copy_chunk)
@@ -336,4 +353,4 @@ async def copy_in(
         return 0
     plan = _row_plan(first[0], columns)
     start = partial(native.copy_in, table=target, reader=plan.reader, columns=plan.columns)
-    return await _run(loop, start, first, chunks)
+    return await _run(loop, start, first, chunks, abandon)
