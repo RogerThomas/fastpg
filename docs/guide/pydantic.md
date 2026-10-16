@@ -53,5 +53,8 @@ Otherwise `"auto"` uses `"json"`, and `"direct"` raises `UnsupportedTypeError` w
   field fed from `json`/`jsonb` gets the raw JSON text.
 * Directly built instances get `model_fields_set` from the columns, as `model_construct`
   would.
+* A `numeric` `NaN` or `±Infinity` for a `Decimal` field raises `fastpg.DecodeError` under
+  both strategies, as pydantic's validation does; `Field(allow_inf_nan=True)` accepts them
+  (through `"json"`).
 * A validation failure raises `fastpg.DecodeError`, with pydantic's `ValidationError` as its
   `__cause__`.

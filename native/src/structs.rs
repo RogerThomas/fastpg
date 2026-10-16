@@ -317,6 +317,9 @@ struct BoundColumn {
     /// A `str` field fed from json/jsonb: it gets the raw JSON text (ADR 0003).
     json_as_text: bool,
     nullable: bool,
+    /// A pydantic `Decimal` field: pydantic validation refuses NaN and infinities (unless
+    /// `allow_inf_nan=True`, which needs validation), so direct construction does too.
+    finite_decimal: bool,
 }
 
 struct PydanticPlan {
@@ -414,6 +417,7 @@ impl Binding {
                 int_as_float: false,
                 json_as_text: false,
                 nullable: true,
+                finite_decimal: false,
             });
         }
         Ok(Self {
@@ -517,6 +521,8 @@ impl Binding {
                 json_as_text: f.kind == FieldKind::Str
                     && matches!(codec, Codec::Json | Codec::Jsonb),
                 nullable: f.nullable,
+                finite_decimal: f.kind == FieldKind::Decimal
+                    && matches!(spec.mode, Mode::Pydantic { .. }),
             });
         }
         let missing: Vec<&str> = spec
@@ -677,6 +683,23 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
                         format!(
                             "column {:?} is NULL but {}.{} is not optional",
                             self.columns[b.col].name(),
+                            self.spec.cls_name,
+                            f.attr_name
+                        ),
+                    ));
+                }
+                Some(raw) if b.finite_decimal && decode::numeric_special(raw).is_some() => {
+                    let f = &self.spec.fields[b.field];
+                    let column = &self.columns[b.col];
+                    return Err(py_err(
+                        py,
+                        "DecodeError",
+                        format!(
+                            "column {:?} ({}) is {}, but {}.{} is a pydantic Decimal, which must \
+                             be finite (Field(allow_inf_nan=True) accepts NaN and infinities)",
+                            column.name(),
+                            column.r#type().name(),
+                            decode::numeric_special(raw).unwrap_or("not finite"),
                             self.spec.cls_name,
                             f.attr_name
                         ),

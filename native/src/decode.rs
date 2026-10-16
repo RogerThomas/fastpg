@@ -274,6 +274,16 @@ pub unsafe fn vectorcall<'py>(
     }
 }
 
+/// `NaN`, `Infinity` or `-Infinity` for a binary NUMERIC holding one, else `None`.
+pub fn numeric_special(raw: &[u8]) -> Option<&'static str> {
+    match raw.get(4..6) {
+        Some([0xC0, 0x00]) => Some("NaN"),
+        Some([0xD0, 0x00]) => Some("Infinity"),
+        Some([0xF0, 0x00]) => Some("-Infinity"),
+        _ => None,
+    }
+}
+
 /// Render a binary NUMERIC as a decimal string (`Decimal(str)` / msgspec input).
 pub fn numeric_to_string(raw: &[u8]) -> Result<String, String> {
     let mut out = String::new();
