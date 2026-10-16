@@ -28,6 +28,8 @@ pub enum Param {
     Null,
     Bool(bool),
     Int(i64),
+    /// `str(int)` of an int outside the 64-bit range (for numeric and float parameters).
+    BigInt(String),
     Float(f64),
     Str(String),
     Bytes(Vec<u8>),
@@ -51,7 +53,7 @@ impl Param {
         match self {
             Self::Null => "None",
             Self::Bool(_) => "bool",
-            Self::Int(_) => "int",
+            Self::Int(_) | Self::BigInt(_) => "int",
             Self::Float(_) => "float",
             Self::Str(_) => "str",
             Self::Bytes(_) => "bytes",
@@ -207,9 +209,14 @@ pub fn convert(obj: &Bound<'_, PyAny>) -> Result<Param, ConvertError> {
     if obj.is_instance_of::<PyInt>() {
         return match obj.extract::<i64>() {
             Ok(v) => Ok(Param::Int(v)),
-            Err(e) if e.is_instance_of::<PyOverflowError>(py) => {
-                Err(ConvertError::Invalid("int does not fit in 64 bits".into()))
-            }
+            // Still fine for a numeric or float parameter: kept as its decimal digits
+            // (`int.__repr__`, which a subclass can't change). Past
+            // `sys.get_int_max_str_digits()` Python refuses to convert it.
+            Err(e) if e.is_instance_of::<PyOverflowError>(py) => py
+                .get_type::<PyInt>()
+                .call_method1(intern!(py, "__repr__"), (obj,))
+                .and_then(|digits| Ok(Param::BigInt(digits.extract::<String>()?)))
+                .map_err(|e| ConvertError::Invalid(format!("int too large to encode: {e}"))),
             Err(e) => Err(e.into()),
         };
     }
@@ -367,6 +374,21 @@ impl ToSql for Indexed<'_> {
                 Type::FLOAT4 => out.put_f32(*v as f32),
                 Type::FLOAT8 => out.put_f64(*v as f64),
                 Type::NUMERIC => encode_numeric(&v.to_string(), out).map_err(fail)?,
+                _ => return Err(mismatch()),
+            },
+            Param::BigInt(digits) => match *ty {
+                Type::INT2 | Type::INT4 | Type::INT8 | Type::OID => return Err(range("int")),
+                Type::FLOAT4 | Type::FLOAT8 => {
+                    // Correctly rounded, like Python's `float(int)`; past f64's range it is
+                    // `inf`, where Python raises OverflowError.
+                    let v = digits.parse::<f64>().map_err(|e| fail(e.to_string()))?;
+                    match *ty {
+                        Type::FLOAT4 if (v as f32).is_finite() => out.put_f32(v as f32),
+                        Type::FLOAT8 if v.is_finite() => out.put_f64(v),
+                        _ => return Err(range("int")),
+                    }
+                }
+                Type::NUMERIC => encode_numeric(digits, out).map_err(fail)?,
                 _ => return Err(mismatch()),
             },
             Param::Float(v) => match *ty {

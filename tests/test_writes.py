@@ -205,6 +205,8 @@ def case_id(value: object) -> str:
             Decimal("123456789012345678901234567890.123456789"),
         ),
         ("numeric", 42, Decimal(42)),
+        ("numeric", -(2**70), Decimal(-(2**70))),
+        ("float8", 2**70, 2.0**70),
         ("numeric", "1.25", Decimal("1.25")),
         ("numeric(12, 2)", Decimal("1.50"), Decimal("1.50")),
         ("jsonb", {"key": [1, 2.5, None, True]}, {"key": [1, 2.5, None, True]}),

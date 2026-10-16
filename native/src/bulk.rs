@@ -154,19 +154,20 @@ impl ColumnCodec {
                 out.put_slice(s.to_str()?.as_bytes());
                 return Ok(true);
             }
+            // An int beyond 64 bits falls through to the generic path's range error.
             Fast::Int2 | Fast::Int4 | Fast::Int8 if exact_int => {
-                let v = match obj.extract::<i64>() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(ConvertError::Invalid("int does not fit in 64 bits".into()));
+                if let Ok(v) = obj.extract::<i64>() {
+                    match self.fast {
+                        Fast::Int2 => {
+                            out.put_i16(i16::try_from(v).map_err(|_| self.range_error())?);
+                        }
+                        Fast::Int4 => {
+                            out.put_i32(i32::try_from(v).map_err(|_| self.range_error())?);
+                        }
+                        _ => out.put_i64(v),
                     }
-                };
-                match self.fast {
-                    Fast::Int2 => out.put_i16(i16::try_from(v).map_err(|_| self.range_error())?),
-                    Fast::Int4 => out.put_i32(i32::try_from(v).map_err(|_| self.range_error())?),
-                    _ => out.put_i64(v),
+                    return Ok(true);
                 }
-                return Ok(true);
             }
             Fast::Float8 if exact_float => {
                 // SAFETY: `p` is an exact float.

@@ -97,7 +97,7 @@ async def test_parameter_errors(conn: fastpg.Connection) -> None:
         await conn.select_one("SELECT $1::int", "1")
     with pytest.raises(fastpg.ParameterError, match="out of range for PostgreSQL type int2"):
         await conn.select_one("SELECT $1::int2", 70_000)
-    with pytest.raises(fastpg.ParameterError, match="does not fit in 64 bits"):
+    with pytest.raises(fastpg.ParameterError, match="out of range for PostgreSQL type int8"):
         await conn.select_one("SELECT $1::int8", 2**64)
     with pytest.raises(fastpg.ParameterError, match="naive datetime"):
         await conn.select_one("SELECT $1::timestamptz", dt.datetime(2024, 1, 1))  # noqa: DTZ001
