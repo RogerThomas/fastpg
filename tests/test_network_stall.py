@@ -142,3 +142,19 @@ async def test_timeout_bounds_an_acquired_connection(
             assert await pool.select_one("SELECT count(*) FROM net_stall_items") == (0,)
         stats = pool.stats()
         assert (stats.size, stats.acquired, stats.in_flight) == (1, 0, 0)
+
+
+async def test_pool_close_does_not_wait_for_a_stalled_connect(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+) -> None:
+    pool = await fastpg.create_pool(proxied_dsn, min_size=0, max_size=1)
+    fault_proxy.stall()
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.2):
+            await pool.select_one("SELECT 1")  # waits for the connection being opened
+    assert pool.stats().opening == 1
+    async with asyncio.timeout(2):
+        await pool.close()
+    stats = pool.stats()
+    assert (stats.size, stats.opening) == (0, 0)
