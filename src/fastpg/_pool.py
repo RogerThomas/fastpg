@@ -533,7 +533,12 @@ class Pool:
         queries has already run). That made queueing cost ~40% of the throughput
         (``notes/pool.md``).
         """
-        token = self._begin(entry, waiter.query)
+        try:
+            token = self._begin(entry, waiter.query)
+        except TypeError as e:  # not a str: fail its caller, not whoever freed the slot
+            self._place(entry)  # back on the idle stack if _best_slot took it off
+            waiter.future.set_exception(e)
+            return
         try:
             call = self._call(
                 entry,
@@ -692,7 +697,11 @@ class Pool:
             entry = self._route()
         if entry is None:
             return await self._wait(_Waiter(future, kind, query, params, into, strategy))
-        token = self._begin(entry, query)
+        try:
+            token = self._begin(entry, query)
+        except TypeError:  # not a str
+            self._place(entry)  # back on the idle stack it was just taken off
+            raise
         try:
             result = await self._call(entry, future, kind, query, params, into, strategy)
         except asyncio.CancelledError:

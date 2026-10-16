@@ -50,6 +50,37 @@ async def test_query_must_be_a_str(conn: fastpg.Connection, query: object) -> No
     await _assert_usable(conn)
 
 
+async def test_a_pool_query_that_is_not_a_str_leaves_the_pool_usable(dsn: str) -> None:
+    untyped: Any = 42
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        with pytest.raises(TypeError, match="is not an instance of 'str'"):
+            await pool.select_one(untyped)
+        with pytest.raises(TypeError, match="is not an instance of 'str'"):
+            await pool.execute_script(untyped)
+        async with asyncio.timeout(2):  # the connection went back to the idle stack
+            assert await pool.select_one("SELECT 1") == (1,)
+        assert pool.stats().idle == 1
+
+
+async def test_a_waiting_pool_query_that_is_not_a_str_fails_alone(dsn: str) -> None:
+    # Queued behind a busy connection, it's sent by whichever statement frees the slot: its
+    # error must reach its own caller, not that statement's.
+    untyped: Any = 42
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1, max_inflight_per_conn=1)
+    async with pool:
+        busy = asyncio.create_task(pool.select_one("SELECT 1 FROM pg_sleep(0.05)"))
+        await asyncio.sleep(0.01)
+        bad = asyncio.create_task(pool.select_one(untyped))
+        after = asyncio.create_task(pool.select_one("SELECT 2"))
+        async with asyncio.timeout(2):
+            assert await busy == (1,)
+            with pytest.raises(TypeError, match="is not an instance of 'str'"):
+                await bad
+            assert await after == (2,)
+        stats = pool.stats()
+        assert (stats.idle, stats.in_flight, stats.waiting) == (1, 0, 0)
+
+
 async def test_params_with_a_t_string_is_refused(conn: fastpg.Connection) -> None:
     value = 1
     with pytest.raises(TypeError, match="a t-string takes its values from its interpolations"):
