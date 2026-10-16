@@ -40,7 +40,7 @@ use tokio::sync::mpsc;
 use xitca_postgres::dev::{r#Copy as _, Encode as _};
 use xitca_postgres::error::{DbError, UnexpectedMessage};
 use xitca_postgres::iter::AsyncLendingIterator;
-use xitca_postgres::types::{IsNull, Kind, ToSql, Type, to_sql_checked};
+use xitca_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 use xitca_postgres::{Client, Execute, RowSimpleStream, Statement};
 
 use crate::connection::{Outcome, Request, Shared, plain_request};
@@ -103,17 +103,9 @@ pub struct ColumnCodec {
     label: String,
 }
 
-/// Domains are sent in their base type's binary format.
-fn base_type(ty: &Type) -> &Type {
-    match ty.kind() {
-        Kind::Domain(inner) => base_type(inner),
-        _ => ty,
-    }
-}
-
 impl ColumnCodec {
     fn new(ty: &Type, label: String) -> Self {
-        let ty = base_type(ty).clone();
+        let ty = params::base_type(ty).clone();
         let fast = match ty {
             Type::BOOL => Fast::Bool,
             Type::INT2 => Fast::Int2,

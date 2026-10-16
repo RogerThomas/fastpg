@@ -308,6 +308,14 @@ pub fn indexed(params: &[Param]) -> impl ExactSizeIterator<Item = Indexed<'_>> +
     params.iter().enumerate().map(|(i, p)| Indexed(i, p))
 }
 
+/// Domains are sent in their base type's binary format.
+pub fn base_type(ty: &Type) -> &Type {
+    match ty.kind() {
+        Kind::Domain(inner) => base_type(inner),
+        _ => ty,
+    }
+}
+
 pub fn is_text(ty: &Type) -> bool {
     matches!(
         *ty,
@@ -326,20 +334,25 @@ pub fn put_json(ty: &Type, json: &[u8], out: &mut BytesMut) {
 type BoxError = Box<dyn Error + Sync + Send>;
 
 impl ToSql for Indexed<'_> {
-    fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, BoxError> {
+    fn to_sql(&self, declared: &Type, out: &mut BytesMut) -> Result<IsNull, BoxError> {
         let Indexed(index, param) = *self;
+        let ty = base_type(declared);
+        // Errors name the declared type, and a domain's base type too.
+        let type_name = if ty == declared {
+            ty.name().to_owned()
+        } else {
+            format!("{} (a domain over {})", declared.name(), ty.name())
+        };
         let fail = |message: String| -> BoxError { Box::new(ParamError { index, message }) };
         let mismatch = || {
             fail(format!(
-                "cannot encode {} as PostgreSQL type {}",
-                param.describe(),
-                ty.name()
+                "cannot encode {} as PostgreSQL type {type_name}",
+                param.describe()
             ))
         };
         let range = |what: &str| {
             fail(format!(
-                "{what} out of range for PostgreSQL type {}",
-                ty.name()
+                "{what} out of range for PostgreSQL type {type_name}"
             ))
         };
 
