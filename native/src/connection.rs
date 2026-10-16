@@ -749,6 +749,11 @@ fn is_stale_statement(e: &xitca_postgres::Error) -> bool {
     })
 }
 
+fn is_in_failed_transaction(e: &xitca_postgres::Error) -> bool {
+    e.downcast_ref::<DbError>()
+        .is_some_and(|db| *db.code() == SqlState::IN_FAILED_SQL_TRANSACTION)
+}
+
 async fn prepare(
     shared: &Shared,
     client: &Arc<Client>,
@@ -792,7 +797,16 @@ async fn run(
             Err(QueryError::Pg(e)) if !retried && !delivered && is_stale_statement(&e) => {
                 retried = true;
                 shared.cache.evict(&stmt);
-                stmt = prepare(shared, &client, stmt.sql()).await?;
+                match prepare(shared, &client, stmt.sql()).await {
+                    Ok(fresh) => stmt = fresh,
+                    // In a transaction block the stale-statement error has aborted the
+                    // transaction, so re-preparing can only fail with 25P02 ("current
+                    // transaction is aborted"): report the error that says why instead.
+                    Err(QueryError::Pg(retry)) if is_in_failed_transaction(&retry) => {
+                        return Err(QueryError::Pg(e));
+                    }
+                    Err(other) => return Err(other),
+                }
             }
             outcome => return outcome,
         }

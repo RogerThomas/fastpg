@@ -38,6 +38,11 @@ print(await conn.select_many("SELECT email FROM users ORDER BY email"))
 * `SerializationError` (`40001`) and `DeadlockDetectedError` (`40P01`), both
   `fastpg.errors.TransactionError`, mean the transaction should be retried from the start.
 * A connection has one transaction at a time; starting a second raises `InterfaceError`.
+* Outside a transaction, a cached statement whose result type changed (DDL such as
+  `ALTER TABLE ... ADD COLUMN` under `SELECT *`) is re-prepared transparently. Inside one,
+  the server's error has already aborted the transaction, so the query raises
+  `NotSupportedError` ("cached plan must not change result type") instead: retry the
+  transaction, which prepares the statement afresh.
 * Bulk writes inside a transaction use their own savepoint, so a failed one doesn't abort it.
 
 !!! warning "Keep a connection with an open transaction to one task"
