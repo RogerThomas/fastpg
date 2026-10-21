@@ -1,0 +1,85 @@
+# Git hooks, run by prek (https://prek.j178.dev, a faster drop-in for pre-commit that reads this
+# file). `task setup` installs them; `task prek` runs the commit-time ones on every file, and
+# `task lint` (CI's Lint job) runs that plus clippy, so a hook can't pass locally and fail in CI.
+#
+# - Tools that are also project dependencies (ruff, pyright) run from uv.lock through `uv run`,
+#   never from a separately pinned hook repo, so their versions can't drift from CI's.
+# - Remote hook repos are pinned by commit SHA (`task prek-update` bumps them, `--freeze`).
+# - pre-commit: the fast checks. pre-push: the slow ones (pyright, clippy), so committing stays
+#   quick; CI runs both.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+# Archived measurements, kept byte for byte next to the notes that cite them.
+exclude: ^(bench/results|notes/eval)/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: pretty-format-json
+        args: [--autofix, --no-sort-keys]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # GitHub Actions workflows: actionlint (syntax, expressions, shellcheck of run: steps) and
+  # zizmor (security: injection, permissions, unpinned actions, credential persistence).
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    hooks:
+      - id: zizmor
+        args: [--offline]
+
+  - repo: local
+    hooks:
+      # --only-group dev: ruff needs only the dev tools, not the extension built.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --only-group dev ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --only-group dev ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: rustfmt
+        name: rustfmt
+        entry: cargo fmt --manifest-path native/Cargo.toml --
+        language: system
+        files: ^native/.*\.rs$
+        pass_filenames: false
+      - id: uv-lock
+        name: uv.lock up to date
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      - id: pyright
+        name: pyright (strict)
+        entry: task typecheck
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        stages: [pre-push]
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -q -- -D warnings
+        language: system
+        files: ^(native/|rust-toolchain\.toml$)
+        pass_filenames: false
+        stages: [pre-push]

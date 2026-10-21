@@ -74,19 +74,31 @@ tasks:
     cmd: docker compose --profile test run --rm --build tests
 
   check:
-    desc: Lint and type-check everything (ruff + pyright strict + rustfmt + clippy)
+    desc: Lint and type-check everything (the git hooks + clippy + pyright strict)
     cmds:
       - task: lint
       - task: typecheck
 
   lint:
-    desc: Check formatting and lints (ruff, rustfmt, clippy) without changing files, as CI does
+    desc: The commit hooks on every file (ruff, rustfmt, workflows, file hygiene) plus clippy, as CI does
     cmds:
-      # --only-group: ruff needs only the dev tools, not the extension built.
-      - uv run --only-group dev ruff check --no-fix .
-      - uv run --only-group dev ruff format --check .
-      - cargo fmt --manifest-path native/Cargo.toml --check
+      # The hooks fix what they can and fail if they changed anything (--show-diff-on-failure).
+      - uv run --only-group dev prek run --all-files --show-diff-on-failure
       - cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -q -- -D warnings
+
+  setup:
+    desc: Install every dependency group (building the extension) and the git hooks
+    cmds:
+      - uv sync --all-groups
+      - uv run --only-group dev prek install
+
+  prek:
+    desc: Run the git hooks (default every file; e.g. `task prek -- --stage pre-push -a`)
+    cmd: uv run --only-group dev prek run {{default "--all-files" .CLI_ARGS}}
+
+  prek-update:
+    desc: Bump the hook repos to their latest releases, pinned by commit SHA
+    cmd: uv run --only-group dev prek update --freeze --cooldown-days 7
 
   typecheck:
     desc: Type-check everything with pyright (strict), as CI does
