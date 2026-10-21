@@ -85,9 +85,9 @@ query queued ahead of it. Sharing a connection is fine while
 
 > slowest query's time on the connection × queries in flight ≤ the latency you can accept
 
-On Linux under one CPU ([Performance](../performance.md)), a pipelined point lookup
-occupies a connection for about 7.7 µs, and a 10,000-row fetch for about 5.8 ms, which it
-adds to every lookup queued behind it.
+In local measurements on Linux under one CPU, a pipelined point lookup occupies a
+connection for about 7.7 µs, and a 10,000-row fetch for about 5.8 ms, which it adds to
+every lookup queued behind it.
 
 Besides preferring idle connections and capping the pipeline depth, the pool learns a moving
 average of each SQL text's time on a connection (unseen SQL counts as 50 µs). A connection
@@ -103,8 +103,11 @@ known-slow queries on `acquire()` or a separate pool, set `statement_timeout`, a
 
 * A dead connection is dropped when picked or when a statement on it fails with a
   session-fatal error. Statements in flight on it fail; nothing is retried.
-* A background task closes connections older than `max_lifetime` once idle, and idle ones
-  above `min_size` after `max_idle`, and tops the pool up to `min_size`.
+* A background task replaces connections older than `max_lifetime` once idle (opening the
+  replacement first when closing would leave fewer than `min_size`), closes idle ones above
+  `min_size` after `max_idle`, and tops the pool up to `min_size`.
+* `pool.stats()` returns a snapshot:
+  `PoolStats(size=2, opening=0, idle=2, acquired=0, in_flight=0, waiting=0, waiting_acquire=0)`.
 * `pool.close()` is graceful: new calls fail with `ConnectionClosedError`, queries already
   running complete, and connections taken with `acquire()` close when their block ends.
   It doesn't wait for the server to acknowledge the end of each session. Bound it with
