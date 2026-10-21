@@ -120,8 +120,10 @@ jobs:
       # `uv python find` (the Taskfile's PYO3_PYTHON) reads .python-version and ignores
       # UV_PYTHON, so without this it looks for .python-version's exact release (or, on the
       # 3.14t job, finds the GIL build): pin the matrix's Python for every uv command.
+      # --no-project: a bare "3.14" would include 3.14.0, below requires-python, so uv refuses
+      # to write it; the latest 3.14 it resolves to is within it.
       - name: Pin Python (matrix)
-        run: uv python pin "$MATRIX_PYTHON"
+        run: uv python pin --no-project "$MATRIX_PYTHON"
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
       - name: Build (uv sync)
