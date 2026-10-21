@@ -363,7 +363,9 @@ One CPU (`--cpus 1`), Linux containers, PostgreSQL 18.6, uvloop, rows decoded in
 | CPU per request | 23.5 µs | 34 µs |
 
 Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
-[docs/performance.md](docs/performance.md).
+[docs/performance.md](docs/performance.md). A broader comparison with asyncpg, psycopg 3 and
+psqlpy (each driver's recommended setup, checked results, interleaved trials, the workloads
+fastpg doesn't win too) runs in GitHub Actions on every library change: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Development
 
@@ -375,6 +377,7 @@ Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
 | `task test-against DSN=… [TLS_DSN=… TLS_CA=…] [SEED=1]` | the same against existing servers, starting none; `SEED=1` first loads `docker/initdb/*.sql` into the (empty) database |
 | `task check` | ruff, ruff format, pyright (strict), clippy |
 | `task bench` / `task bench-docker` | driver benchmark suite (host / inside Linux) |
+| `task bench-ci` | the cross-driver comparison exactly as CI runs it ([docs/benchmarks.md](docs/benchmarks.md)) |
 | `task bench-open-loop` / `task bench-open-loop-docker` | API-like load at fixed request rates |
 | `task bench-decode` | loop-thread CPU per row |
 | `task test-docker` | full build + tests in Docker |

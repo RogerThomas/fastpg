@@ -1,0 +1,149 @@
+# Cross-driver benchmarks: fastpg vs asyncpg, psycopg 3 (async) and psqlpy (bench/compare.py).
+# Methodology and limitations: docs/benchmarks.md. Reproduce locally: `task db-up bench-ci`.
+#
+# Runs on pull requests and pushes to main that change the library, the benchmarks or the
+# lock file, weekly (new driver releases come in through the lock file), and by hand. A full
+# run takes ~25-30 minutes of a shared runner, whose run-to-run noise is larger than most
+# single-commit changes: read the ratios between drivers within one run, not one run's
+# absolute numbers against another's. The job fails only if a run crashes or a driver returns
+# or writes wrong data, never because of the numbers.
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      trials:
+        description: Trials (each runs every workload for every driver configuration)
+        default: "3"
+        type: string
+      duration:
+        description: Measured seconds per run
+        default: "3"
+        type: string
+      warmup:
+        description: Warm-up seconds per run
+        default: "1"
+        type: string
+      workloads:
+        description: Workload names or globs, space-separated (empty runs all; see `--list`)
+        default: ""
+        type: string
+  schedule:
+    - cron: "23 4 * * 1" # Mondays 04:23 UTC
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - native/**
+      - bench/**
+      - pyproject.toml
+      - uv.lock
+      - rust-toolchain.toml
+      - .github/workflows/benchmarks.yml
+  pull_request:
+    paths:
+      - src/**
+      - native/**
+      - bench/**
+      - pyproject.toml
+      - uv.lock
+      - rust-toolchain.toml
+      - .github/workflows/benchmarks.yml
+
+permissions:
+  contents: read
+
+# One run per ref; a newer push to a pull request supersedes its running benchmark.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  TASK_VERSION: 3.54.0
+  UV_LOCKED: 1
+  UV_VERSION: 0.13.0 # same as ci.yml
+
+jobs:
+  compare:
+    name: Compare drivers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    services:
+      postgres:
+        # Same image as docker-compose.yml. Defaults otherwise (max_connections=100 is
+        # plenty: one pool of 16 at a time plus two control connections).
+        image: postgres:18.6-trixie
+        env:
+          POSTGRES_USER: fastpg
+          POSTGRES_PASSWORD: fastpg
+          POSTGRES_DB: fastpg
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U fastpg -d fastpg"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
+      OUT: bench-results
+      TRIALS: ${{ inputs.trials || '3' }}
+      DURATION: ${{ inputs.duration || '3' }}
+      WARMUP: ${{ inputs.warmup || '1' }}
+      WORKLOADS: ${{ inputs.workloads || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build fastpg (release, via maturin) and install every dependency group
+        run: uv sync --all-groups
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+
+      # Durability is irrelevant to a client benchmark, and a commit flush to the runner's
+      # disk would dominate the single-row writes; JIT only adds jitter to these plans.
+      # docker-compose.yml sets the same two (plus more), as server flags.
+      - name: Configure PostgreSQL (synchronous_commit=off, jit=off)
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U fastpg -d fastpg -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET jit = off" \
+            -c "SELECT pg_reload_conf()"
+          docker exec ${{ job.services.postgres.id }} psql -U fastpg -d fastpg -Atc \
+            "SELECT name || '=' || setting FROM pg_settings WHERE name IN ('synchronous_commit', 'jit', 'max_connections', 'shared_buffers')"
+
+      - name: Run the comparison
+        run: |
+          set -f # workload globs reach the script unexpanded
+          args=()
+          for workload in $WORKLOADS; do args+=(-k "$workload"); done
+          task bench-ci DSN="$DSN" TRIALS="$TRIALS" DURATION="$DURATION" WARMUP="$WARMUP" \
+            OUT="$OUT" SUMMARY="$GITHUB_STEP_SUMMARY" -- "${args[@]}"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmarks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.OUT }}/
+          if-no-files-found: warn
+          retention-days: 90
