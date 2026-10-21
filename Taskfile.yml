@@ -76,11 +76,25 @@ tasks:
   check:
     desc: Lint and type-check everything (ruff + pyright strict + rustfmt + clippy)
     cmds:
-      - uv run ruff check .
-      - uv run ruff format --check src tests bench examples
-      - uv run pyright .
+      - task: lint
+      - task: typecheck
+
+  lint:
+    desc: Check formatting and lints (ruff, rustfmt, clippy) without changing files, as CI does
+    cmds:
+      # --only-group: ruff needs only the dev tools, not the extension built.
+      - uv run --only-group dev ruff check --no-fix .
+      - uv run --only-group dev ruff format --check .
       - cargo fmt --manifest-path native/Cargo.toml --check
-      - cargo clippy --manifest-path native/Cargo.toml -q -- -D warnings
+      - cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -q -- -D warnings
+
+  typecheck:
+    desc: Type-check everything with pyright (strict), as CI does
+    cmds:
+      # --no-install-project: pyright reads src/fastpg/_native.pyi, so the extension needn't be
+      # built. --inexact: leaves one that is installed (and anything else) in place.
+      - uv sync --all-groups --no-install-project --inexact
+      - uv run --no-sync pyright .
 
   bench:
     desc: Driver benchmark suite (e.g. `task bench -- -d 'fastpg*' -d 'asyncpg*'`)
