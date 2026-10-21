@@ -1,17 +1,29 @@
 # Cross-driver benchmarks: fastpg vs asyncpg, psycopg 3 (async) and psqlpy (bench/compare.py).
 # Methodology and limitations: docs/benchmarks.md. Reproduce locally: `task db-up bench-ci`.
 #
-# Runs on pull requests and pushes to main that change the library, the benchmarks or the
-# lock file, weekly (new driver releases come in through the lock file), and by hand. A full
-# run takes ~25-30 minutes of a shared runner, whose run-to-run noise is larger than most
-# single-commit changes: read the ratios between drivers within one run, not one run's
-# absolute numbers against another's. The job fails only if a run crashes or a driver returns
-# or writes wrong data, never because of the numbers.
+# When it runs:
+# - on pushes to main that change the library, the benchmarks or the lock file (a record per
+#   merge), and weekly (new driver releases come in through the lock file);
+# - on a pull request only once it has the `benchmark` label (and on each push to it after):
+#   a full run takes ~25-30 minutes of a runner that the PR's own checks are waiting for;
+# - by hand, on any branch, tag or commit (`ref`), on x86_64 or arm64 (`runner`).
+# A shared runner's run-to-run noise is larger than most single-commit changes: read the ratios
+# between drivers within one run, not one run's absolute numbers against another's. The job
+# fails only if a run crashes or a driver returns or writes wrong data, never on the numbers.
 name: Benchmarks
 
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: Branch, tag or commit SHA to benchmark (empty for the one picked above)
+        default: ""
+        type: string
+      runner:
+        description: Runner (both free for public repositories; arm64 is Arm Neoverse)
+        type: choice
+        options: [ubuntu-24.04, ubuntu-24.04-arm]
+        default: ubuntu-24.04
       trials:
         description: Trials (each runs every workload for every driver configuration)
         default: "3"
@@ -41,14 +53,7 @@ on:
       - rust-toolchain.toml
       - .github/workflows/benchmarks.yml
   pull_request:
-    paths:
-      - src/**
-      - native/**
-      - bench/**
-      - pyproject.toml
-      - uv.lock
-      - rust-toolchain.toml
-      - .github/workflows/benchmarks.yml
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -67,7 +72,12 @@ env:
 jobs:
   compare:
     name: Compare drivers
-    runs-on: ubuntu-24.04
+    # A pull request only with the `benchmark` label, and not again when another label is added.
+    if: >-
+      github.event_name != 'pull_request'
+      || (contains(github.event.pull_request.labels.*.name, 'benchmark')
+          && (github.event.action != 'labeled' || github.event.label.name == 'benchmark'))
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 75
     services:
       postgres:
@@ -95,6 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Install Rust (rust-toolchain.toml)
@@ -123,12 +134,14 @@ jobs:
       # disk would dominate the single-row writes; JIT only adds jitter to these plans.
       # docker-compose.yml sets the same two (plus more), as server flags.
       - name: Configure PostgreSQL (synchronous_commit=off, jit=off)
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          docker exec ${{ job.services.postgres.id }} psql -U fastpg -d fastpg -v ON_ERROR_STOP=1 \
+          docker exec "$POSTGRES_CONTAINER" psql -U fastpg -d fastpg -v ON_ERROR_STOP=1 \
             -c "ALTER SYSTEM SET synchronous_commit = off" \
             -c "ALTER SYSTEM SET jit = off" \
             -c "SELECT pg_reload_conf()"
-          docker exec ${{ job.services.postgres.id }} psql -U fastpg -d fastpg -Atc \
+          docker exec "$POSTGRES_CONTAINER" psql -U fastpg -d fastpg -Atc \
             "SELECT name || '=' || setting FROM pg_settings WHERE name IN ('synchronous_commit', 'jit', 'max_connections', 'shared_buffers')"
 
       - name: Run the comparison
@@ -143,7 +156,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: benchmarks-${{ github.run_id }}-${{ github.run_attempt }}
+          name: benchmarks-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.OUT }}/
           if-no-files-found: warn
           retention-days: 90

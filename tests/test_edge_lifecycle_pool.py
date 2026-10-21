@@ -237,3 +237,39 @@ async def test_retirement_while_busy(dsn: str, conn: fastpg.Connection) -> None:
         async with asyncio.timeout(5):
             while await _backends(conn, name) != pool.stats().size:
                 await asyncio.sleep(0.05)
+
+
+@pytest.mark.timeout(30)
+async def test_retirement_replaces_before_closing(dsn: str) -> None:
+    # An idle pool at min_size opens an aged connection's replacement before closing it, so
+    # it never has fewer than min_size open (a statement would wait for a connect meanwhile).
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=4, max_lifetime=0.1, max_idle=0.05)
+    async with pool:
+        pids: set[int] = set()
+        sizes: list[int] = []
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            for _ in range(20):
+                sizes.append(pool.stats().size)
+                await asyncio.sleep(0.002)
+            (pid,) = await pool.select_one("SELECT pg_backend_pid()")
+            pids.add(pid)
+        assert len(pids) > 3  # connections were replaced as they aged
+        assert min(sizes) >= 1
+
+
+@pytest.mark.timeout(30)
+async def test_retirement_at_max_size_closes_first(dsn: str) -> None:
+    # With min_size == max_size there's no room to open the replacement first: an aged
+    # connection is closed, then replaced, and the pool keeps working within max_size.
+    pool = await fastpg.create_pool(dsn, min_size=2, max_size=2, max_lifetime=0.1)
+    async with pool:
+        pids: set[int] = set()
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            (pid,) = await pool.select_one("SELECT pg_backend_pid()")
+            pids.add(pid)
+            stats = pool.stats()
+            assert stats.size + stats.opening <= 2
+            await asyncio.sleep(0.02)
+        assert len(pids) > 2

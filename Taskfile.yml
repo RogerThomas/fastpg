@@ -74,13 +74,39 @@ tasks:
     cmd: docker compose --profile test run --rm --build tests
 
   check:
-    desc: Lint and type-check everything (ruff + pyright strict + rustfmt + clippy)
+    desc: Lint and type-check everything (the git hooks + clippy + pyright strict)
     cmds:
-      - uv run ruff check .
-      - uv run ruff format --check src tests bench examples
-      - uv run pyright .
-      - cargo fmt --manifest-path native/Cargo.toml --check
-      - cargo clippy --manifest-path native/Cargo.toml -q -- -D warnings
+      - task: lint
+      - task: typecheck
+
+  lint:
+    desc: The commit hooks on every file (ruff, rustfmt, workflows, file hygiene) plus clippy, as CI does
+    cmds:
+      # The hooks fix what they can and fail if they changed anything (--show-diff-on-failure).
+      - uv run --only-group dev prek run --all-files --show-diff-on-failure
+      - cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -q -- -D warnings
+
+  setup:
+    desc: Install every dependency group (building the extension) and the git hooks
+    cmds:
+      - uv sync --all-groups
+      - uv run --only-group dev prek install
+
+  prek:
+    desc: Run the git hooks (default every file; e.g. `task prek -- --stage pre-push -a`)
+    cmd: uv run --only-group dev prek run {{default "--all-files" .CLI_ARGS}}
+
+  prek-update:
+    desc: Bump the hook repos to their latest releases, pinned by commit SHA
+    cmd: uv run --only-group dev prek update --freeze --cooldown-days 7
+
+  typecheck:
+    desc: Type-check everything with pyright (strict), as CI does
+    cmds:
+      # --no-install-project: pyright reads src/fastpg/_native.pyi, so the extension needn't be
+      # built. --inexact: leaves one that is installed (and anything else) in place.
+      - uv sync --all-groups --no-install-project --inexact
+      - uv run --no-sync pyright .
 
   bench:
     desc: Driver benchmark suite (e.g. `task bench -- -d 'fastpg*' -d 'asyncpg*'`)

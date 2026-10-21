@@ -403,6 +403,7 @@ class Pool:
             self._spawn(conn.close())
             return
         self._add(conn)
+        self._retire_expired()
         self._dispatch()
 
     def _discard(self, entry: _Entry) -> None:
@@ -426,6 +427,32 @@ class Pool:
             time.perf_counter_ns() - entry.born_ns > self._max_lifetime_ns
         )
 
+    def _retire(self, entry: _Entry) -> None:
+        """Close an idle ``entry`` that outlived max_lifetime, replacing it first if closing
+        it would leave fewer than min_size connections open (make before break).
+
+        It then stays in rotation, healthy, until a new connection is in and ``_opened``
+        retires it, so the pool never drops below min_size for a connect's duration. At
+        max_size there's no room to open the replacement first: it's closed, then replaced.
+        """
+        if len(self._entries) > self.min_size or self._closing is not None:
+            self._discard(entry)
+            return
+        if not self._opening:  # else a connection on its way in replaces it
+            if len(self._entries) >= self.max_size:
+                self._discard(entry)
+                return
+            self._grow()
+        if entry.state in {_Entry.RETIRING, _Entry.EXCLUSIVE}:  # a DRAINING one stays reserved
+            self._set_state(entry, _Entry.SHARED)
+            self._router.touch(entry.slot)  # idle from now
+
+    def _retire_expired(self) -> None:
+        """Retire the idle connections past max_lifetime (one just opened may replace them)."""
+        if self._max_lifetime_ns:
+            for entry in [e for e in self._idle if self._expired(e)]:
+                self._retire(entry)
+
     def _tidy(self) -> None:
         """Periodic upkeep: retire old and surplus idle connections, refill to min_size."""
         for entry in list(self._entries):
@@ -433,16 +460,14 @@ class Pool:
                 if entry.state == _Entry.SHARED and self._expired(entry):
                     self._set_state(entry, _Entry.RETIRING)  # closed by _finish once idle
                 continue
-            if (
-                entry.conn.closed
-                or self._expired(entry)
-                or (
-                    self._max_idle_ns
-                    and len(self._entries) > self.min_size
-                    and self._router.idle_ns(entry.slot) > self._max_idle_ns
-                )
+            if entry.conn.closed or (
+                self._max_idle_ns
+                and len(self._entries) > self.min_size
+                and self._router.idle_ns(entry.slot) > self._max_idle_ns
             ):
                 self._discard(entry)
+            elif self._expired(entry):
+                self._retire(entry)
         if len(self._entries) + len(self._opening) < self.min_size:
             self._grow()
 
@@ -525,10 +550,10 @@ class Pool:
         elif entry.state == _Entry.GONE:
             if not left:
                 self._free_slot(entry)  # deferred by _discard while this was in flight
-        elif (error is not None and (_is_fatal(error) or entry.conn.closed)) or (
-            entry.state == _Entry.RETIRING and not left
-        ):
+        elif error is not None and (_is_fatal(error) or entry.conn.closed):
             self._discard(entry)
+        elif entry.state == _Entry.RETIRING and not left:
+            self._retire(entry)
         elif not left:
             self._place(entry)  # idle now: on top of its stack
 
@@ -784,8 +809,10 @@ class Pool:
         except BaseException:  # cancelled mid-reset: the session state is unknown
             self._discard(entry)
             raise
-        if not clean or entry.conn.closed or self._closing is not None or self._expired(entry):
+        if not clean or entry.conn.closed or self._closing is not None:
             self._discard(entry)
+        elif self._expired(entry):
+            self._retire(entry)
         else:
             self._set_state(entry, _Entry.SHARED)
             self._router.touch(entry.slot)  # idle from now
@@ -1120,6 +1147,8 @@ async def create_pool(
             ``1`` gives one-statement-per-connection pooling like asyncpg's.
         statement_cache_size: Per-connection prepared statement cache (see ``connect``).
         max_lifetime: Seconds after which a connection is replaced once idle (None: never).
+            If closing it would leave fewer than ``min_size`` open, its replacement is opened
+            first and it serves until then (unless the pool is at ``max_size``).
         max_idle: Seconds after which an idle connection above ``min_size`` is closed.
     """
     # Before connecting: a configuration Pool() rejects would leave the connections open.

@@ -1,0 +1,232 @@
+# Runs the Taskfile tasks developers run locally (task lint, task typecheck, task test,
+# task docs-test), so the two can't drift. uv takes Python from .python-version (or a job's
+# UV_PYTHON) and rustup takes Rust from rust-toolchain.toml.
+#
+# The test suite starts its own PostgreSQL 18 containers with testcontainers (tests/conftest.py),
+# the TLS-only one included, so on Linux it runs whole, as `task test` does locally. The macOS
+# runners have no Docker: there it runs against a PostgreSQL of the runner's own
+# (.github/scripts/native-postgres.sh), without the TLS tests (skipped) and the two files that
+# pause, kill and restart a server container of their own.
+#
+# Branch protection need only require "CI passed", which fails unless every other job passed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  TASK_VERSION: 3.54.0
+  UV_LOCKED: 1 # fail if uv.lock is out of date with pyproject.toml
+  UV_VERSION: 0.13.0
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      # The Taskfile's PYO3_PYTHON is `uv python find`, which clippy's build of PyO3 needs.
+      - name: Install Python (.python-version)
+        run: uv python install
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The hooks' environments (actionlint is built with Go, zizmor and the pre-commit-hooks
+      # installed): saved from main only, like the other caches.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: task lint
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+  typecheck:
+    name: Type-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Python (.python-version)
+        run: uv python install
+      # No Rust: pyright reads the extension's interface from src/fastpg/_native.pyi.
+      - run: task typecheck
+
+  test:
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each wheel platform's architecture natively, and the free-threaded build (which fastpg
+        # runs with the GIL back on: ADR 0011, tests/test_free_threading.py).
+        include:
+          - { name: "Linux x86_64, Python 3.14", runner: ubuntu-24.04, python: "3.14" }
+          - { name: "Linux aarch64, Python 3.14", runner: ubuntu-24.04-arm, python: "3.14" }
+          - { name: "Linux x86_64, Python 3.14t", runner: ubuntu-24.04, python: "3.14t" }
+    env:
+      UV_PYTHON: ${{ matrix.python }} # instead of .python-version's; uv downloads it if need be
+      UV_PYTHON_PREFERENCE: only-managed # the latest patch release, not the runner's own Python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          cache-suffix: ${{ matrix.python }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          key: ${{ matrix.python }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # `uv python find` (the Taskfile's PYO3_PYTHON) reads .python-version and ignores
+      # UV_PYTHON, so without this it looks for .python-version's exact release (or, on the
+      # 3.14t job, finds the GIL build): pin the matrix's Python for every uv command.
+      # --no-project: a bare "3.14" would include 3.14.0, below requires-python, so uv refuses
+      # to write it; the latest 3.14 it resolves to is within it.
+      - name: Pin Python (matrix)
+        run: uv python pin --no-project "$MATRIX_PYTHON"
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+      - name: Build (uv sync)
+        run: uv sync
+      # The Rust unit tests, then the pytest suite.
+      - run: task test -- -ra
+
+  test-macos:
+    name: Test (macOS arm64, Python 3.14)
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      FASTPG_DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build (uv sync)
+        run: uv sync
+      # The major version docker-compose.yml's image is (postgres:18.6-trixie).
+      - name: Start PostgreSQL 18
+        run: |
+          brew install postgresql@18
+          echo "$(brew --prefix postgresql@18)/bin" >> "$GITHUB_PATH"
+          PATH="$(brew --prefix postgresql@18)/bin:$PATH" \
+            sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres" 55432
+      - name: Test
+        run: >-
+          task test -- -ra
+          --ignore tests/test_network_server.py --ignore tests/test_network_stall.py
+      - name: Show the server's log
+        if: failure()
+        run: cat "$RUNNER_TEMP/postgres/server.log"
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Python (.python-version)
+        run: uv python install
+      # scripts/build_docs.py imports fastpg for the agent docs' API reference: the extension is
+      # built.
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: task docs-test
+
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [lint, typecheck, test, test-macos, docs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "::error::A required job ended with: $result"; exit 1; }
+          done
