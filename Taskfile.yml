@@ -86,6 +86,22 @@ tasks:
     desc: Driver benchmark suite (e.g. `task bench -- -d 'fastpg*' -d 'asyncpg*'`)
     cmd: uv run yeet ./bench/run.py {{.CLI_ARGS}}
 
+  bench-ci:
+    desc: >-
+      The cross-driver comparison exactly as .github/workflows/benchmarks.yml runs it
+      (`task db-up bench-ci`; knobs: DSN TRIALS DURATION WARMUP OUT SUMMARY, extra args after --)
+    vars:
+      TRIALS: '{{.TRIALS | default "3"}}'
+      DURATION: '{{.DURATION | default "3"}}'
+      WARMUP: '{{.WARMUP | default "1"}}'
+      OUT: '{{.OUT | default "bench/results"}}'
+    env:
+      FASTPG_DSN: '{{.DSN | default "postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg"}}'
+    cmd: >-
+      uv run yeet ./bench/compare.py --trials {{.TRIALS}} --duration {{.DURATION}}
+      --warmup {{.WARMUP}} --output-dir {{shellQuote .OUT}}
+      {{if .SUMMARY}}--summary {{shellQuote .SUMMARY}}{{end}} {{.CLI_ARGS}}
+
   bench-docker:
     desc: Benchmark suite inside Linux next to postgres (e.g. `task bench-docker -- -t 3`)
     cmd: docker compose --profile bench run --rm --build bench ./bench/run.py {{.CLI_ARGS}}
