@@ -22,8 +22,8 @@ uv add fastpg                  # or: pip install fastpg
 uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
 
-Python 3.14.3 or later. Not on PyPI yet: until the first release, build from source, which
-needs a Rust toolchain: `uv add git+https://github.com/RogerThomas/fastpg`.
+Python 3.14.3 or later. Wheels for Linux (x86_64, aarch64; glibc and musl) and macOS (x86_64,
+arm64); elsewhere pip builds it from the sdist, which needs a Rust toolchain.
 
 ## Quickstart
 

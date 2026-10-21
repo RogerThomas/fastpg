@@ -8,9 +8,8 @@ uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
 
 * Python 3.14.3 or later, on macOS or Linux. Windows isn't supported.
-* fastpg isn't on PyPI yet. Until its first release, build it from source, which needs a
-  Rust toolchain and takes a few minutes:
-  `uv add git+https://github.com/RogerThomas/fastpg`.
+* Wheels for Linux (x86_64 and aarch64, glibc and musl) and macOS (x86_64 and arm64).
+  Elsewhere pip builds it from the sdist, which needs a Rust toolchain and takes a few minutes.
 * To work on fastpg itself, run `uv sync --all-groups` (or `task build`) in a checkout.
 
 ## The example database
