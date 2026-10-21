@@ -199,7 +199,7 @@ jobs:
         run: sh .github/scripts/sha256.sh check dist/*.sha256
       - name: Start PostgreSQL (docker-compose.yml, and its TLS-only server)
         run: docker compose --profile tls up --detach --wait postgres postgres-tls
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         if: matrix.platform.libc == 'glibc'
         with:
           version: ${{ env.UV_VERSION }}
@@ -324,7 +324,7 @@ jobs:
           brew install postgresql@18
           PATH="$(brew --prefix postgresql@18)/bin:$PATH" \
             sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres" 55432
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -350,7 +350,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -391,7 +391,7 @@ jobs:
         run: sh .github/scripts/sha256.sh check dist/*.sha256
       - name: Start PostgreSQL (docker-compose.yml, and its TLS-only server)
         run: docker compose --profile tls up --detach --wait postgres postgres-tls
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -505,7 +505,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
