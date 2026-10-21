@@ -22,6 +22,7 @@ nav:
       - TLS: guide/tls.md
       - Errors: guide/errors.md
   - Performance: performance.md
+  - Benchmark methodology: benchmarks.md
   - Architecture: architecture.md
   - API reference: api.md
   - Limitations: limitations.md

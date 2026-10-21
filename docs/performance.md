@@ -20,6 +20,12 @@ the 3 runs).
 
 ² One run, on 2026-10-10, with the same setup.
 
+For a repeatable comparison against all three drivers, with each driver's recommended
+setup, checked results, interleaved trials and the workloads fastpg doesn't win, see the
+[benchmark methodology](benchmarks.md) and the weekly
+[Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
+runs.
+
 ## Caveats
 
 * We wrote these benchmarks, and they cover narrow query shapes: lookups by primary key,
