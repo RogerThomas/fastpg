@@ -22,7 +22,7 @@ the 3 runs).
 
 For a repeatable comparison against all three drivers, with each driver's recommended
 setup, checked results, interleaved trials and the workloads fastpg doesn't win, see the
-[benchmark methodology](benchmarks.md) and the weekly
+[benchmark methodology](benchmarks.md) and the
 [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
 runs.
 

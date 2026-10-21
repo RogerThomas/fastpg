@@ -1,12 +1,12 @@
 # Cross-driver benchmarks: fastpg vs asyncpg, psycopg 3 (async) and psqlpy (bench/compare.py).
 # Methodology and limitations: docs/benchmarks.md. Reproduce locally: `task db-up bench-ci`.
 #
-# Not run on push or pull requests: a full run takes ~25-30 minutes of a shared runner, and
-# run-to-run noise on hosted runners is larger than most single-commit changes, so a
-# per-commit number would mostly measure the neighbours. The weekly run catches drift (new
-# driver releases come in through the lock file); dispatch it by hand before a release or
-# after a performance change. The job fails only if a run crashes or a driver returns or
-# writes wrong data, never because of the numbers.
+# Runs on pull requests and pushes to main that change the library, the benchmarks or the
+# lock file, weekly (new driver releases come in through the lock file), and by hand. A full
+# run takes ~25-30 minutes of a shared runner, whose run-to-run noise is larger than most
+# single-commit changes: read the ratios between drivers within one run, not one run's
+# absolute numbers against another's. The job fails only if a run crashes or a driver returns
+# or writes wrong data, never because of the numbers.
 name: Benchmarks
 
 on:
@@ -30,13 +30,39 @@ on:
         type: string
   schedule:
     - cron: "23 4 * * 1" # Mondays 04:23 UTC
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - native/**
+      - bench/**
+      - pyproject.toml
+      - uv.lock
+      - rust-toolchain.toml
+      - .github/workflows/benchmarks.yml
+  pull_request:
+    paths:
+      - src/**
+      - native/**
+      - bench/**
+      - pyproject.toml
+      - uv.lock
+      - rust-toolchain.toml
+      - .github/workflows/benchmarks.yml
 
 permissions:
   contents: read
 
+# One run per ref; a newer push to a pull request supersedes its running benchmark.
 concurrency:
-  group: benchmarks
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  TASK_VERSION: 3.54.0
+  UV_LOCKED: 1
+  UV_VERSION: 0.13.0 # same as ci.yml
 
 jobs:
   compare:
@@ -67,33 +93,31 @@ jobs:
       WARMUP: ${{ inputs.warmup || '1' }}
       WORKLOADS: ${{ inputs.workloads || '' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
-        run: |
-          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
-          rustup toolchain install "$channel" --profile minimal
-          rustc --version
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.24" # same uv as docker/Dockerfile.test
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
-          cache-dependency-glob: |
-            uv.lock
-            native/Cargo.lock
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build fastpg (release, via maturin) and install every dependency group
-        run: uv sync --locked --all-groups
+        run: uv sync --all-groups
 
-      - uses: arduino/setup-task@v2
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ env.TASK_VERSION }}
 
       # Durability is irrelevant to a client benchmark, and a commit flush to the runner's
       # disk would dominate the single-row writes; JIT only adds jitter to these plans.
@@ -117,7 +141,7 @@ jobs:
 
       - name: Upload raw results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmarks-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.OUT }}/

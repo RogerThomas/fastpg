@@ -5,8 +5,9 @@ How fastpg is compared with [asyncpg](https://github.com/MagicStack/asyncpg),
 [psqlpy](https://github.com/psqlpy-python/psqlpy), and why the comparison is built the way it
 is. The suite is `bench/compare.py` (code in `bench/comparison/`); the
 [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
-runs it weekly and on demand, and writes the results to the run's summary page, with the raw
-JSON as an artifact.
+runs it on every pull request and push to `main` that changes the library or the benchmarks,
+weekly, and on demand, and writes the results to the run's summary page, with the raw JSON as
+an artifact.
 
 The goal is a comparison a skeptic can't dismiss: every driver set up the way its own
 documentation recommends, the same work and the same data for all of them, checked results,

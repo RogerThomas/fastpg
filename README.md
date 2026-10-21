@@ -365,7 +365,7 @@ One CPU (`--cpus 1`), Linux containers, PostgreSQL 18.6, uvloop, rows decoded in
 Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
 [docs/performance.md](docs/performance.md). A broader comparison with asyncpg, psycopg 3 and
 psqlpy (each driver's recommended setup, checked results, interleaved trials, the workloads
-fastpg doesn't win too) runs weekly in CI: [docs/benchmarks.md](docs/benchmarks.md).
+fastpg doesn't win too) runs in GitHub Actions on every library change: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Development
 
