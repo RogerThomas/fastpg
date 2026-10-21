@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar, LiteralString, TypeIs
 import msgspec
 from asyncpg import Record
 from drivers.base import TABLE_ROWS, Person, expected_person
+from psycopg.errors import InsufficientPrivilege
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -277,8 +278,19 @@ FROM fastpg_bench.transfers"""
             await conn.execute(statement)
 
     @classmethod
-    async def drop(cls, conn: AsyncConnection) -> None:
-        await conn.execute(cls.DROP)
+    async def settle(cls, conn: AsyncConnection) -> bool:
+        """Start a run from the same server state: no rows or dirty pages left by the last one.
+
+        Empties the write tables (the bulk loads leave up to a million rows), then writes out
+        every dirty buffer, so the next run never pays for evicting the previous run's pages.
+        Returns False if the role may not ``CHECKPOINT`` (needs superuser or pg_checkpoint).
+        """
+        await conn.execute(cls.RESET_WRITES)
+        try:
+            await conn.execute("CHECKPOINT")
+        except InsufficientPrivilege:
+            return False
+        return True
 
 
 class Placeholders:

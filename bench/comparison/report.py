@@ -14,7 +14,7 @@ import statistics
 import subprocess
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, LiteralString
 from urllib.parse import urlsplit, urlunsplit
 
 import msgspec
@@ -146,6 +146,10 @@ class Probe:
         "fsync",
         "jit",
     )
+    CAN_CHECKPOINT: ClassVar[LiteralString] = (
+        "SELECT rolsuper OR pg_has_role(current_user, 'pg_checkpoint', 'MEMBER')"
+        " FROM pg_roles WHERE rolname = current_user"
+    )
     CI_VARS: ClassVar[tuple[str, ...]] = (
         "GITHUB_REPOSITORY",
         "GITHUB_REF_NAME",
@@ -233,6 +237,9 @@ class Probe:
                 cur = await conn.execute("SELECT current_setting(%s)", (name,))
                 setting = await cur.fetchone()
                 settings[name] = str(setting[0]) if setting else "unknown"
+            cur = await conn.execute(cls.CAN_CHECKPOINT)
+            allowed = await cur.fetchone()
+            settings["checkpoint_between_runs"] = "yes" if allowed and allowed[0] else "no"
         return version, settings
 
     @classmethod

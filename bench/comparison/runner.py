@@ -369,6 +369,7 @@ async def run_all(
 ) -> list[Run]:
     """Seed the schema, then run every (trial, workload, configuration)."""
     runs: list[Run] = []
+    warned = False
     async with await AsyncConnection.connect(plan.dsn, autocommit=True) as control:
         await Schema.create(control, keep=plan.keep_schema)
         for trial in range(plan.trials):
@@ -385,6 +386,9 @@ async def run_all(
                         config=config.name,
                         position=position,
                     )
+                    if not await Schema.settle(control) and not warned:
+                        logger.warning("no CHECKPOINT between runs: role lacks pg_checkpoint")
+                        warned = True
                     run = await _run_one(base, workload, config, plan, control)
                     logger.info(
                         "trial %d/%d %-22s %-17s %s",
