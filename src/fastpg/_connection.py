@@ -1062,7 +1062,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     ``require``, ``verify-ca``, ``verify-full``), ``sslrootcert`` (a CA file, or ``system``;
     ``verify-*`` without it uses the system's trusted roots), ``sslnegotiation=direct``,
     ``sslcert``/``sslkey``, ``sslsni`` and ``channel_binding`` (``prefer`` (the default),
-    ``require``, ``disable``). Unix sockets never use TLS. See ``notes/tls.md``.
+    ``require``, ``disable``). Unix sockets never use TLS. See the TLS guide in the docs.
 
     ``connect_timeout`` (seconds, as in libpq: 0 or absent waits indefinitely, 1 means 2)
     bounds each address tried, from its TCP connect to the end of the startup; when it
