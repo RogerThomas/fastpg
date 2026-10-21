@@ -117,7 +117,13 @@ jobs:
           workspaces: native -> target
           key: ${{ matrix.python }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # First, so that the Taskfile's PYO3_PYTHON (`uv python find`) is the venv's Python.
+      # `uv python find` (the Taskfile's PYO3_PYTHON) reads .python-version and ignores
+      # UV_PYTHON, so without this it looks for .python-version's exact release (or, on the
+      # 3.14t job, finds the GIL build): pin the matrix's Python for every uv command.
+      - name: Pin Python (matrix)
+        run: uv python pin "$MATRIX_PYTHON"
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
       - name: Build (uv sync)
         run: uv sync
       # The Rust unit tests, then the pytest suite.
