@@ -5,9 +5,9 @@
 
 fastpg is an async PostgreSQL client for Python 3.14, written in Rust on
 [xitca-postgres](https://github.com/HFQR/xitca-web/tree/main/postgres) and
-[PyO3](https://pyo3.rs). It decodes binary rows straight into
-[msgspec](https://jcristharif.com/msgspec/) Structs or pydantic models, and runs the whole
-protocol on the asyncio event loop's thread, with no threads of its own.
+[PyO3](https://pyo3.rs). It decodes rows from PostgreSQL's binary format straight into
+[msgspec](https://msgspec.dev/) Structs or pydantic models, with no intermediate
+tuples or dicts, and runs the whole protocol on the asyncio event loop's thread.
 
 ```python
 import asyncio
@@ -23,45 +23,53 @@ class Person(msgspec.Struct):
 
 async def main() -> None:
     dsn = "postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg"
-    async with await fastpg.connect(dsn) as conn:
+    async with await fastpg.create_pool(dsn) as pool:
         query = "SELECT name, age FROM people WHERE id = $1"
-        person = await conn.select_one(query, 42, into=Person)
+        person = await pool.select_one(query, 42, into=Person)
         print(person)  # Person(name='person-42', age=60)
 
 
 asyncio.run(main())
 ```
 
-| one CPU, Linux | fastpg | asyncpg |
-|---|---:|---:|
-| Lookups by id, 16 tasks through the pool | 64.9k ops/s | 25.3k ops/s |
-| 10,000-row fetch | 1.73M rows/s | 0.71M rows/s |
-| CPU per request | 23.5 µs | 34 µs |
+## Performance
 
-Setup, more drivers and caveats: [Performance](performance.md).
+Throughput against the fastest of asyncpg, psycopg 3 and psqlpy, each with its own pool of 16
+connections, every driver returning the same msgspec Structs, on a shared GitHub runner
+([details and caveats](performance.md)):
+
+| workload | fastpg | best other | vs best other |
+|---|---:|---:|---:|
+| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s | 2.32x |
+| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s | 2.09x |
+| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s | 2.15x |
+| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s | 2.23x |
+| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s | 1.41x |
 
 ## Install
 
-fastpg is an early prototype, not on PyPI yet (see [Limitations](limitations.md)). It needs
-Python 3.14.3 or later on macOS or Linux, and builds from a checkout with a Rust toolchain:
-
 ```sh
-uv add /path/to/fastpg                     # msgspec Structs
-uv add /path/to/fastpg --extra pydantic    # and pydantic models
+uv add fastpg                  # or: pip install fastpg
+uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
 
-[Getting started](guide/getting-started.md) runs the examples against a local database.
+Python 3.14.3 or later, on macOS or Linux. Until the first PyPI release, see
+[Getting started](guide/getting-started.md#install) to build from source.
 
 ## Features
 
-* **Typed rows**: `into=Person` builds msgspec Structs or pydantic v2 models from the binary
-  values, with no intermediate tuples or dicts. See [Structs](guide/structs.md).
-* **Prepared, binary, pipelined**: every statement is prepared on first use and cached per
-  connection, and concurrent queries share a connection without waiting for each other's
-  round trips.
-* **A routing pool** that sends shared queries to idle connections, or pipelines them onto
-  the one with the least expected work. See [Connection pool](guide/pool.md).
-* **Template strings**: `t"... WHERE id = {person_id}"` binds values as parameters, never as
-  SQL text. See [Template strings](guide/queries.md#template-strings).
-* **Bulk writes, transactions and TLS**: binary `COPY`, `insert_many` and `execute_many`;
-  savepoints and isolation levels; libpq's `sslmode` options.
+* **Typed rows**: `into=Person` builds msgspec Structs, pydantic v2 models, NamedTuples or
+  dicts from the binary values; a type that needs validation is validated, never skipped.
+  See [Structs](guide/structs.md).
+* **Prepared, binary, on the loop**: statements are prepared on first use and cached per
+  connection, and a query costs no thread hand-off.
+* **A routing pool**: single statements need no `acquire()`; they go to idle connections, or
+  pipeline onto the one with the least queued work. See [Connection pool](guide/pool.md).
+* **Bulk writes**: binary `COPY`, `insert_many` and `execute_many`, all-or-nothing. See
+  [Writes](guide/writes.md).
+* **Safe queries**: `$1` and `:name` parameters, and t-strings whose values are always bound.
+  See [Queries](guide/queries.md).
+* **Transactions, TLS, errors**: savepoints and isolation levels, libpq's `sslmode` keys, and
+  exceptions mapped from SQLSTATE.
+
+fastpg is alpha software; see [Limitations](limitations.md).

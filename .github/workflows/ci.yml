@@ -178,9 +178,10 @@ jobs:
           echo "$(brew --prefix postgresql@18)/bin" >> "$GITHUB_PATH"
           PATH="$(brew --prefix postgresql@18)/bin:$PATH" \
             sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres" 55432
+      # Serially: every worker would share this one server (not yet reliable in parallel).
       - name: Test
         run: >-
-          task test -- -ra
+          task test PARALLEL=-n0 -- -ra
           --ignore tests/test_network_server.py --ignore tests/test_network_stall.py
       - name: Show the server's log
         if: failure()

@@ -1140,9 +1140,8 @@ async def create_pool(
         dsn: e.g. ``"postgresql://user:pw@host:5432/db"``.
         min_size: Connections kept open even when idle.
         max_size: Upper bound on connections. Connections only open when every existing one
-            is busy, so a higher ceiling costs nothing at low load; 16 kept fast-query
-            p99 under 0.3 ms at 20k req/s with 1% slow (20 ms) queries on Linux, where 8
-            did not (see notes/pool.md).
+            is busy, so a higher ceiling costs nothing at low load, and leaves room for the
+            occasional slow query not to hold up fast ones.
         max_inflight_per_conn: Shared statements pipelined on one connection at most;
             ``1`` gives one-statement-per-connection pooling like asyncpg's.
         statement_cache_size: Per-connection prepared statement cache (see ``connect``).
