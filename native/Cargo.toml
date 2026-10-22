@@ -34,6 +34,10 @@ webpki-roots = "1"
 xitca-io = { version = "0.5.1", features = ["runtime"] }
 xitca-postgres = "0.4"
 
+[build-dependencies]
+# `build.rs`: the `Py_3_*` cfgs of the Python being built for.
+pyo3-build-config = { version = "0.30", features = ["resolve-config"] }
+
 [lints.clippy]
 expect_used = "deny"
 panic = "deny"

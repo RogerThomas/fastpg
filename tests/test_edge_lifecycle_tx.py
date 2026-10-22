@@ -1,15 +1,12 @@
 """Transactions at the edges: errors inside, failed commits, nesting, misuse of the object."""
 
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
 
 import pytest
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 
 class BlockError(Exception):

@@ -11,9 +11,10 @@ import asyncio
 import socket
 import ssl
 import struct
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import msgspec
@@ -21,10 +22,6 @@ import pytest
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-    from pathlib import Path
 
 
 class Item(msgspec.Struct):

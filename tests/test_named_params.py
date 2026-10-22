@@ -216,14 +216,6 @@ async def test_positional_and_named_params_rejected(conn: fastpg.Connection) -> 
         await conn.execute("SELECT :a::int", 1, params={"a": 1})
 
 
-async def test_template_and_named_params_rejected(conn: fastpg.Connection) -> None:
-    a = 1
-    with pytest.raises(TypeError, match="t-string"):
-        await conn.select_one(t"SELECT {a}::int", params={"a": 1})
-    with pytest.raises(TypeError, match="t-string"):
-        await conn.execute(t"SELECT {a}::int", params={"a": 1})
-
-
 @pytest.mark.parametrize("value", [(1,), [1], "a", 1, PersonSelect])
 async def test_unsupported_params_type_rejected(conn: fastpg.Connection, value: object) -> None:
     untyped_caller: Any = value  # what an untyped caller could pass
@@ -304,9 +296,6 @@ async def test_pool_takes_params(dsn: str) -> None:
             await pool.select_one(query, params={"id": 42})
         with pytest.raises(TypeError, match="not both"):
             await pool.select_one(query, 42, params={"id": 42})
-        a = 1
-        with pytest.raises(TypeError, match="t-string"):
-            await pool.execute(t"SELECT {a}::int", params={"a": 1})
 
 
 async def test_pool_transaction_takes_params(dsn: str) -> None:

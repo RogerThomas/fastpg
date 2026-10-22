@@ -3,8 +3,9 @@
 import datetime as dt
 import math
 import secrets
+from collections.abc import AsyncIterator
 from decimal import Decimal
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, TypeIs
+from typing import Annotated, Any, NamedTuple, TypeIs
 from urllib.parse import urlsplit
 
 import msgspec
@@ -12,9 +13,6 @@ import pydantic
 import pytest
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 
 class AnyValue(msgspec.Struct):

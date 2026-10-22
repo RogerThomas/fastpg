@@ -35,10 +35,11 @@ import asyncio
 import math
 import time
 from collections import deque
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import InitVar, dataclass, field
-from string.templatelib import Template
-from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Self, overload
+from types import TracebackType
+from typing import Any, ClassVar, Concatenate, Self, overload
 
 import msgspec
 
@@ -54,14 +55,9 @@ from fastpg._connection import (
 from fastpg._group import grouping_for
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
-from fastpg._template import TemplateCompiler
+from fastpg._template import Template, TemplateCompiler
+from fastpg._writes import Table
 from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Sequence
-    from types import TracebackType
-
-    from fastpg._writes import Table
 
 
 @dataclass(slots=True, eq=False)
@@ -94,7 +90,9 @@ class _Entry:
         self.fetcher = Fetcher.of(self.conn)
 
 
-@dataclass(slots=True, eq=False)
+# repr=False: the generated repr reads `entry`, unset until sent, and Python 3.13's
+# deque.remove puts the repr of a missing item in its ValueError (`_cancel_waiter`).
+@dataclass(slots=True, eq=False, repr=False)
 class _Waiter:
     """A shared statement waiting (FIFO) for a slot (rule 4), and once sent, its slot.
 

@@ -151,6 +151,7 @@ dependencies = [
  "percent-encoding",
  "postgres-protocol",
  "pyo3",
+ "pyo3-build-config",
  "rmp",
  "rustls",
  "rustls-native-certs",

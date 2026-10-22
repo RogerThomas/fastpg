@@ -10,19 +10,16 @@ import asyncio
 import gc
 import random
 import socket
+from collections.abc import AsyncIterator, Coroutine, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import msgspec
 import pytest
+from conftest import LoopErrors
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Coroutine, Iterator
-
-    from conftest import LoopErrors
 
 
 class Row(msgspec.Struct):

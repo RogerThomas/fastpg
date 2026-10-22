@@ -13,22 +13,29 @@ import os
 import socket
 import sys
 import warnings
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from string.templatelib import Template
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
+from types import TracebackType
+from typing import Any, ClassVar, Literal, Self, overload
 
 import msgspec
 
 from fastpg import _writes
 from fastpg._group import grouping_for
 from fastpg._named import NamedBinder, NamedParams
+from fastpg._native import (
+    Cancel,
+    SocketOptions,
+    after_fork_in_child,
+    dsn_socket_options,
+    dsn_targets,
+)
 from fastpg._native import Connection as NativeConnection
-from fastpg._native import after_fork_in_child, dsn_socket_options, dsn_targets
-from fastpg._spec import Planner
-from fastpg._template import TemplateCompiler
+from fastpg._spec import Plan, Planner
+from fastpg._template import Template, TemplateCompiler
 from fastpg.errors import (
     DatabaseError,
     DecodeError,
@@ -36,13 +43,6 @@ from fastpg.errors import (
     InterfaceError,
     UnsupportedTypeError,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
-    from types import TracebackType
-
-    from fastpg._native import Cancel, SocketOptions
-    from fastpg._spec import Plan
 
 type Strategy = Literal["auto", "direct", "msgpack", "json"]
 """How rows become ``into=`` objects (``msgspec.Struct`` or pydantic ``BaseModel``).
@@ -110,7 +110,7 @@ class _Queries:
 
     _native: NativeConnection
     _loop: asyncio.AbstractEventLoop
-    _canceller: _Canceller
+    _canceller: "_Canceller"
     _templates: ClassVar[TemplateCompiler] = TemplateCompiler(max_size=1024)
     _named: ClassVar[NamedBinder] = NamedBinder(1024)
 
@@ -497,7 +497,7 @@ class Connection(_Queries):
 
     _closed: asyncio.Future[None]
     _released: bool = field(init=False, default=False)
-    _transaction: Transaction | None = field(init=False, default=None)
+    _transaction: "Transaction | None" = field(init=False, default=None)
 
     def _release(self) -> None:
         if not self._released:
@@ -548,7 +548,7 @@ class Connection(_Queries):
         isolation: IsolationLevel | None = None,
         readonly: bool = False,
         deferrable: bool = False,
-    ) -> Transaction:
+    ) -> "Transaction":
         """Start a transaction: ``async with conn.transaction() as tx: await tx.execute(...)``.
 
         Commits when the block exits normally and rolls back when it raises. Only one

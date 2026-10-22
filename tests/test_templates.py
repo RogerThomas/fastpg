@@ -6,7 +6,7 @@ import enum
 import uuid
 from decimal import Decimal
 from string.templatelib import Interpolation, Template
-from typing import Any, assert_type
+from typing import TYPE_CHECKING, Any, assert_type
 
 import msgspec
 import pytest
@@ -14,10 +14,24 @@ import pytest
 import fastpg
 from fastpg import Identifier
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 
 class Person(msgspec.Struct):
     name: str
     age: int
+
+
+class Item(msgspec.Struct):
+    id: int
+    v: str
+
+
+@pytest.fixture(name="pool")
+async def _pool(dsn: str) -> AsyncIterator[fastpg.Pool]:
+    async with await fastpg.create_pool(dsn, max_size=4) as pool:
+        yield pool
 
 
 class Color(enum.Enum):
@@ -385,3 +399,50 @@ async def test_many_dynamic_templates_stay_correct(conn: fastpg.Connection) -> N
     for i in range(1100):
         template = Template(f"SELECT {i}::int4, ", Interpolation(i, "i"), "::int4")
         assert await conn.select_one(template) == (i, i)
+
+
+async def test_params_with_a_t_string_is_refused(conn: fastpg.Connection) -> None:
+    value = 1
+    with pytest.raises(TypeError, match="a t-string takes its values from its interpolations"):
+        await conn.select_one(t"SELECT {value}::int", params={"value": 1})
+    with pytest.raises(TypeError, match="a t-string takes its values from its interpolations"):
+        await conn.execute(t"SELECT {value}::int", params={"value": 1})
+    assert await conn.select_one("SELECT 42") == (42,)
+
+
+async def test_execute_script_refuses_a_template_with_values(conn: fastpg.Connection) -> None:
+    value = 1
+    with pytest.raises(TypeError, match="simple query protocol, which has no parameters"):
+        await conn.execute_script(t"SELECT {value}")
+    assert await conn.select_one("SELECT 42") == (42,)
+
+
+async def test_pool_runs_t_string_queries(pool: fastpg.Pool) -> None:
+    item_id = 7
+    got = await pool.select_one(t"SELECT {item_id}::int4 AS id, {'v'}::text AS v", into=Item)
+    assert got == Item(7, "v")
+    assert await pool.select_many(t"SELECT generate_series(1, {3}::int4)") == [(1,), (2,), (3,)]
+
+
+async def test_pool_t_string_script_with_identifier(pool: fastpg.Pool) -> None:
+    table = Identifier("tstr_pool_items")
+    await pool.execute_script(
+        t"DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (id int PRIMARY KEY, v text)",
+    )
+    await pool.execute_script(t"INSERT INTO {table} VALUES (1, 'v')")
+    assert await pool.select_one(t"SELECT count(*) FROM {table}") == (1,)
+    await pool.execute_script(t"DROP TABLE {table}")
+
+
+async def test_template_and_named_params_rejected(conn: fastpg.Connection) -> None:
+    a = 1
+    with pytest.raises(TypeError, match="t-string"):
+        await conn.select_one(t"SELECT {a}::int", params={"a": 1})
+    with pytest.raises(TypeError, match="t-string"):
+        await conn.execute(t"SELECT {a}::int", params={"a": 1})
+
+
+async def test_pool_template_and_named_params_rejected(pool: fastpg.Pool) -> None:
+    a = 1
+    with pytest.raises(TypeError, match="t-string"):
+        await pool.execute(t"SELECT {a}::int", params={"a": 1})

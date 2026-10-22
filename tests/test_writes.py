@@ -6,9 +6,10 @@ import asyncio
 import datetime as dt
 import enum
 import uuid
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import Any, NamedTuple
 
 import msgspec
 import pytest
@@ -16,9 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable, Iterator
 
 
 class Mood(enum.Enum):

@@ -11,16 +11,13 @@ import contextlib
 import socket
 import struct
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from testcontainers.core.container import DockerContainer
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
 
 
 def with_params(dsn: str, **params: str) -> str:
@@ -313,7 +310,7 @@ class DisposableServer:
                 try:
                     async with asyncio.timeout(2):
                         await _answers(self.dsn)
-                except fastpg.Error, TimeoutError:
+                except (fastpg.Error, TimeoutError):
                     await asyncio.sleep(0.05)
                 else:
                     return time.monotonic() - start

@@ -104,9 +104,12 @@ async def test_direct_strategy(conn: fastpg.Connection) -> None:
 
 
 async def test_rows_stay_gc_tracked(conn: fastpg.Connection) -> None:
-    # A dict can be given a container later, and CPython wouldn't re-track an untracked one.
+    # A dict can be given a container later, and CPython 3.14 wouldn't re-track an untracked
+    # one. (3.13 untracks a dict of atoms itself, in a collection, and re-tracks it then.)
     rows = await conn.select_many("SELECT id FROM people WHERE id <= 3 ORDER BY id", into=dict)
     gc.collect()
+    for row in rows:
+        row["children"] = []
     assert [gc.is_tracked(row) for row in rows] == [True, True, True]
 
 

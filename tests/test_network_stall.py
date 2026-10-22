@@ -6,19 +6,15 @@ again, every connection and pool slot is usable or replaced; nothing is left ope
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Coroutine
 
 import pytest
+from faults import DisposableServer, FaultProxy
 
 import fastpg
 
 # Every test here times something: run after the rest, alone (`task test`).
 pytestmark = pytest.mark.timing
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Coroutine
-
-    from faults import DisposableServer, FaultProxy
 
 
 async def _settle(pool: fastpg.Pool) -> None:

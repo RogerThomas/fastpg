@@ -3,6 +3,7 @@
 import asyncio
 import datetime as dt
 import time
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Annotated, Any
 
 import msgspec
@@ -12,7 +13,7 @@ import fastpg
 from fastpg import errors
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable
+    from collections.abc import Awaitable
 
 
 class Item(msgspec.Struct):

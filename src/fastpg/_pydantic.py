@@ -19,16 +19,14 @@ routes:
 """
 
 import types
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeIs, get_args, get_origin
+from typing import Annotated, Any, ClassVar, TypeIs, get_args, get_origin
 
 from pydantic import AliasChoices, AliasPath, BaseModel, TypeAdapter, ValidationError
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from fastpg._native import StructSpec
 from fastpg._spec import FieldArg, Kind, NeedsValidationError, Plan
-
-if TYPE_CHECKING:
-    from pydantic.fields import FieldInfo
 
 
 class ModelPlanner:

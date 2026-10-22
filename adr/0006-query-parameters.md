@@ -15,11 +15,11 @@ parameters.
   comments (including nested `/* */`) and dollar quotes; `::` is a cast and `\:` a literal
   colon. Rewrites are cached per query string and value getters per (query, params type),
   about 140 ns per call. Queries without `params=` are never scanned.
-- t-strings (PEP 750): interpolations always become `$n` parameters, and nested templates
-  are spliced in and renumbered. `fastpg.Identifier` interpolates a quoted name.
-  Conversions, format specs and a literal `$<digit>` in template text are rejected. The
-  generated SQL is cached per template and shares prepared statements with the equivalent
-  `$n` query.
+- t-strings (PEP 750, Python 3.14+): interpolations always become `$n` parameters, and
+  nested templates are spliced in and renumbered. `fastpg.Identifier` interpolates a quoted
+  name. Conversions, format specs and a literal `$<digit>` in template text are rejected.
+  The generated SQL is cached per template and shares prepared statements with the
+  equivalent `$n` query.
 
 ## Consequences
 
