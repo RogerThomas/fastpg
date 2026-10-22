@@ -381,7 +381,7 @@ class Grouping[T]:
         into = self._into
         if self._positional == tuple(name for name, _ in columns):  # all of them, in order
             # The columns are equally long (no strict=: that's 3.14+).
-            return list(map(into, *(values for _, values in columns)))  # noqa: B912
+            return list(map(into, *(values for _, values in columns)))
         names = [name for name, _ in columns]
         return [
             into(**dict(zip(names, values, strict=True)))
