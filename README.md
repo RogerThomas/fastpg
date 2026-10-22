@@ -19,8 +19,6 @@ On common queries it is about twice as fast as asyncpg, psycopg 3 and psqlpy.
 uv add fastpg
 ```
 
-fastpg needs Python 3.13 or newer, on Linux or macOS.
-
 ## Quickstart
 
 ```python
