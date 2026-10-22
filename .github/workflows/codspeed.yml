@@ -1,0 +1,88 @@
+# CodSpeed: the pytest-codspeed benchmarks in benchmarks/, run under CodSpeed's CPU simulation
+# on every push to main and every pull request, with results reported on the pull request.
+#
+# The simulation counts the instructions of the client process only (the PostgreSQL service
+# runs in its own container, outside it), so what's tracked is fastpg's own work per query:
+# encoding parameters, the protocol and decoding rows into Python objects. Deterministic, so a
+# change of a few percent in that work shows up, unlike in the wall-clock comparison of
+# benchmarks.yml. Reproduce locally: `task db-up`, then
+# `codspeed run --mode simulation -- uv run pytest benchmarks --codspeed`.
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets CodSpeed trigger runs on past commits for an initial baseline.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OpenID Connect authentication with CodSpeed
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  UV_LOCKED: 1
+  UV_VERSION: 0.13.0 # same as ci.yml
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        # Same image as docker-compose.yml; seeded below with docker/initdb.
+        image: postgres:18.6-trixie
+        env:
+          POSTGRES_USER: fastpg
+          POSTGRES_PASSWORD: fastpg
+          POSTGRES_DB: fastpg
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U fastpg -d fastpg"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      FASTPG_DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build fastpg (release, via maturin) and install the dev dependencies
+        run: uv sync
+
+      - name: Seed PostgreSQL (docker/initdb)
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          cat docker/initdb/*.sql \
+            | docker exec -i "$POSTGRES_CONTAINER" psql -q -U fastpg -d fastpg -v ON_ERROR_STOP=1
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@821a40cd6c80e3cfe387caf55668287addd808da # v5.5.0
+        with:
+          mode: simulation
+          run: uv run pytest benchmarks --codspeed --timeout 600

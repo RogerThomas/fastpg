@@ -6,6 +6,8 @@
   </picture>
 </h1>
 
+<a href="https://app.codspeed.io/RogerThomas/fastpg?utm_source=badge"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"/></a>
+
 An async PostgreSQL client for Python 3.14, written in Rust on [xitca-postgres] and [PyO3].
 It decodes rows from PostgreSQL's binary format straight into [msgspec] Structs (or pydantic
 models), with no intermediate tuples or dicts, and runs the whole protocol on the asyncio
@@ -106,6 +108,10 @@ fastpg's narrowest lead is a six-round-trip transaction (1.13x), and over a real
 round trip shrinks single-query latency gaps. All workloads, latency and caveats:
 [Benchmarks] and [Methodology].
 
+fastpg's own CPU per query (each row type, the query forms and the bulk writes) is also
+tracked on every pull request by [CodSpeed](https://app.codspeed.io/RogerThomas/fastpg),
+under CPU simulation: `benchmarks/`, run by `.github/workflows/codspeed.yml`.
+
 ## Documentation
 
 * [Getting started]
@@ -116,6 +122,13 @@ round trip shrinks single-query latency gaps. All workloads, latency and caveats
 * [Architecture] and its [design decisions]
 
 `task docs` builds and serves the documentation site locally.
+
+fastpg's own client-side CPU per query (tuples, Structs, dicts, pydantic, msgpack/json
+strategies, t-strings, named parameters and the bulk writes) is tracked on every pull request
+with [CodSpeed](https://app.codspeed.io/RogerThomas/fastpg): the pytest-codspeed benchmarks in
+`benchmarks/`, run by `.github/workflows/codspeed.yml` under CPU simulation. Locally, against
+`task db-up`: `codspeed run --mode simulation -- uv run pytest benchmarks --codspeed` (or
+`uv run pytest benchmarks` to just check they pass).
 
 ## Development
 
