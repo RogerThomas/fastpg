@@ -9,9 +9,7 @@ uv add fastpg                  # or: pip install fastpg
 msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
 models work too (`uv add 'fastpg[pydantic]'`, see [pydantic](pydantic.md)).
 
-* Python 3.14.3 or later, on macOS or Linux. Windows isn't supported.
-* Wheels for Linux (x86_64 and aarch64, glibc and musl) and macOS (x86_64 and arm64).
-  Elsewhere pip builds it from the sdist, which needs a Rust toolchain and takes a few minutes.
+* Python 3.14.3 or later, on Linux or macOS.
 * To work on fastpg itself, run `uv sync --all-groups` (or `task build`) in a checkout.
 
 ## The example database
