@@ -66,6 +66,7 @@ def null_value_error(error: Exception, into: type[Any]) -> NullValueError | None
     if found is None:
         return None
     row, column = found
-    message = f'column "{column}" is NULL but {into.__name__}.{_attribute(into, column)} is not optional'
+    field = f"{into.__name__}.{_attribute(into, column)}"
+    message = f'column "{column}" is NULL but {field} is not optional'
     # select_many: the row (0-based), which the direct route doesn't know.
     return NullValueError(message if row is None else f"{message} (row {row})")
