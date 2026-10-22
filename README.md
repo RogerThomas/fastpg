@@ -6,6 +6,8 @@
   </picture>
 </h1>
 
+<a href="https://app.codspeed.io/RogerThomas/fastpg?utm_source=badge"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"/></a>
+
 Docs: `task docs` (builds and serves the documentation site).
 
 An async PostgreSQL client for Python 3.14, written in Rust on top of
@@ -366,6 +368,13 @@ Setup, psycopg 3 and psqlpy, caveats and how to reproduce:
 [docs/performance.md](docs/performance.md). A broader comparison with asyncpg, psycopg 3 and
 psqlpy (each driver's recommended setup, checked results, interleaved trials, the workloads
 fastpg doesn't win too) runs in GitHub Actions on every change merged to `main`: [docs/benchmarks.md](docs/benchmarks.md).
+
+fastpg's own client-side CPU per query (tuples, Structs, dicts, pydantic, msgpack/json
+strategies, t-strings, named parameters and the bulk writes) is tracked on every pull request
+with [CodSpeed](https://app.codspeed.io/RogerThomas/fastpg): the pytest-codspeed benchmarks in
+`benchmarks/`, run by `.github/workflows/codspeed.yml` under CPU simulation. Locally, against
+`task db-up`: `codspeed run --mode simulation -- uv run pytest benchmarks --codspeed` (or
+`uv run pytest benchmarks` to just check they pass).
 
 ## Development
 
