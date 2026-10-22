@@ -8,17 +8,14 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import AsyncIterator, Iterable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import pytest
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable, Iterator
 
 
 @pytest.fixture

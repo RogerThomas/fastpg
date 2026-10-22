@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Roger Thomas", email = "roger.thomas87@gmail.com" }]
-requires-python = ">=3.14.3"
+requires-python = ">=3.13"
 dependencies = [
     "msgspec>=0.22.0",
 ]
@@ -29,7 +29,9 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Database",
@@ -63,6 +65,7 @@ cache-keys = [
     { file = "native/Cargo.toml" },
     { file = "native/Cargo.lock" },
     { file = "rust-toolchain.toml" },
+    { file = "native/build.rs" },
     { file = "native/src/**/*.rs" },
 ]
 
@@ -102,10 +105,19 @@ testpaths = ["tests"]
 timeout = 30
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py313"
 line-length = 100
 # Archived scripts kept verbatim next to the measurements they produced.
 extend-exclude = ["notes/eval"]
+
+# Checked as 3.14: the files with t-string literals (3.14 syntax; the t-string tests aren't
+# collected on 3.13, tests/conftest.py), and the benchmarks, which run on .python-version's
+# Python only (their dependency group doesn't install on 3.15 or free-threaded builds).
+[tool.ruff.per-file-target-version]
+"tests/test_templates.py" = "py314"
+"examples/basic.py" = "py314"
+"bench/**" = "py314"
+"benchmarks/**" = "py314"
 
 [tool.ruff.lint]
 select = [
@@ -151,9 +163,22 @@ ignore = [
 ]
 
 [tool.pyright]
-pythonVersion = "3.14"
+# The lowest supported Python, without what ruff's per-file-target-version checks as 3.14:
+# pyright-py314.json checks everything as 3.14, those included (`task typecheck` runs both).
+pythonVersion = "3.13"
 typeCheckingMode = "strict"
-exclude = ["notes/eval", "faster", "tmp_*.py", "**/.*", "**/node_modules", "**/__pycache__"]
+exclude = [
+    "notes/eval",
+    "faster",
+    "tmp_*.py",
+    "**/.*",
+    "**/node_modules",
+    "**/__pycache__",
+    "tests/test_templates.py",
+    "examples/basic.py",
+    "bench",
+    "benchmarks",
+]
 
 [tool.ruff.lint.flake8-type-checking]
 # msgspec and pydantic resolve field annotations at runtime, so their imports must stay real.

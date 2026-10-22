@@ -10,11 +10,13 @@ import asyncio
 import gc
 import os
 import secrets
+import sys
 import tempfile
+from collections.abc import AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -23,8 +25,15 @@ from testcontainers.core.container import DockerContainer
 
 import fastpg
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Generator, Iterator
+# t-string literals are a syntax error before Python 3.14, so there the t-string tests aren't
+# collected at all (fastpg runs on 3.13, but without t-string queries).
+collect_ignore = [] if sys.version_info >= (3, 14) else ["test_templates.py"]
+
+
+def pytest_report_header() -> str | None:
+    if collect_ignore:
+        return "skipping test_templates.py: t-string queries need Python 3.14 or later"
+    return None
 
 
 @dataclass(slots=True)

@@ -81,22 +81,10 @@ async def test_a_waiting_pool_query_that_is_not_a_str_fails_alone(dsn: str) -> N
         assert (stats.idle, stats.in_flight, stats.waiting) == (1, 0, 0)
 
 
-async def test_params_with_a_t_string_is_refused(conn: fastpg.Connection) -> None:
-    value = 1
-    with pytest.raises(TypeError, match="a t-string takes its values from its interpolations"):
-        await conn.select_one(t"SELECT {value}::int", params={"value": 1})
-    with pytest.raises(TypeError, match="a t-string takes its values from its interpolations"):
-        await conn.execute(t"SELECT {value}::int", params={"value": 1})
-    await _assert_usable(conn)
-
-
 async def test_execute_script_takes_no_parameters(conn: fastpg.Connection) -> None:
     untyped: Any = conn.execute_script
     with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
         untyped("SELECT $1", 1)
-    value = 1
-    with pytest.raises(TypeError, match="simple query protocol, which has no parameters"):
-        await conn.execute_script(t"SELECT {value}")
     with pytest.raises(errors.DatabaseError, match="there is no parameter"):
         await conn.execute_script("SELECT $1")
     await _assert_usable(conn)

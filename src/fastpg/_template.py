@@ -15,10 +15,42 @@ identity but still hit on equality.
 """
 
 import re
+import sys
 import threading
 from itertools import pairwise
-from string.templatelib import Interpolation, Template
-from typing import ClassVar, Final, Literal, final, override
+from typing import Any, ClassVar, Final, Literal, Never, final, override
+
+if sys.version_info >= (3, 14):
+    from string.templatelib import Interpolation, Template
+else:
+    # Python 3.13 has no t-strings. These stand in for string.templatelib's classes (with the
+    # attributes the compiler reads) so that this module, and Identifier, import there: no
+    # object is ever one of them, so ``isinstance(query, Template)`` is False for every query
+    # and the compiler is never called.
+
+    @final
+    class Interpolation[T]:
+        __slots__ = ()
+        value: T
+        expression: str
+        conversion: Literal["a", "r", "s"] | None
+        format_spec: str
+
+        def __new__(cls) -> Never:
+            msg = "t-strings need Python 3.14 or later"
+            raise TypeError(msg)
+
+    @final
+    class Template:
+        __slots__ = ()
+        strings: tuple[str, ...]
+        interpolations: tuple[Interpolation[Any], ...]
+        values: tuple[Any, ...]
+
+        def __new__(cls) -> Never:
+            msg = "t-strings need Python 3.14 or later"
+            raise TypeError(msg)
+
 
 type _Shape = tuple[tuple[str, ...], *tuple[_Shape | str | None, ...]]
 """A template's static structure: its strings, then per interpolation a nested template's
@@ -37,6 +69,8 @@ class Identifier:
     ``SELECT * FROM "my schema"."people"``. Each part is double-quoted with embedded quotes
     doubled, so it's taken verbatim: case-sensitive, never a keyword or SQL syntax.
     Put it where a bare name would go, never inside quotes.
+
+    t-strings need Python 3.14; on 3.13 ``Identifier`` exists but has no use.
     """
 
     __slots__ = ("_parts", "_quoted")

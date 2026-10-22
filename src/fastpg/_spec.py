@@ -26,17 +26,15 @@ import inspect
 import sys
 import types
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeIs
+from typing import Any, ClassVar, Literal, TypeIs
 
 import msgspec
 import msgspec.inspect as mi
 
 from fastpg._native import StructSpec
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class Kind(IntEnum):

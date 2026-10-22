@@ -6,16 +6,12 @@ again, every connection and pool slot is usable or replaced; nothing is left ope
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Coroutine
 
 import pytest
+from faults import DisposableServer, FaultProxy
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Coroutine
-
-    from faults import DisposableServer, FaultProxy
 
 
 async def _settle(pool: fastpg.Pool) -> None:

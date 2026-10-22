@@ -5,16 +5,13 @@ no forwarder in user space can arrange (its kernel acknowledges them): these tes
 that every connection takes the keys, and how they're read.
 """
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from faults import with_params
 
 import fastpg
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.mark.parametrize(

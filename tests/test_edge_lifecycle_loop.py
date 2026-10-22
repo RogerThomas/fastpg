@@ -11,17 +11,14 @@ import resource
 import sys
 import threading
 import warnings
+from collections.abc import Callable, Coroutine
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import pytest
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
-    from typing import Any
 
 
 def _open_fds() -> int:

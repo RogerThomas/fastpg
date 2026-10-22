@@ -4,15 +4,12 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import pytest
+from conftest import LoopErrors
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from conftest import LoopErrors
 
 
 @dataclass(slots=True)

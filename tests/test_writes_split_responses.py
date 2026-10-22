@@ -10,17 +10,14 @@ every ReadyForQuery late, in a read of its own, makes that happen every time.
 
 import asyncio
 import struct
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 
 @dataclass(slots=True, eq=False)

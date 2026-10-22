@@ -36,12 +36,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeIs
 
 import msgspec
 
-from fastpg._native import RowReader
+from fastpg._native import Bulk, Connection, RowReader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from fastpg._native import Bulk, Connection
 
 type Table = str | Sequence[str]
 """`"people"`, `"app.people"` (split on dots), or `("my.schema", "people")` for names

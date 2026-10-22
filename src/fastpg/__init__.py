@@ -5,7 +5,7 @@ async with await fastpg.connect(dsn) as conn:
     person = await conn.select_one(
         "SELECT name, age FROM people WHERE id = $1", 42, into=Person
     )
-    # or, as a t-string (interpolations become bound parameters, never SQL text):
+    # or, on Python 3.14+, as a t-string (interpolations become bound parameters, never SQL text):
     person = await conn.select_one(
         t"SELECT name, age FROM people WHERE id = {person_id}", into=Person
     )

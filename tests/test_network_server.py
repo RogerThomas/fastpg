@@ -8,17 +8,13 @@ recovers on its own as soon as the server is back (measured: within a second of
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from faults import DisposableServer
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from faults import DisposableServer
 
 _GONE = (errors.OperationalError, fastpg.ConnectionClosedError)
 """A statement in flight when the server goes: 57P01 (terminated by the server's shutdown or
