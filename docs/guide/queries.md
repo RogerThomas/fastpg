@@ -114,13 +114,7 @@ print(rows)  # [(52, 70), (53, 71)]
 A Python `enum.Enum` is sent as its `.value`.
 A value that doesn't fit its column raises `ParameterError` before anything is sent.
 
-A list is sent as an array where the query takes an array, and as JSON where it takes
-`json` or `jsonb`:
-
-```python
-query = "SELECT id FROM people WHERE id = ANY($1) ORDER BY id"
-print(await conn.select_many(query, [3, 8, 42]))  # [(3,), (8,), (42,)]
-```
+Lists and arrays: see [Arrays and grouping](lists.md).
 
 ## Prepared statements
 

@@ -15,6 +15,7 @@ nav:
   - Guides:
       - Queries: guide/queries.md
       - Structs: guide/structs.md
+      - Arrays and grouping: guide/lists.md
       - pydantic models: guide/pydantic.md
       - Connection pool: guide/pool.md
       - Bulk writes: guide/writes.md
