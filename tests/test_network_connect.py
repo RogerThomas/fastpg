@@ -10,6 +10,9 @@ from faults import with_params
 
 import fastpg
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 if TYPE_CHECKING:
     from faults import FaultProxy
 

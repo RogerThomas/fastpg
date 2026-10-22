@@ -36,8 +36,11 @@ for python; do
         uv sync --locked --no-install-project # the dev dependencies, without building fastpg
         uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$wheel"
         if [ "${FASTPG_TEST_OWN_SERVERS:-}" = 1 ]; then
+            # As `task test`: in parallel, then the `timing` tests alone.
             env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
-                uv run --no-sync pytest -ra -n auto --maxprocesses 8 --dist loadfile
+                uv run --no-sync pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
+            env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
+                uv run --no-sync pytest -ra -m timing
         else
             uv run --no-sync pytest -ra
         fi

@@ -343,6 +343,7 @@ async def test_pool_close_waits_for_a_checked_out_connection(dsn: str) -> None:
     assert pool.stats().size == 0
 
 
+@pytest.mark.timing
 async def test_cancelled_pool_close_terminates_checked_out_connections(dsn: str) -> None:
     name = "edge_close_pool_cancelled"
     pool = await fastpg.create_pool(f"{dsn}?application_name={name}", min_size=2, max_size=2)

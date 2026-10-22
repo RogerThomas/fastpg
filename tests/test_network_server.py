@@ -15,6 +15,9 @@ import pytest
 import fastpg
 from fastpg import errors
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 if TYPE_CHECKING:
     from pathlib import Path
 
