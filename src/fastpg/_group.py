@@ -57,8 +57,8 @@ _NESTED = 2
 def _list_item(annotation: object) -> object | None:
     """The item type of a ``list[X]`` (or bare ``list``) annotation, None for any other type.
 
-    ``Annotated[list[X], ...]`` counts: its metadata (e.g. length constraints) applies to the
-    list, which the grouping builds, not to a column.
+    ``Annotated[list[X], ...]`` counts here; `Grouping._plan` refuses one, since its metadata
+    (e.g. length constraints) applies to the list the grouping builds, which isn't validated.
     """
     if typing.get_origin(annotation) is typing.Annotated:
         annotation = typing.get_args(annotation)[0]
@@ -215,6 +215,15 @@ class Grouping[T]:
         for info in msgspec.structs.fields(into):
             item = _list_item(info.type)
             column = info.encode_name
+            if item is not None and typing.get_origin(info.type) is typing.Annotated:
+                # Its constraints (e.g. Meta(max_length=...)) would apply to the list built here,
+                # which nothing validates: refuse rather than skip them.
+                msg = (
+                    f"select_and_group can't group {_name(into)}.{info.name}: constraints on a"
+                    " grouped list (Annotated[list[...], ...]) wouldn't be checked; drop them, or"
+                    " check the lists after grouping"
+                )
+                raise TypeError(msg)
             if item is None:  # a key field: as it is
                 fields.append(
                     _Field(

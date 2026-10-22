@@ -413,6 +413,17 @@ async def test_into_must_have_a_list_field(conn: fastpg.Connection) -> None:
         await conn.select_and_group("SELEC 1", into=Flat)
 
 
+class Capped(msgspec.Struct):
+    id: int
+    names: Annotated[list[str], msgspec.Meta(max_length=2)]
+
+
+async def test_constraints_on_a_grouped_list_are_refused(conn: fastpg.Connection) -> None:
+    # The grouping builds the list, so nothing would check max_length: refused, not skipped.
+    with pytest.raises(TypeError, match=r"Capped\.names: constraints on a grouped list"):
+        await conn.select_and_group("SELEC 1", into=Capped)
+
+
 class Document(msgspec.Struct):
     id: int
     meta: dict[str, Any]
