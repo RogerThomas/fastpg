@@ -60,7 +60,15 @@ tasks:
       PARALLEL: '{{.PARALLEL | default "-n auto --maxprocesses 8 --dist loadfile"}}'
     cmds:
       - cargo test --manifest-path native/Cargo.toml -q
-      - uv run pytest {{.PARALLEL}} {{.CLI_ARGS}}
+      # The tests that time something (marked `timing`) run after the rest, one at a time, so
+      # no other worker competes for the CPU. Exit 5 (no test selected, e.g. by -k) is fine
+      # for one pass, but not for both: then nothing ran at all.
+      - |
+        first=0; uv run pytest {{.PARALLEL}} -m "not timing" {{.CLI_ARGS}} || first=$?
+        [ $first -eq 0 ] || [ $first -eq 5 ] || exit $first
+        second=0; uv run pytest -m timing {{.CLI_ARGS}} || second=$?
+        [ $second -eq 0 ] || [ $second -eq 5 ] || exit $second
+        [ $first -eq 0 ] || [ $second -eq 0 ] || exit 5
 
   test-against:
     desc: Run both test suites against existing servers, starting none (`task test-against DSN=... [TLS_DSN=... TLS_CA=...] [SEED=1]`)
