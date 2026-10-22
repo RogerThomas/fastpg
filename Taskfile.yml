@@ -53,9 +53,14 @@ tasks:
 
   test:
     desc: Run Rust unit tests and the pytest suite (in throwaway PostgreSQL containers unless FASTPG_DSN is set)
+    vars:
+      # In parallel (pytest-xdist): a worker per CPU, at most 8, each with throwaway servers of
+      # its own, and each test file whole on one worker. PARALLEL=-n0 runs serially (for --pdb,
+      # or against one shared FASTPG_DSN server).
+      PARALLEL: '{{.PARALLEL | default "-n auto --maxprocesses 8 --dist loadfile"}}'
     cmds:
       - cargo test --manifest-path native/Cargo.toml -q
-      - uv run pytest {{.CLI_ARGS}}
+      - uv run pytest {{.PARALLEL}} {{.CLI_ARGS}}
 
   test-against:
     desc: Run both test suites against existing servers, starting none (`task test-against DSN=... [TLS_DSN=... TLS_CA=...] [SEED=1]`)
