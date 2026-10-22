@@ -1,28 +1,20 @@
 # Limitations
 
-fastpg is an early prototype, with these known gaps.
+fastpg is alpha software. This is what it can't do yet.
 
-* **Unix only** (macOS and Linux): the socket is registered with `loop.add_reader` /
-  `add_writer`, which Windows' default proactor loop doesn't offer.
-* **One event loop per connection.** A connection must only be used from the loop that
-  opened it (which may run on any thread). Awaiting it from another loop raises asyncio's
-  `RuntimeError` ("attached to a different loop"), but the statement has already been sent
-  and still runs. A pool isn't thread-safe at all. In a child process after `fork()`, an
-  inherited connection raises `InterfaceError`, and closing, terminating or dropping it there
-  leaves the parent's session alone: open new connections (and pools) in the child.
-* **Free-threaded CPython** (3.14t) isn't targeted: the extension declares
-  `gil_used = true`, as it hasn't been audited for running without the GIL, so importing
-  fastpg re-enables the GIL.
-* **Types not decoded yet:** arrays, `interval`, `timetz`, ranges, composite types, and
-  infinite dates and timestamps. No array parameters either (see
-  [Queries](guide/queries.md#gotchas)).
-* **No pgbouncer** in transaction-pooling mode: statements are always prepared and named.
-* **No LISTEN/NOTIFY**, and no `COPY TO`.
-* **Server-side cancel only for a query alone on its connection**: a cancelled query (a
-  cancelled task, `asyncio.timeout`) pipelined with other queries keeps running, and the
-  queries behind it wait. Connecting, a cancel's connection included, is bounded only by
-  libpq's `connect_timeout` DSN key (off by default), and a pool retries a down database
-  without backoff.
-* **Concurrent queries on one connection aren't ordered** with respect to each other: a
-  statement that needs preparing can be overtaken by one that's prepared.
-* **TLS gaps**: see [TLS](guide/tls.md#not-supported).
+* **No Windows.** fastpg runs on Linux and macOS.
+* **Some types can't be read yet:** arrays, `interval`, `timetz`, ranges, composite types,
+  and `infinity` dates and timestamps.
+  You can't pass arrays as parameters either.
+  See [Queries](guide/queries.md#not-supported-yet) for workarounds.
+* **No pgbouncer in transaction pooling mode**, because fastpg always uses named prepared
+  statements.
+* **No `LISTEN`/`NOTIFY`**, and no `COPY ... TO`.
+* **One event loop per connection.** Use a connection or pool only from the event loop
+  that opened it. A pool isn't thread-safe.
+  After `fork()`, open new connections in the child process.
+* **Cancelling a query** stops it on the server only when it is the only query running on
+  its connection.
+* **Queries sent at the same time on one connection may not run in the order you sent them.**
+* **Free-threaded Python** (3.14t) works, but importing fastpg turns the GIL back on.
+* **Some TLS options aren't supported.** See [TLS](guide/tls.md).

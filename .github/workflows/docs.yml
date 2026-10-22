@@ -1,0 +1,70 @@
+# Builds the documentation site (mkdocs.yml, with Zensical) and deploys it to GitHub Pages, at
+# https://rogerthomas.github.io/fastpg/: on every push to main that changes what the site is
+# built from, and on a manual run. It builds as `task docs-test` does, which CI's Docs job runs
+# on pull requests, plus --locked and --clean. scripts/build_docs.py imports fastpg for the agent
+# docs' API reference, so the extension is built too. native/Cargo.toml holds the version, so a
+# release redeploys the site.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "overrides/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "src/**"
+      - "native/Cargo.toml"
+      - "scripts/build_docs.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, none cancelled midway.
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: 0.13.0
+
+jobs:
+  build:
+    name: Build the docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false # no caches in a workflow that publishes
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Build
+        run: uv run --locked --group docs yeet ./scripts/build_docs.py --strict --clean
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      pages: write # deploy to GitHub Pages
+      id-token: write # prove to GitHub Pages that the deployment comes from this workflow
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

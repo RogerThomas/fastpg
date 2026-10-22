@@ -1,23 +1,23 @@
 site_name: fastpg
 site_description: >-
-  Fast async PostgreSQL for Python, written in Rust: rows straight into msgspec Structs and
-  pydantic models.
+  A fast async PostgreSQL client for Python, written in Rust, that turns rows straight into
+  msgspec Structs.
 site_author: Roger Thomas
 copyright: Maintained by Roger Thomas.
 repo_url: https://github.com/RogerThomas/fastpg
 repo_name: RogerThomas/fastpg
 edit_uri: edit/main/docs/
-# Add `site_url` once the docs have a published home.
+site_url: https://rogerthomas.github.io/fastpg/
 
 nav:
   - Home: index.md
   - Getting started: guide/getting-started.md
   - Guides:
-      - Queries and results: guide/queries.md
-      - Structs and decoding: guide/structs.md
-      - Pydantic models: guide/pydantic.md
+      - Queries: guide/queries.md
+      - Structs: guide/structs.md
+      - pydantic models: guide/pydantic.md
       - Connection pool: guide/pool.md
-      - Writes, bulk and COPY: guide/writes.md
+      - Bulk writes: guide/writes.md
       - Transactions: guide/transactions.md
       - TLS: guide/tls.md
       - Errors: guide/errors.md
@@ -25,8 +25,9 @@ nav:
   - Performance:
       - Benchmarks: performance.md
       - Methodology: benchmarks.md
-  - Architecture: architecture.md
   - Limitations: limitations.md
+  - Architecture: architecture.md
+  - Contributing: contributing.md
 
 plugins:
   - search

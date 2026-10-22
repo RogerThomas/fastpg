@@ -1,6 +1,7 @@
 # Errors
 
-Every error fastpg raises for a database operation is a `fastpg.FastPGError`.
+Every error fastpg raises is a `fastpg.FastPGError`.
+Errors from the server get a class that says what went wrong:
 
 ```python
 await conn.execute_script("CREATE TEMP TABLE members (email text CONSTRAINT members_key UNIQUE)")
@@ -9,52 +10,58 @@ await conn.execute("INSERT INTO members VALUES ($1)", "a@example.com")
 try:
     await conn.execute("INSERT INTO members VALUES ($1)", "a@example.com")
 except fastpg.UniqueViolationError as e:
-    print(e.sqlstate, e.constraint_name)  # 23505 members_key
+    print(e.constraint_name)  # members_key
     print(e.detail)  # Key (email)=(a@example.com) already exists.
 ```
 
+The connection stays usable after a server error.
+
+## The error classes
+
 ```
-FastPGError                       also importable as Error (PEP 249)
-├── InterfaceError                client-side problems
+FastPGError
+├── InterfaceError                a problem on the client side
 │   ├── ConnectionClosedError     the connection is closed or was lost
-│   └── ParameterError            a parameter can't be encoded for its type
+│   └── ParameterError            a value can't be sent as its column's type
 ├── ResultError
-│   ├── NoRowsError               select_one() found no row (also a LookupError)
+│   ├── NoRowsError               select_one() found no row
 │   ├── TooManyRowsError          a single-row select found more than one
-│   └── DecodeError               a value can't become the requested type
-│       ├── TypeMismatchError     column type doesn't fit the field (also a TypeError)
-│       ├── NullValueError        NULL for a non-optional field (also a ValueError)
+│   └── DecodeError               a value can't become the type you asked for
+│       ├── TypeMismatchError     a column's type doesn't fit its field
+│       ├── NullValueError        NULL in a field that isn't optional
 │       ├── MissingColumnError    a required field has no column
 │       ├── UnknownColumnError    an extra column, when the type forbids them
-│       └── UnsupportedTypeError  a type or strategy fastpg can't decode with
-└── DatabaseError                 reported by the server
-    ├── DataError                 SQLSTATE class 22
-    ├── IntegrityError            class 23
+│       └── UnsupportedTypeError  a type or strategy fastpg can't use
+└── DatabaseError                 an error from the server
+    ├── DataError                 bad data, e.g. a division by zero
+    ├── IntegrityError            a constraint failed
     │   └── NotNullViolationError, ForeignKeyViolationError,
     │       UniqueViolationError, CheckViolationError
-    ├── TransactionError          class 40
+    ├── TransactionError          the server rolled the transaction back
     │   └── SerializationError, DeadlockDetectedError
-    ├── ProgrammingError          class 42
+    ├── ProgrammingError          bad SQL, e.g. a missing table
     │   └── SQLSyntaxError, UndefinedTableError, UndefinedColumnError
-    ├── OperationalError          classes 08, 53, 57
-    │   └── QueryCanceledError    57014, including statement_timeout
-    ├── InternalError             class XX
-    └── NotSupportedError         class 0A
+    ├── OperationalError          e.g. the server is out of resources
+    │   └── QueryCanceledError    cancelled, e.g. by statement_timeout
+    ├── InternalError             an internal server error
+    └── NotSupportedError         a feature the server doesn't support
 ```
 
-All of them are in `fastpg.errors`; the common ones are also exported from `fastpg`. Mistakes
-in the call itself, such as a bad `into=` type or template, raise `TypeError` or `ValueError`.
+All of them are in `fastpg.errors`.
+The common ones can also be imported from `fastpg`.
 
-* A server error is the most specific class for its SQLSTATE, and carries `sqlstate`,
-  `severity`, `detail`, `hint`, `position`, `schema_name`, `table_name`, `column_name`,
-  `data_type_name` and `constraint_name` (`None` when the server doesn't say).
-* It leaves the connection usable; inside a transaction, see
-  [Transactions](transactions.md#gotchas).
-* `ConnectionClosedError` fails queries in flight at once when the server goes away. Nothing
-  is retried, because a statement may already have run.
-* To cap every query on a connection, put `statement_timeout` in the DSN:
-  `?options=-c%20statement_timeout%3D50` (milliseconds).
-* A query cancelled by its caller (`asyncio.timeout(...)`, a cancelled task) is cancelled on
-  the server too when it's the only one in flight on its connection, and the connection's
-  next queries wait until the server has answered the cancel.
-* Bulk-write errors carry `row_index` (see [Writes](writes.md#atomicity-and-errors)).
+## What a server error tells you
+
+A `DatabaseError` has the server's details: `sqlstate`, `detail`, `hint`, `table_name`,
+`column_name`, `constraint_name` and more.
+Each is `None` when the server doesn't send it.
+
+## Good to know
+
+* If the connection is lost, queries on it fail with `ConnectionClosedError`.
+  fastpg doesn't retry them, because a query may already have run.
+* To limit how long queries can run, put `statement_timeout` in the DSN, e.g.
+  `?options=-c%20statement_timeout%3D5000` (milliseconds).
+  A query that runs too long raises `QueryCanceledError`.
+* A mistake in the call itself, such as a wrong `into=` type, raises `TypeError` or
+  `ValueError`.

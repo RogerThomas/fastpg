@@ -3,34 +3,29 @@
 ## Install
 
 ```sh
-uv add fastpg                  # or: pip install fastpg
+uv add fastpg          # or: pip install fastpg
 ```
 
-msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
-models work too (`uv add 'fastpg[pydantic]'`, see [pydantic](pydantic.md)).
-
-* Python 3.14.3 or later, on macOS or Linux. Windows isn't supported.
-* Wheels for Linux (x86_64 and aarch64, glibc and musl) and macOS (x86_64 and arm64).
-  Elsewhere pip builds it from the sdist, which needs a Rust toolchain and takes a few minutes.
-* To work on fastpg itself, run `uv sync --all-groups` (or `task build`) in a checkout.
+fastpg needs Python 3.14 or newer, on Linux or macOS.
+msgspec is installed with it.
+For pydantic models, run `uv add 'fastpg[pydantic]'` instead.
 
 ## The example database
 
-The examples in these docs run against the repository's PostgreSQL, started with Docker and
-[Task](https://taskfile.dev):
+The examples in these docs use a small example database.
+To run it, clone the [repository](https://github.com/RogerThomas/fastpg) and, with Docker and
+[Task](https://taskfile.dev) installed, run:
 
 ```sh
-task db-up      # PostgreSQL 18.6 on 127.0.0.1:55432; user, password and database: fastpg
-task example    # runs ./examples/basic.py
-task db-down    # stops it and discards the data
+task db-up      # PostgreSQL on 127.0.0.1:55432
+task db-down    # stop it and delete the data
 ```
 
-Each start seeds a `people` table with 100,000 rows: `id` (1 to 100,000), `name`
-(`person-<id>`), `age` (`18 + id % 60`), `email` (NULL every 7th row), `score`, `balance`
-(`numeric`), `active`, `external_id` (`uuid`), `created_at` (`timestamptz`) and `birthday`
-(NULL every 11th row).
+The user, password and database name are all `fastpg`.
+It has a `people` table with 100,000 rows.
+Its columns include `id`, `name` (`'person-<id>'`), `age` and `email` (NULL on every 7th row).
 
-## A first query
+## Your first query
 
 ```python
 import asyncio
@@ -57,14 +52,27 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## Conventions
+`fastpg.connect()` opens one connection.
+`async with` closes it when the block ends.
+`into=Person` turns the row into a `Person`.
+Without `into=`, you get a tuple.
 
-* `fastpg.connect()` opens one connection, bound to the running event loop. For concurrent
-  requests, use a [pool](pool.md): it has the same query methods.
-* Leaving `async with` (or `await conn.close()`) closes gracefully: queries in flight
-  complete, then the session ends, without waiting for the server to acknowledge it.
-  `conn.terminate()` closes at once and fails queries in flight with
-  `ConnectionClosedError`, and so does a `close()` that is cancelled (e.g. by
-  `asyncio.timeout`).
-* The other pages show the body of `main()`: `conn` is an open connection and `dsn` is the
-  DSN above. Examples that write create a temporary table.
+## One connection or a pool?
+
+* **One connection** for a script or a job that runs one query at a time.
+* **A [pool](pool.md)** for an app that serves many requests at once, such as a web app.
+
+Both have the same query methods.
+
+```python
+async with await fastpg.create_pool(dsn) as pool:
+    query = "SELECT name, age, email FROM people WHERE id = $1"
+    person = await pool.select_one(query, 42, into=Person)
+```
+
+## Reading the other pages
+
+The other pages show only the body of `main()`.
+In them, `conn` is an open connection and `dsn` is the DSN above.
+
+Next: [Queries](queries.md).
