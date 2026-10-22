@@ -16,7 +16,9 @@ the failing input row, when it is known.
 
 A call cancelled before its last chunk was handed over is also cancelled on the server (it
 is alone on its connection, which it holds exclusively), so a chunk waiting there, e.g. for
-a row lock, doesn't hold up the rollback. Once the last chunk is handed over, the call
+a row lock, doesn't hold up the rollback: from once a cancel can't hurt the caller's
+transaction, i.e. inside one from when the call's savepoint exists (before that, a cancel
+landing on its set-up would abort the transaction with nothing to roll back to). Once the last chunk is handed over, the call
 commits even if its caller is cancelled, as before: a cancel could land on the COMMIT.
 """
 
