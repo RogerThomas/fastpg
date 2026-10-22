@@ -22,9 +22,10 @@ All 297 runs passed the correctness checks.
 * **Client-side throughput** (ops/s), latency and CPU per op of the benchmark process, for
   the same SQL, data and arguments on every driver. The server's CPU isn't measured.
 * **Each driver's own pool of 16 connections**, set up as its documentation recommends.
-  asyncpg runs twice: with its default reset query on every release (one more round trip),
-  and with the reset turned off (`asyncpg-noreset`). "Best other" is the fastest of the four
-  non-fastpg configurations.
+  asyncpg runs twice. `asyncpg` is its default: the pool runs a reset query every time a
+  connection goes back to it, one extra round trip per query. `asyncpg-noreset` turns that
+  off (a no-op `reset=`), the faster of the two. "Best other" is the fastest of the four
+  non-fastpg configurations, so usually `asyncpg-noreset`.
 * **Typed workloads** (`-typed`): every driver returns the same msgspec Struct. fastpg
   decodes into it in Rust (`into=Person`); the others build it from their rows
   (`Person(*record)`, `args_row(Person)`, ...). The untyped workloads take each driver's
