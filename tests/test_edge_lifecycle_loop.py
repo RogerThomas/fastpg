@@ -9,6 +9,7 @@ import gc
 import os
 import resource
 import sys
+import sysconfig
 import threading
 import warnings
 from collections.abc import Callable, Coroutine
@@ -243,7 +244,8 @@ def test_a_query_in_flight_when_the_loop_closes(dsn: str) -> None:
 
 
 @pytest.mark.xfail(
-    strict=True,
+    # Free-threaded builds' collector sometimes reclaims the cycle anyway: not strict there.
+    strict=not sysconfig.get_config_var("Py_GIL_DISABLED"),
     reason="open: a task pending when the loop closes, awaiting a native future, forms a "
     "reference cycle through the native connection that the GC can't see (notes/"
     "edge-cases-lifecycle.md, 'Uncollectable cycles through a native connection')",

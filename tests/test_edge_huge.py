@@ -1,5 +1,6 @@
 """Huge values, very wide rows and very long results."""
 
+import sysconfig
 import tracemalloc
 
 import msgspec
@@ -94,5 +95,8 @@ async def test_million_rows_peak_memory_stays_near_the_result_size(
     assert len(rows) == 1_000_000
     assert rows[-1] == Row(1_000_000, "row-1000000")
     # Rows are decoded in 512-row chunks while the rest arrives, so Python's peak is the
-    # result itself; the raw row buffers (Rust, not traced) are one chunk at a time.
-    assert peak < result * 1.1
+    # result itself; the raw row buffers (Rust, not traced) are one chunk at a time. A
+    # free-threaded build frees a growing list's old storage only once every thread has moved
+    # on, so the result list's earlier buffers can still count at the peak there.
+    margin = 1.25 if sysconfig.get_config_var("Py_GIL_DISABLED") else 1.1
+    assert peak < result * margin
