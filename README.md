@@ -50,6 +50,24 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Arrays
+
+Array columns come back as lists, and lists go in as arrays:
+
+```python
+class AgeGroup(msgspec.Struct):
+    age: int
+    names: list[str]
+
+
+query = """
+SELECT age, array_agg(name ORDER BY id) AS names
+FROM people WHERE id = ANY($1) GROUP BY age ORDER BY age
+"""
+print(await pool.select_many(query, [42, 43, 102], into=AgeGroup))
+# [AgeGroup(age=60, names=['person-42', 'person-102']), AgeGroup(age=61, names=['person-43'])]
+```
+
 ## Features
 
 * **Typed rows.** Pass `into=Person` and get Structs back. Dicts, NamedTuples and
