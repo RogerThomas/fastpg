@@ -63,6 +63,25 @@ async def test_select_methods_accept_templates(conn: fastpg.Connection) -> None:
     assert await conn.select_one(t"SELECT 1") == (1,)
 
 
+class AgeGroup(msgspec.Struct):
+    age: int
+    names: list[str]
+
+
+async def test_select_and_group_accepts_templates(dsn: str, conn: fastpg.Connection) -> None:
+    age, max_id = 60, 110
+    query = t"""
+SELECT age, name AS names FROM people WHERE age = {age} AND id <= {max_id} ORDER BY id
+"""
+    groups = await conn.select_and_group(query, into=AgeGroup)
+    assert_type(groups, list[AgeGroup])
+    assert groups == [AgeGroup(60, ["person-42", "person-102"])]
+    async with conn.transaction() as tx:
+        assert await tx.select_and_group(query, into=AgeGroup) == groups
+    async with await fastpg.create_pool(dsn, max_size=1) as pool:
+        assert await pool.select_and_group(query, into=AgeGroup, strategy="msgpack") == groups
+
+
 async def test_execute_with_template(conn: fastpg.Connection) -> None:
     await conn.execute_script(
         "DROP TABLE IF EXISTS tstr_exec; CREATE TABLE tstr_exec (id int PRIMARY KEY, v text)",

@@ -75,6 +75,17 @@ class AgeGroup(msgspec.Struct):
     names: list[str]
 
 
+class Member(msgspec.Struct):
+    id: int
+    name: str
+    email: str | None
+
+
+class AgeMembers(msgspec.Struct):
+    age: int
+    members: list[Member]
+
+
 def _measure[T](benchmark: BenchmarkFixture, runner: Runner, query: Callable[[], Any]) -> None:
     """Benchmark one call of the coroutine function `query`, after a warm-up call."""
     runner.run(query())
@@ -187,6 +198,26 @@ def test_select_many_array_agg(benchmark: BenchmarkFixture, runner: Runner) -> N
         " FROM people WHERE id <= $1 GROUP BY age ORDER BY age"
     )
     _measure(benchmark, runner, lambda: conn.select_many(query, 1_000, into=AgeGroup))
+
+
+# --- Grouping rows: select_and_group -------------------------------------------------------
+
+
+def test_select_and_group(benchmark: BenchmarkFixture, runner: Runner) -> None:
+    conn = runner.conn
+    # 1,000 rows into 60 groups, each with two list fields (as array_agg does server-side).
+    query = "SELECT age, id AS ids, name AS names FROM people WHERE id <= $1 ORDER BY age, id"
+    _measure(benchmark, runner, lambda: conn.select_and_group(query, 1_000, into=AgeGroup))
+
+
+def test_select_and_group_nested(benchmark: BenchmarkFixture, runner: Runner) -> None:
+    conn = runner.conn
+    # 1,000 rows into 60 groups, each with a list of Structs from `members__*` columns.
+    query = (
+        "SELECT age, id AS members__id, name AS members__name, email AS members__email"
+        " FROM people WHERE id <= $1 ORDER BY age, id"
+    )
+    _measure(benchmark, runner, lambda: conn.select_and_group(query, 1_000, into=AgeMembers))
 
 
 # --- Query forms: t-strings and named parameters --------------------------------------------
