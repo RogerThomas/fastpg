@@ -3,8 +3,13 @@
 //! A [`Codec`] is chosen once per result column (per prepared statement) from the column's
 //! PostgreSQL type; decoding a cell is then a branch on a small enum plus the object
 //! constructor, with no intermediate Rust allocations for the common scalar types.
+//!
+//! A one-dimensional array column has a codec of its own, [`Codec::Array`], naming its
+//! element codec: a scalar column's cells never test for arrays.
 
+use std::borrow::Cow;
 use std::ffi::c_char;
+use std::fmt;
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -38,6 +43,82 @@ pub enum Codec {
     Jsonb,
     /// `void` (e.g. `SELECT pg_sleep(1)`): always None.
     Void,
+    /// A one-dimensional array (a `list`) of elements of a scalar codec.
+    Array(Elem),
+}
+
+/// The codecs an array's elements can have: every scalar but `void`.
+const ELEMENT_CODECS: [Codec; 18] = [
+    Codec::Bool,
+    Codec::Int2,
+    Codec::Int4,
+    Codec::Int8,
+    Codec::Oid,
+    Codec::Float4,
+    Codec::Float8,
+    Codec::Text,
+    Codec::Char,
+    Codec::Bytea,
+    Codec::Uuid,
+    Codec::Date,
+    Codec::Time,
+    Codec::Timestamp,
+    Codec::TimestampTz,
+    Codec::Numeric,
+    Codec::Json,
+    Codec::Jsonb,
+];
+
+/// The elements of a [`Codec::Array`]: their codec (an index into [`ELEMENT_CODECS`], which
+/// keeps `Codec` as small as a scalar column's binding needs) and the rules of the field
+/// they feed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Elem {
+    index: u8,
+    /// A NULL element is None; otherwise it fails the row, as a NULL cell does for a field
+    /// that isn't optional.
+    pub nullable: bool,
+    /// The elements feed pydantic `Decimal`s, which must be finite (see `BoundColumn`).
+    pub finite_decimal: bool,
+}
+
+impl Elem {
+    /// Elements of `codec`, NULLs allowed, if arrays of it can be decoded.
+    pub fn of(codec: Codec) -> Option<Self> {
+        let index = ELEMENT_CODECS.iter().position(|&c| c == codec)?;
+        Some(Self {
+            index: index as u8,
+            nullable: true,
+            finite_decimal: false,
+        })
+    }
+
+    pub fn codec(self) -> Codec {
+        ELEMENT_CODECS[usize::from(self.index)]
+    }
+
+    /// These elements, for a field with these rules.
+    pub fn with_rules(self, nullable: bool, finite_decimal: bool) -> Self {
+        Self {
+            nullable,
+            finite_decimal,
+            ..self
+        }
+    }
+}
+
+impl fmt::Debug for Elem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.codec())
+    }
+}
+
+/// A type's name as error messages show it: `int4[]` for an array (the catalog's `_int4`).
+pub fn type_name(ty: &Type) -> Cow<'_, str> {
+    match ty.kind() {
+        Kind::Array(elem) => Cow::Owned(format!("{}[]", elem.name())),
+        _ => Cow::Borrowed(ty.name()),
+    }
 }
 
 impl Codec {
@@ -66,6 +147,11 @@ impl Codec {
                 // Enum labels and citext travel as plain UTF-8 text in binary format.
                 Kind::Enum(_) => Self::Text,
                 Kind::Simple if ty.name() == "citext" => Self::Text,
+                // Elements of a domain type are sent in its base type's binary format.
+                Kind::Array(elem) => {
+                    let elem = Self::for_type(crate::params::base_type(elem))?;
+                    return Elem::of(elem).map(Self::Array);
+                }
                 _ => return None,
             },
         })
@@ -379,6 +465,150 @@ pub fn read_i64(codec: Codec, raw: &[u8]) -> Result<i64, String> {
     })
 }
 
+/// The elements of a binary array value: `None` for a NULL element. Only one-dimensional
+/// arrays indexed from 1 (PostgreSQL's default) and empty arrays are read; any other shape
+/// is an error rather than a list that loses it.
+pub struct ArrayItems<'a> {
+    buf: &'a [u8],
+    remaining: usize,
+}
+
+impl<'a> ArrayItems<'a> {
+    pub fn parse(raw: &'a [u8]) -> Result<Self, String> {
+        let bad = || format!("malformed binary array ({} bytes)", raw.len());
+        let int = |at: usize| {
+            raw.get(at..at + 4)
+                .map(|b| i32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                .ok_or_else(bad)
+        };
+        // ndim, has-NULLs flag, element type; then (length, lower bound) per dimension.
+        match int(0)? {
+            0 => {
+                return Ok(Self {
+                    buf: &[],
+                    remaining: 0,
+                });
+            }
+            1 => {}
+            n if n > 1 => {
+                return Err(format!(
+                    "multi-dimensional arrays are not supported (this one has {n} dimensions)"
+                ));
+            }
+            _ => return Err(bad()),
+        }
+        let (len, lower) = (int(12)?, int(16)?);
+        if lower != 1 {
+            return Err(format!(
+                "arrays indexed from other than 1 are not supported (this one starts at \
+                 [{lower}])"
+            ));
+        }
+        Ok(Self {
+            buf: &raw[20..],
+            remaining: usize::try_from(len).map_err(|_| bad())?,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.remaining
+    }
+}
+
+impl<'a> Iterator for ArrayItems<'a> {
+    type Item = Result<Option<&'a [u8]>, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let item = match self.buf.split_first_chunk::<4>() {
+            Some((&[0xff, 0xff, 0xff, 0xff], rest)) => {
+                self.buf = rest;
+                Ok(None)
+            }
+            Some((len, rest)) => match rest.split_at_checked(u32::from_be_bytes(*len) as usize) {
+                Some((value, rest)) => {
+                    self.buf = rest;
+                    Ok(Some(value))
+                }
+                None => Err("malformed binary array (truncated element)".to_owned()),
+            },
+            None => Err("malformed binary array (truncated element)".to_owned()),
+        };
+        // Nothing more is read after an error.
+        self.remaining = if item.is_ok() { self.remaining - 1 } else { 0 };
+        Some(item)
+    }
+}
+
+/// Decode a [`Codec::Array`] value into a list. `target` applies to the elements, except
+/// that a JSON element array is decoded as one JSON array by `target.json_decoder` (the
+/// field's, whose type is the list's), so its validation sees the list as a whole.
+#[inline(never)]
+fn decode_array<'py>(
+    py: Python<'py>,
+    cache: &PyCache,
+    elem: Elem,
+    raw: &[u8],
+    target: Target<'_, 'py>,
+) -> Result<Bound<'py, PyAny>, DecodeFailure> {
+    let items = ArrayItems::parse(raw)?;
+    let codec = elem.codec();
+    if matches!(codec, Codec::Json | Codec::Jsonb) && !target.json_as_text {
+        let mut json = Vec::with_capacity(raw.len());
+        json.push(b'[');
+        for (i, item) in items.enumerate() {
+            if i > 0 {
+                json.push(b',');
+            }
+            match item? {
+                None if elem.nullable => json.extend_from_slice(b"null"),
+                None => return Err(DecodeFailure::NullElement(i)),
+                Some(value) => json.extend_from_slice(json_text(codec, value)?),
+            }
+        }
+        json.push(b']');
+        let bytes = PyBytes::new(py, &json);
+        return Ok(match target.json_decoder {
+            Some(decoder) => decoder.call1((bytes,))?,
+            None => cache.json_decode.bind(py).call1((bytes,))?,
+        });
+    }
+    // SAFETY: PyList_New(n) returns a list of n NULL slots; each slot is filled exactly once
+    // with an owned reference before the list escapes (an array holds exactly the elements
+    // it declares, or `ArrayItems` fails). On early return the list is dropped, and list
+    // deallocation tolerates NULL slots.
+    unsafe {
+        let list = Bound::from_owned_ptr_or_err(py, ffi::PyList_New(items.len() as isize))?;
+        for (i, item) in items.enumerate() {
+            let value = match item? {
+                None if elem.nullable => py.None().into_bound(py),
+                None => return Err(DecodeFailure::NullElement(i)),
+                Some(value) if elem.finite_decimal && numeric_special(value).is_some() => {
+                    return Err(DecodeFailure::Invalid(format!(
+                        "element {i} is {}, but pydantic Decimals must be finite \
+                         (Field(allow_inf_nan=True) accepts NaN and infinities)",
+                        numeric_special(value).unwrap_or("not finite")
+                    )));
+                }
+                Some(value) => decode(py, cache, codec, value, target)?,
+            };
+            ffi::PyList_SET_ITEM(list.as_ptr(), i as isize, value.into_ptr());
+        }
+        Ok(list)
+    }
+}
+
+/// The JSON text of a json or jsonb value (jsonb's binary format adds a version byte).
+pub fn json_text(codec: Codec, raw: &[u8]) -> Result<&[u8], String> {
+    match (codec, raw.split_first()) {
+        (Codec::Jsonb, Some((1, rest))) => Ok(rest),
+        (Codec::Jsonb, _) => Err(malformed(codec, raw.len())),
+        _ => Ok(raw),
+    }
+}
+
 /// How a cell should be materialised for its target.
 #[derive(Clone, Copy)]
 pub struct Target<'a, 'py> {
@@ -505,6 +735,7 @@ pub fn decode<'py>(
                 }
             }
         }
+        Codec::Array(elem) => decode_array(py, cache, elem, raw, target)?,
     })
 }
 
@@ -512,6 +743,8 @@ pub fn decode<'py>(
 pub enum DecodeFailure {
     Py(PyErr),
     Invalid(String),
+    /// The array element at this index is NULL, which its field's element type doesn't take.
+    NullElement(usize),
 }
 
 impl From<PyErr> for DecodeFailure {
@@ -533,7 +766,7 @@ impl From<String> for DecodeFailure {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn numeric(ndigits: &[u16], weight: i16, neg: bool, dscale: u16) -> Vec<u8> {
@@ -546,6 +779,68 @@ mod tests {
             v.extend(d.to_be_bytes());
         }
         v
+    }
+
+    /// A binary array: ndim, has-NULLs flag, element type (int4), dimensions, elements.
+    pub(crate) fn array(dims: &[(i32, i32)], items: &[Option<&[u8]>]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend((dims.len() as i32).to_be_bytes());
+        v.extend(i32::from(items.contains(&None)).to_be_bytes());
+        v.extend(23u32.to_be_bytes());
+        for (len, lower) in dims {
+            v.extend(len.to_be_bytes());
+            v.extend(lower.to_be_bytes());
+        }
+        for item in items {
+            match item {
+                None => v.extend((-1i32).to_be_bytes()),
+                Some(bytes) => {
+                    v.extend((bytes.len() as i32).to_be_bytes());
+                    v.extend(*bytes);
+                }
+            }
+        }
+        v
+    }
+
+    fn items(raw: &[u8]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        ArrayItems::parse(raw)?
+            .map(|item| item.map(|value| value.map(<[u8]>::to_vec)))
+            .collect()
+    }
+
+    #[test]
+    fn array_items() {
+        let one: &[u8] = &[0, 0, 0, 1];
+        assert_eq!(
+            items(&array(&[(2, 1)], &[Some(one), None])).unwrap(),
+            [Some(one.to_vec()), None]
+        );
+        assert_eq!(items(&array(&[], &[])).unwrap(), []);
+        let err = items(&array(&[(1, 1), (1, 1)], &[Some(one)])).unwrap_err();
+        assert!(
+            err.starts_with("multi-dimensional arrays are not supported"),
+            "{err}"
+        );
+        let err = items(&array(&[(1, 0)], &[Some(one)])).unwrap_err();
+        assert!(err.contains("starts at [0]"), "{err}");
+        // Declares two elements, holds one.
+        let err = items(&array(&[(2, 1)], &[Some(one)])).unwrap_err();
+        assert!(err.contains("truncated"), "{err}");
+        assert!(items(&[0, 0, 0, 1]).is_err());
+    }
+
+    #[test]
+    fn element_codecs() {
+        for codec in ELEMENT_CODECS {
+            assert_eq!(Elem::of(codec).map(Elem::codec), Some(codec));
+        }
+        assert!(Elem::of(Codec::Void).is_none());
+        let Some(Codec::Array(elem)) = Codec::for_type(&Type::TEXT_ARRAY) else {
+            unreachable!("text[] is an array of text");
+        };
+        assert_eq!((elem.codec(), elem.nullable), (Codec::Text, true));
+        assert_eq!(Codec::for_type(&Type::INTERVAL_ARRAY), None);
     }
 
     #[test]

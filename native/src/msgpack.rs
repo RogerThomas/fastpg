@@ -7,7 +7,7 @@
 
 use rmp::encode as mp;
 
-use crate::decode::{Codec, char_text, numeric_to_string, read_i64};
+use crate::decode::{ArrayItems, Codec, char_text, numeric_to_string, read_i64};
 use crate::pgtime::{self, PG_EPOCH_UNIX_SECS, USECS_PER_SEC};
 use crate::rows::RowBuffer;
 
@@ -144,6 +144,18 @@ fn encode_value(
                 let value: serde_json::Value =
                     serde_json::from_slice(text).map_err(|e| e.to_string())?;
                 write_json(out, &value);
+            }
+        }
+        Codec::Array(elem) => {
+            let items = ArrayItems::parse(raw)?;
+            let _ = mp::write_array_len(out, items.len() as u32);
+            for item in items {
+                match item? {
+                    None => {
+                        let _ = mp::write_nil(out);
+                    }
+                    Some(value) => encode_value(out, scratch, elem.codec(), as_text, value)?,
+                }
             }
         }
     }

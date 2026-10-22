@@ -55,6 +55,42 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Arrays
+
+Array columns come back as lists, and lists go in as arrays:
+
+```python
+class AgeGroup(msgspec.Struct):
+    age: int
+    names: list[str]
+
+
+query = """
+SELECT age, array_agg(name ORDER BY id) AS names
+FROM people WHERE id = ANY($1) GROUP BY age ORDER BY age
+"""
+print(await pool.select_many(query, [42, 43, 102], into=AgeGroup))
+# [AgeGroup(age=60, names=['person-42', 'person-102']), AgeGroup(age=61, names=['person-43'])]
+```
+
+## Grouping rows
+
+`select_and_group` turns one-to-many rows into Structs: rows with the same values in the
+other fields become one Struct, and each `list` field collects one value per row.
+
+```python
+class Cohort(msgspec.Struct):
+    age: int
+    names: list[str]
+
+
+query = "SELECT age, name AS names FROM people WHERE id = ANY($1) ORDER BY age, id"
+print(await pool.select_and_group(query, [42, 43, 102], into=Cohort))
+# [Cohort(age=60, names=['person-42', 'person-102']), Cohort(age=61, names=['person-43'])]
+```
+
+A `list[Item]` field of Structs reads columns named `items__sku`, `items__qty`, and so on.
+
 ## Features
 
 * **Typed rows.** Pass `into=Person` and get Structs back. Dicts, NamedTuples and

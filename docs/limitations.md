@@ -3,9 +3,8 @@
 fastpg is alpha software. This is what it can't do yet.
 
 * **No Windows.** fastpg runs on Linux and macOS.
-* **Some types can't be read yet:** arrays, `interval`, `timetz`, ranges, composite types,
-  and `infinity` dates and timestamps.
-  You can't pass arrays as parameters either.
+* **Some types can't be read yet:** `interval`, `timetz`, ranges, composite types,
+  multi-dimensional arrays, and `infinity` dates and timestamps.
   See [Queries](guide/queries.md#not-supported-yet) for workarounds.
 * **No pgbouncer in transaction pooling mode**, because fastpg always uses named prepared
   statements.

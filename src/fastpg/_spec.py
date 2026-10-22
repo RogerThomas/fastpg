@@ -11,7 +11,8 @@ inspected once (cached) and yields a `Plan`:
 
 For msgspec Structs a field is either a plain scalar (optionally `| None`) that Rust builds
 directly, a JSON-shaped type (list, dict, nested Struct, ...) decoded from a json/jsonb
-column with a cached `msgspec.json.Decoder(<annotation>)`, or something only msgspec
+column with a cached `msgspec.json.Decoder(<annotation>)` (a `list[X]` also from an array
+column, its elements built as a field of type `X` would be), or something only msgspec
 validation produces correctly (`Meta` constraints, enums, literals, non-optional unions,
 tz-constrained datetimes). Such Structs can't be built directly; strategy "auto" routes them
 through msgpack instead. Pydantic models are analysed in `fastpg._pydantic`.
@@ -54,8 +55,9 @@ class Kind(IntEnum):
     JSON = 11
 
 
-type FieldArg = tuple[str, str, int, bool, bool, object | None]
-"""`(attr_name, encode_name, kind, nullable, required, json_decoder)` for `StructSpec`."""
+type FieldArg = tuple[str, str, int, bool, bool, object | None, tuple[int, bool] | None]
+"""`(attr_name, encode_name, kind, nullable, required, json_decoder, item)` for `StructSpec`,
+`item` being `(kind, nullable)` of a list's items when an array column can feed the list."""
 
 
 class NeedsValidationError(Exception):
@@ -158,6 +160,21 @@ class StructPlanner:
         raise NeedsValidationError(msg)
 
     @classmethod
+    def _list_item(cls, t: mi.Type) -> tuple[int, bool] | None:
+        """`(kind, nullable)` of the items of a `list[X]` (or `list[X] | None`) field type
+        that an array's elements can be built into directly: `X` as a field type of its own,
+        and no length constraints. None for any other type."""
+        if isinstance(t, mi.UnionType):
+            members = [m for m in t.types if not isinstance(m, mi.NoneType)]
+            t = members[0] if len(members) == 1 else t
+        if not isinstance(t, mi.ListType) or t.min_length is not None or t.max_length is not None:
+            return None
+        try:
+            return cls._classify(t.item_type)
+        except NeedsValidationError:
+            return None
+
+    @classmethod
     def _field_args(
         cls,
         owner: type[object],
@@ -173,10 +190,14 @@ class StructPlanner:
             except NeedsValidationError as e:
                 return fields, f"{owner.__qualname__}.{field.name}: {e}"
             decoder: Any = None
+            item = None
             if kind is Kind.JSON:
                 decoder = msgspec.json.Decoder(annotations[field.name]).decode
+                item = cls._list_item(field.type)
             attr = attr_names[field.name]
-            fields.append((attr, field.encode_name, kind, nullable, field.required, decoder))
+            fields.append(
+                (attr, field.encode_name, kind, nullable, field.required, decoder, item),
+            )
         return fields, None
 
     @staticmethod

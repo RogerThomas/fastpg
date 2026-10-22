@@ -73,6 +73,20 @@ class ModelPlanner:
         msg = f"{schema['type']!r} fields need pydantic validation"
         raise NeedsValidationError(msg)
 
+    @classmethod
+    def _list_item(cls, schema: dict[str, Any]) -> tuple[int, bool] | None:
+        """`(kind, nullable)` of the items of a `list[X]` (or `list[X] | None`) field schema
+        that an array's elements can be built into directly: `X` as a field of its own, and
+        no list constraints. None for any other schema."""
+        if schema["type"] == "nullable":
+            schema = schema["schema"]
+        if schema["type"] != "list" or set(schema) - cls._INERT_KEYS - {"items_schema"}:
+            return None
+        try:
+            return cls._classify(schema.get("items_schema", {"type": "any"}))
+        except NeedsValidationError:
+            return None
+
     @staticmethod
     def _check_model(model: type[BaseModel]) -> dict[str, Any]:
         """The model-fields schema, if construction is equivalent to validation."""
@@ -155,14 +169,16 @@ class ModelPlanner:
                 schema = schema["schema"]
             kind, nullable = cls._classify(schema)
             decoder = None
+            item = None
             if kind is Kind.JSON:
                 annotation: Any = info.annotation
                 if info.metadata:
                     annotation = Annotated[annotation, *info.metadata]
                 decoder = TypeAdapter(annotation).validate_json
+                item = cls._list_item(schema)
             defaults.append(cls._default(name, info))
             alias = cls._alias(name, info)
-            fields.append((name, alias, kind, nullable, info.is_required(), decoder))
+            fields.append((name, alias, kind, nullable, info.is_required(), decoder, item))
         return StructSpec(
             model,
             fields,

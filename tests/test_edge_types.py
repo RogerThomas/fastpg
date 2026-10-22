@@ -66,8 +66,8 @@ def _target(request: pytest.FixtureRequest) -> Target:
 @pytest.mark.parametrize(
     ("expression", "type_name"),
     [
-        ("ARRAY[1, 2]", "_int4"),
-        ("ARRAY['a']", "_text"),
+        ("ARRAY['1 day'::interval]", r"interval\[\]"),
+        ("ARRAY[int4range(1, 5)]", r"int4range\[\]"),
         ("'1 day'::interval", "interval"),
         ("int4range(1, 5)", "int4range"),
         ("tstzrange('2024-01-01', '2024-01-02')", "tstzrange"),
@@ -159,7 +159,6 @@ async def test_unsupported_column_no_field_reads_is_ignored_through_validation(
 @pytest.mark.parametrize(
     ("type_name", "value", "text"),
     [
-        ("int4[]", [1, 2], "{1,2}"),
         ("interval", "1 day", "1 day"),
         ("inet", "1.2.3.4/32", "1.2.3.4/32"),
         ("xml", "<a/>", "<a/>"),
@@ -174,8 +173,7 @@ async def test_unsupported_parameter_type_names_it(
     value: object,
     text: str,
 ) -> None:
-    internal = f"_{type_name[:-2]}" if type_name.endswith("[]") else type_name
-    expected = rf"^parameter \$1: cannot encode .* as PostgreSQL type {internal}$"
+    expected = rf"^parameter \$1: cannot encode .* as PostgreSQL type {type_name}$"
     with pytest.raises(fastpg.ParameterError, match=expected):
         await conn.select_one(f"SELECT $1::{type_name}::text", value)
     # The workaround: send the value's text and cast it in SQL.

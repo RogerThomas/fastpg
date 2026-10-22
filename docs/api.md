@@ -11,6 +11,7 @@ Reference documentation for the public `fastpg` API, generated from its docstrin
         - select_one
         - select_one_or_none
         - select_many
+        - select_and_group
         - execute
         - execute_script
         - execute_many

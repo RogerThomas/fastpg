@@ -46,6 +46,18 @@ pub enum Param {
     Decimal(String),
     /// Pre-serialised JSON (from dict / list via msgspec).
     Json(Vec<u8>),
+    /// A list or tuple for an array parameter: one value per element.
+    Array(Vec<Param>),
+    /// A list for a parameter of a statement this query prepares, whose type isn't known
+    /// yet: converted both ways, it is sent as an array or as JSON, as the server declares.
+    List(Box<UntypedList>),
+}
+
+/// Both encodings of a list, or why each is impossible.
+#[derive(Debug)]
+pub struct UntypedList {
+    array: Result<Vec<Param>, String>,
+    json: Result<Vec<u8>, String>,
 }
 
 impl Param {
@@ -64,6 +76,9 @@ impl Param {
             Self::TimestampTz(_) => "aware datetime.datetime",
             Self::Decimal(_) => "decimal.Decimal",
             Self::Json(_) => "dict/list (JSON)",
+            Self::Array(_) => "list/tuple (array)",
+            // As the same list is described once the statement is prepared.
+            Self::List(_) => "dict/list (JSON)",
         }
     }
 }
@@ -170,9 +185,10 @@ fn param_error(py: Python<'_>, index: usize, msg: impl fmt::Display) -> PyErr {
     )
 }
 
-pub fn from_py(obj: &Bound<'_, PyAny>, index: usize) -> PyResult<Param> {
+/// `ty`: the parameter's type, when the statement is already prepared (see [`convert`]).
+pub fn from_py(obj: &Bound<'_, PyAny>, index: usize, ty: Option<&Type>) -> PyResult<Param> {
     let py = obj.py();
-    convert(obj).map_err(|e| match e {
+    convert(obj, ty).map_err(|e| match e {
         // As in bulk writes: a ParameterError naming the parameter, caused by the Python
         // exception (an unencodable str, a value msgspec can't serialise as JSON, ...).
         ConvertError::Py(e) => {
@@ -204,8 +220,29 @@ fn as_type<'a, 'py, T: PyTypeCheck>(obj: &'a Bound<'py, PyAny>) -> Option<&'a Bo
     T::type_check(obj).then(|| unsafe { obj.cast_unchecked::<T>() })
 }
 
+impl ConvertError {
+    fn message(self) -> String {
+        match self {
+            Self::Py(e) => e.to_string(),
+            Self::Invalid(message) => message,
+        }
+    }
+
+    /// The error for element `index` of an array.
+    fn in_element(self, index: usize) -> Self {
+        match self {
+            Self::Invalid(message) => Self::Invalid(format!("element {index}: {message}")),
+            py => py,
+        }
+    }
+}
+
 /// [`from_py`] without the parameter position (shared with the bulk-write encoders).
-pub fn convert(obj: &Bound<'_, PyAny>) -> Result<Param, ConvertError> {
+///
+/// `ty`, the declared type, decides only what a list becomes: an array for an array type,
+/// JSON for any other. Unknown (`None`, a statement's first use), a list is converted both
+/// ways and the declared type picks one when it is encoded.
+pub fn convert(obj: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Param, ConvertError> {
     let py = obj.py();
     if obj.is_none() {
         return Ok(Param::Null);
@@ -273,15 +310,90 @@ pub fn convert(obj: &Bound<'_, PyAny>) -> Result<Param, ConvertError> {
         return Ok(Param::Decimal(obj.str()?.to_str()?.to_owned()));
     }
     if obj.is_instance(types.enum_cls.bind(py))? {
-        return convert(&obj.getattr("value")?);
+        return convert(&obj.getattr("value")?, ty);
     }
-    if obj.is_instance_of::<PyDict>() || obj.is_instance_of::<PyList>() {
+    if obj.is_instance_of::<PyDict>() {
         return Ok(Param::Json(json_encode(obj)?));
+    }
+    if obj.is_instance_of::<PyList>() {
+        return convert_list(obj, ty);
+    }
+    if obj.is_instance_of::<PyTuple>() {
+        return Ok(Param::Array(elements(obj, ty.and_then(element_type))?));
     }
     Err(ConvertError::Invalid(format!(
         "unsupported type {}",
         obj.get_type().name()?
     )))
+}
+
+/// The element type of an array type (or of a domain over one).
+fn element_type(ty: &Type) -> Option<&Type> {
+    match base_type(ty).kind() {
+        Kind::Array(elem) => Some(elem),
+        _ => None,
+    }
+}
+
+fn is_json(ty: &Type) -> bool {
+    matches!(*base_type(ty), Type::JSON | Type::JSONB)
+}
+
+fn convert_list(list: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Param, ConvertError> {
+    let Some(ty) = ty else {
+        let array = elements(list, None).map_err(ConvertError::message);
+        return match json_encode(list) {
+            Ok(json) => Ok(Param::List(Box::new(UntypedList {
+                array,
+                json: Ok(json),
+            }))),
+            Err(e) if array.is_ok() => Ok(Param::List(Box::new(UntypedList {
+                array,
+                json: Err(e.to_string()),
+            }))),
+            // Neither: the error a JSON parameter has always had.
+            Err(e) => Err(e.into()),
+        };
+    };
+    match element_type(ty) {
+        Some(elem) => Ok(Param::Array(elements(list, Some(elem))?)),
+        None => Ok(Param::Json(json_encode(list)?)),
+    }
+}
+
+/// The elements of a list or tuple, converted for elements of type `ty` (if known).
+fn elements(seq: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Vec<Param>, ConvertError> {
+    let element = |(i, item): (usize, Bound<'_, PyAny>)| {
+        let list = item.is_instance_of::<PyList>();
+        let nested = list || item.is_instance_of::<PyTuple>();
+        if nested && ty.is_some_and(|ty| !is_json(ty)) {
+            return Err(ConvertError::Invalid(format!(
+                "element {i}: multi-dimensional arrays are not supported (got a nested {})",
+                item.get_type().name()?
+            )));
+        }
+        if list && ty.is_none() {
+            // Only an element of a json/jsonb array can be a list, so it is only encoded as
+            // JSON (and its own elements aren't converted, level after level).
+            return Ok(Param::List(Box::new(UntypedList {
+                array: Err(format!(
+                    "element {i}: multi-dimensional arrays are not supported (got a nested list)"
+                )),
+                json: json_encode(&item).map_err(|e| e.to_string()),
+            })));
+        }
+        convert(&item, ty).map_err(|e| e.in_element(i))
+    };
+    match as_type::<PyList>(seq) {
+        Some(list) => list.iter().enumerate().map(element).collect(),
+        None => seq
+            .cast::<PyTuple>()
+            .map_err(PyErr::from)?
+            .iter()
+            .enumerate()
+            .map(element)
+            .collect(),
+    }
 }
 
 /// `obj` serialised as JSON by the shared `msgspec.json.Encoder`.
@@ -295,7 +407,8 @@ pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
 /// prepare the statement but describe its parameters with a wrapped-around count.
 const MAX_PARAMS: usize = u16::MAX as usize;
 
-pub fn from_py_tuple(params: &Bound<'_, PyTuple>) -> PyResult<Vec<Param>> {
+/// `types`: the parameter types of the statement, when it is already prepared.
+pub fn from_py_tuple(params: &Bound<'_, PyTuple>, types: Option<&[Type]>) -> PyResult<Vec<Param>> {
     if params.len() > MAX_PARAMS {
         return Err(py_err(
             params.py(),
@@ -309,7 +422,7 @@ pub fn from_py_tuple(params: &Bound<'_, PyTuple>) -> PyResult<Vec<Param>> {
     params
         .iter()
         .enumerate()
-        .map(|(i, p)| from_py(&p, i))
+        .map(|(i, p)| from_py(&p, i, types.and_then(|types| types.get(i))))
         .collect()
 }
 
@@ -450,6 +563,17 @@ impl ToSql for Indexed<'_> {
             }
             Param::Decimal(s) if *ty == Type::NUMERIC => encode_numeric(s, out).map_err(fail)?,
             Param::Json(j) if matches!(*ty, Type::JSON | Type::JSONB) => put_json(ty, j, out),
+            Param::Array(items) => match element_type(ty) {
+                Some(elem) => encode_array(index, items, elem, out)?,
+                None => return Err(mismatch()),
+            },
+            Param::List(list) => match (element_type(ty), &list.array, &list.json) {
+                (Some(elem), Ok(items), _) => encode_array(index, items, elem, out)?,
+                (Some(_), Err(message), _) => return Err(fail(message.clone())),
+                (None, _, Ok(json)) if is_json(ty) => put_json(ty, json, out),
+                (None, _, Err(message)) if is_json(ty) => return Err(fail(message.clone())),
+                (None, _, _) => return Err(mismatch()),
+            },
             _ => return Err(mismatch()),
         }
         Ok(IsNull::No)
@@ -461,6 +585,53 @@ impl ToSql for Indexed<'_> {
     }
 
     to_sql_checked!();
+}
+
+/// A one-dimensional array of `items` (empty: no dimensions), each encoded as a parameter of
+/// type `elem` would be. Errors name the element.
+fn encode_array(
+    index: usize,
+    items: &[Param],
+    elem: &Type,
+    out: &mut BytesMut,
+) -> Result<(), BoxError> {
+    let fail = |message: String| -> BoxError { Box::new(ParamError { index, message }) };
+    let len = i32::try_from(items.len()).map_err(|_| fail("too many array elements".into()))?;
+    // ndim, has-NULLs flag (set below), element type, then the one dimension: length and
+    // lower bound.
+    out.put_i32(i32::from(len > 0));
+    let flags_at = out.len();
+    out.put_i32(0);
+    out.put_u32(elem.oid());
+    if len > 0 {
+        out.put_i32(len);
+        out.put_i32(1);
+    }
+    for (i, item) in items.iter().enumerate() {
+        if matches!(item, Param::Array(_) | Param::List(_)) && !is_json(elem) {
+            return Err(fail(format!(
+                "element {i}: multi-dimensional arrays are not supported (got a nested list)"
+            )));
+        }
+        let len_at = out.len();
+        out.put_i32(0);
+        let len = match Indexed(index, item).to_sql(elem, out) {
+            Ok(IsNull::Yes) => {
+                out[flags_at..flags_at + 4].copy_from_slice(&1i32.to_be_bytes());
+                -1
+            }
+            Ok(IsNull::No) => i32::try_from(out.len() - len_at - 4)
+                .map_err(|_| fail(format!("element {i} is too large")))?,
+            Err(e) => {
+                return Err(match e.downcast::<ParamError>() {
+                    Ok(p) => fail(format!("element {i}: {}", p.message)),
+                    Err(e) => e,
+                });
+            }
+        };
+        out[len_at..len_at + 4].copy_from_slice(&len.to_be_bytes());
+    }
+    Ok(())
 }
 
 /// `v` as a float4, unless it is finite but beyond float4's range: PostgreSQL's float8 to
@@ -639,6 +810,27 @@ mod tests {
         ] {
             assert_eq!(roundtrip(input), expected, "{input}");
         }
+    }
+
+    #[test]
+    fn array_encoding() {
+        let mut b = BytesMut::new();
+        let items = [Param::Int(1), Param::Null, Param::Int(-2)];
+        encode_array(0, &items, &Type::INT4, &mut b).unwrap();
+        let one: &[u8] = &1i32.to_be_bytes();
+        let minus_two: &[u8] = &(-2i32).to_be_bytes();
+        assert_eq!(
+            &b[..],
+            crate::decode::tests::array(&[(3, 1)], &[Some(one), None, Some(minus_two)])
+        );
+        b.clear();
+        encode_array(0, &[], &Type::INT4, &mut b).unwrap();
+        assert_eq!(&b[..], crate::decode::tests::array(&[], &[]));
+        let err = encode_array(0, &[Param::Str("x".into())], &Type::INT4, &mut b).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "parameter $1: element 0: cannot encode str as PostgreSQL type int4"
+        );
     }
 
     #[test]
