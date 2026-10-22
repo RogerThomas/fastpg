@@ -26,7 +26,7 @@ Open issues are strict `xfail`s, so each one fails loudly (`XPASS`) once fixed.
 | case | behaviour | bug? | fixed? | test |
 |---|---|---|---|---|
 | NULL → non-optional field, direct | `NullValueError` naming column and field, every target | no | | `test_null_into_non_optional_field_names_column_and_field` |
-| NULL → non-optional field, msgpack/json | `DecodeError` from the validator (`Expected int, got None - at $[999].value`) | inconsistent class | open (O1) | `..._is_a_null_value_error_under_every_strategy` (xfail) |
+| NULL → non-optional field, msgpack/json | was a plain `DecodeError` from the validator; now the direct route's `NullValueError` (plus the row for `select_many`) | yes | `43b1c82` | `..._is_a_null_value_error_under_every_strategy` |
 | NULL → `Any` field, direct | was `NullValueError`; msgspec/pydantic accept None | yes | `0e0f69e` | `test_any_field_takes_null_under_every_strategy` |
 | NULL in row 1000 of 5000 | whole `select_many` fails, no partial list, connection fine | no | | `test_null_in_row_1000_of_5000_fails_the_whole_select_many` |
 | `infinity`, year ≥ 10000, BC dates/timestamps | `DecodeError` naming the column, every target | no | | `test_date_python_cannot_represent_is_a_decode_error` |
@@ -71,10 +71,13 @@ Open issues are strict `xfail`s, so each one fails loudly (`XPASS`) once fixed.
 * **`select_many`, NULL at row 1,000 of 5,000**: rows arrive in 512-row chunks and the first
   is decoded while the rest streams; the failing chunk sets the future's exception, later
   chunks are skipped, and no partial list is ever returned. Tuples and dicts just hold `None`.
-* **msgpack/json**: the encoder writes `nil`/`null` and msgspec or pydantic rejects it:
-  `DecodeError('Expected `int`, got `None` - at `$[999].value`')` (row index included, but
-  not `NullValueError`). An existing test (`test_null_into_non_optional_via_msgpack_is_decode_error`)
-  pins this; open issue O1.
+* **msgpack/json** (fixed, `43b1c82`): the encoder writes `nil`/`null` and msgspec or
+  pydantic rejects it. That error used to become a plain `DecodeError('Expected `int`, got
+  `None` - at `$[999].value`')`, so catching `NullValueError` worked for some types and
+  strategies and not others (`auto` picks msgpack for constrained Structs). A failed decode
+  whose error is a NULL top-level field is now the direct route's `NullValueError`, with
+  ` (row 999)` appended under `select_many`. A NULL inside a value (an array element) is still
+  a plain `DecodeError`.
 * **`Any` fields** (fixed, `0e0f69e`): direct construction treated `Any` as non-nullable
   and raised `NullValueError`, while msgspec and pydantic validation take `None` for `Any`,
   so `auto` (direct) disagreed with `msgpack`/`json`. `Any` is now nullable.
@@ -255,13 +258,8 @@ macOS, release build, against the throwaway container:
 
 ## Open issues and proposed fixes
 
-* **O1. NULL through validation isn't a `NullValueError`.** msgpack/json leave NULLs to
-  msgspec/pydantic, so catching `NullValueError` works for some types and not others
-  (`auto` picks msgpack for constrained Structs). Proposed: give the Plan the columns of
-  fields whose type refuses `None` (decided once per type, e.g. `msgspec.convert(None,
-  type=T)` / `TypeAdapter(T).validate_python(None)` failing) and have the encoders raise the
-  direct message when such a column is NULL. The existing test pinning `DecodeError` keeps
-  passing (subclass).
+* **O1. NULL through validation isn't a `NullValueError`.** Fixed (`43b1c82`), see section 1:
+  the validator's error is recognised after the fact, so the success path costs nothing.
 * **O2. `client_encoding` other than UTF8 corrupts text silently.** fastpg always sends
   UTF-8; after `SET client_encoding = 'LATIN1'` the server reinterprets parameters and query
   text (`length($1)` of `"é"` is 2, stored as `Ã©`), and results come back mostly

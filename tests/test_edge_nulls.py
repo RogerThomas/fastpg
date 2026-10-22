@@ -34,6 +34,14 @@ class ConstrainedValue(msgspec.Struct):
     value: Annotated[int, msgspec.Meta(ge=0)]
 
 
+class Values(msgspec.Struct):
+    value: list[int]
+
+
+class ValuesModel(pydantic.BaseModel):
+    value: list[int]
+
+
 class ValueTuple(NamedTuple):
     value: int
 
@@ -118,23 +126,46 @@ async def test_null_into_non_optional_field_through_validation_is_a_decode_error
     assert await conn.select_one("SELECT 1") == (1,)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=fastpg.DecodeError,
-    reason="open: the msgpack/json routes leave NULLs to the validating decoder, whose error"
-    " becomes a plain DecodeError (notes/edge-cases-data.md)",
-)
 @pytest.mark.parametrize(
-    ("into", "strategy"),
-    [(Value, "msgpack"), (Value, "json"), (ConstrainedValue, "auto"), (ValueModel, "json")],
+    ("into", "strategy", "field"),
+    [
+        (Value, "msgpack", "Value.value"),
+        (Value, "json", "Value.value"),
+        (RenamedValue, "json", "RenamedValue.number"),
+        (ConstrainedValue, "auto", "ConstrainedValue.value"),
+        (ValueModel, "json", "ValueModel.value"),
+        (AliasedValueModel, "json", "AliasedValueModel.number"),
+    ],
 )
 async def test_null_into_non_optional_field_is_a_null_value_error_under_every_strategy(
     conn: fastpg.Connection,
-    into: type[Value | ConstrainedValue | ValueModel],
+    into: type[Value | RenamedValue | ConstrainedValue | ValueModel | AliasedValueModel],
+    strategy: fastpg.Strategy,
+    field: str,
+) -> None:
+    expected = rf'^column "value" is NULL but {field} is not optional$'
+    with pytest.raises(fastpg.NullValueError, match=expected):
+        await conn.select_one("SELECT NULL::int4 AS value", into=into, strategy=strategy)
+    assert await conn.select_one("SELECT 1") == (1,)
+
+
+@pytest.mark.parametrize(
+    ("into", "strategy"),
+    [(Values, "msgpack"), (Values, "json"), (ValuesModel, "json")],
+)
+async def test_null_inside_a_value_through_validation_is_a_decode_error_not_a_null_value_error(
+    conn: fastpg.Connection,
+    into: type[Values | ValuesModel],
     strategy: fastpg.Strategy,
 ) -> None:
-    with pytest.raises(fastpg.NullValueError):
-        await conn.select_one("SELECT NULL::int4 AS value", into=into, strategy=strategy)
+    # The column isn't NULL, an element of it is.
+    with pytest.raises(fastpg.DecodeError) as raised:
+        await conn.select_one(
+            "SELECT ARRAY[1, NULL]::int4[] AS value",
+            into=into,
+            strategy=strategy,
+        )
+    assert not isinstance(raised.value, fastpg.NullValueError)
 
 
 @pytest.mark.parametrize("into", [IdValue, IdValueTuple, IdValueModel])
@@ -163,7 +194,7 @@ async def test_null_in_row_1000_of_5000_through_validation_names_the_row(
         "SELECT i AS id, CASE WHEN i = 1000 THEN NULL ELSE i END AS value"
         " FROM generate_series(1, 5000) AS s(i)"
     )
-    with pytest.raises(fastpg.DecodeError, match="999"):  # 0-based
+    with pytest.raises(fastpg.NullValueError, match=r'^column "value" is NULL .* \(row 999\)$'):
         await conn.select_many(query, into=into, strategy=strategy)
     assert await conn.select_one("SELECT 1") == (1,)
 
