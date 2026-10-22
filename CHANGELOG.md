@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/RogerThomas/fastpg/compare/v0.1.0...v0.1.1) (2026-10-22)
+
+
+### Features
+
+* PostgreSQL arrays: read them into lists, send lists as arrays ([#19](https://github.com/RogerThomas/fastpg/issues/19)) ([10449ff](https://github.com/RogerThomas/fastpg/commit/10449ff2c663cd8a1754d88476ded137163d3a0e))
+* support Python 3.13, 3.14 and 3.15 (and free-threaded 3.14t, 3.15t) ([#18](https://github.com/RogerThomas/fastpg/issues/18)) ([4fb9549](https://github.com/RogerThomas/fastpg/commit/4fb9549214f6e51a93e8faf8c6136364280588c5))
+
 ## 0.1.0 (2026-10-22)
 
 
