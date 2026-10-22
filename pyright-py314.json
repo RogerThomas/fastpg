@@ -1,5 +1,12 @@
 {
   "extends": "pyproject.toml",
   "pythonVersion": "3.14",
-  "exclude": ["notes/eval", "faster", "tmp_*.py", "**/.*", "**/node_modules", "**/__pycache__"]
+  "exclude": [
+    "notes/eval",
+    "faster",
+    "tmp_*.py",
+    "**/.*",
+    "**/node_modules",
+    "**/__pycache__"
+  ]
 }
