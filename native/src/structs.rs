@@ -800,8 +800,8 @@ impl<'py> StructBuilder<'_, 'py> {
 
     /// `tuple.__new__(cls, values)` for a `NamedTuple` class whose call does no more than that
     /// (checked in `fastpg/_spec.py`), as CPython's `tuple_subtype_new` does it: allocate an
-    /// instance with one item per field, fill the items, reset the hash cache, make sure the
-    /// instance is GC-tracked. Unlike the class's `__new__`, builds no intermediate tuple.
+    /// instance with one item per field, fill the items, reset the hash cache (3.14+), make sure
+    /// the instance is GC-tracked. Unlike the class's `__new__`, builds no intermediate tuple.
     fn named_tuple(&self, items: &[Arg]) -> PyResult<Bound<'py, PyAny>> {
         let py = self.py;
         // SAFETY: `cls` is a tuple subclass (a heap type, so GC-enabled, whose layout is a
@@ -811,13 +811,17 @@ impl<'py> StructBuilder<'_, 'py> {
         // escapes, and nothing between the allocation and the last item runs Python code
         // (cloning only increments reference counts); a GC pass seeing the tracked instance
         // meanwhile skips its NULL items, as for any tuple under construction. The hash cache
-        // is reset to -1 ("not computed") since the allocation zeroed it.
+        // (a field from CPython 3.14) is reset to -1 ("not computed") since the allocation
+        // zeroed it.
         unsafe {
             let tp = self.cls.as_ptr().cast::<pyo3::ffi::PyTypeObject>();
             let alloc = (*tp).tp_alloc.unwrap_or(pyo3::ffi::PyType_GenericAlloc);
             let n = items.len() as pyo3::ffi::Py_ssize_t;
             let obj = Bound::from_owned_ptr_or_err(py, alloc(tp, n))?;
-            (*obj.as_ptr().cast::<pyo3::ffi::PyTupleObject>()).ob_hash = -1;
+            #[cfg(Py_3_14)]
+            {
+                (*obj.as_ptr().cast::<pyo3::ffi::PyTupleObject>()).ob_hash = -1;
+            }
             for (i, item) in items.iter().enumerate() {
                 let value = match item {
                     Arg::Column(c) => self.values[*c].clone().into_ptr(),
