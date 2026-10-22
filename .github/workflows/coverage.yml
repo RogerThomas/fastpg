@@ -1,0 +1,95 @@
+# Coverage: `task coverage`, which runs `task test` (the Rust unit tests, then the pytest suite)
+# with both the Python package and the Rust extension instrumented, uploaded to Codecov as two
+# flags, python and rust. A workflow of its own, on one platform and Python, so the instrumented
+# build slows down none of CI's test jobs; not one "CI passed" requires (codecov.yml's checks
+# are informational too).
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # Documentation changes can't change the coverage. (Pushes to main always run: they're
+    # the baselines pull requests are compared against.)
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - mkdocs.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_LLVM_COV_VERSION: 0.9.1
+  TASK_VERSION: 3.54.0 # same as ci.yml
+  UV_LOCKED: 1
+  UV_VERSION: 0.13.0 # same as ci.yml
+
+jobs:
+  coverage:
+    name: Coverage (Linux x86_64, Python 3.14)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write # OpenID Connect authentication with Codecov, instead of a token
+    env:
+      # A pull request from a fork (or by Dependabot) gets no OpenID Connect token: it uploads
+      # without one (Codecov accepts that from forks of a public repository), and a failed upload
+      # shows as a failed step without failing the job.
+      UNTRUSTED: >-
+        ${{ github.event_name == 'pull_request'
+        && (github.event.pull_request.head.repo.fork || github.actor == 'dependabot[bot]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-python: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Python (.python-version)
+        run: uv python install
+      # (`task coverage` adds the llvm-tools component cargo-llvm-cov needs.)
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native -> target
+          key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
+      - run: task coverage -- -ra
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        continue-on-error: ${{ env.UNTRUSTED == 'true' }}
+        with:
+          files: coverage/python.xml
+          disable_search: true
+          flags: python
+          name: python
+          use_oidc: ${{ env.UNTRUSTED != 'true' }}
+          fail_ci_if_error: true
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        continue-on-error: ${{ env.UNTRUSTED == 'true' }}
+        with:
+          files: coverage/rust.lcov
+          disable_search: true
+          flags: rust
+          name: rust
+          use_oidc: ${{ env.UNTRUSTED != 'true' }}
+          fail_ci_if_error: true
