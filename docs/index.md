@@ -6,8 +6,8 @@
 fastpg is an async PostgreSQL client for Python 3.14, written in Rust on
 [xitca-postgres](https://github.com/HFQR/xitca-web/tree/main/postgres) and
 [PyO3](https://pyo3.rs). It decodes rows from PostgreSQL's binary format straight into
-[msgspec](https://msgspec.dev/) Structs or pydantic models, with no intermediate
-tuples or dicts, and runs the whole protocol on the asyncio event loop's thread.
+[msgspec](https://msgspec.dev/) Structs, with no intermediate tuples or dicts, and runs the
+whole protocol on the asyncio event loop's thread.
 
 ```python
 import asyncio
@@ -50,17 +50,19 @@ connections, every driver returning the same msgspec Structs, on a shared GitHub
 
 ```sh
 uv add fastpg                  # or: pip install fastpg
-uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
 
-Python 3.14.3 or later, on macOS or Linux. Until the first PyPI release, see
-[Getting started](guide/getting-started.md#install) to build from source.
+msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
+models work too (`uv add 'fastpg[pydantic]'`, see [pydantic](guide/pydantic.md)).
+
+Python 3.14.3 or later, on macOS or Linux, from wheels (see
+[Getting started](guide/getting-started.md#install)).
 
 ## Features
 
-* **Typed rows**: `into=Person` builds msgspec Structs, pydantic v2 models, NamedTuples or
-  dicts from the binary values; a type that needs validation is validated, never skipped.
-  See [Structs](guide/structs.md).
+* **Typed rows**: `into=Person` builds msgspec Structs (also NamedTuples, dicts, or pydantic
+  v2 models) from the binary values; a type that needs validation is validated, never
+  skipped. See [Structs](guide/structs.md).
 * **Prepared, binary, on the loop**: statements are prepared on first use and cached per
   connection, and a query costs no thread hand-off.
 * **A routing pool**: single statements need no `acquire()`; they go to idle connections, or

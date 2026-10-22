@@ -63,10 +63,13 @@ The choices that make these each driver's best, and where the drivers genuinely 
 * **asyncpg's reset.** asyncpg's pool runs `SELECT pg_advisory_unlock_all(); CLOSE ALL;
   UNLISTEN *; RESET ALL` every time a connection is released: one more round trip per
   pooled query. That's its default, so `asyncpg` keeps it, and `asyncpg-noreset` removes it,
-  which is safe here because no workload changes session state. The other pools don't reset:
-  fastpg's shared statements can't change session state, and `Pool.transaction()` resets
-  within the COMMIT's round trip; psycopg's pool only rolls back a connection left in a
-  transaction; psqlpy recycles connections without a query.
+  which is safe here because no workload changes session state. The other pools don't reset
+  (checked: a `SET` made on a pooled connection is still there for its next user): fastpg's
+  shared statements and bulk writes aren't reset (the pool guide says pool queries mustn't
+  change session state); psycopg's pool only rolls back a connection left in a transaction;
+  psqlpy recycles connections without a query. fastpg's `Pool.transaction()` does reset, within
+  the COMMIT's round trip, so for `transaction-c16` the summary compares fastpg first with the
+  configurations that reset too (only `asyncpg`), then with the rest.
 * **Autocommit.** Reads and single-row writes run in autocommit on every driver (fastpg's
   shared mode, asyncpg's `pool.fetch*`, psycopg with `autocommit=True`, psqlpy by default).
   Left at its default, psycopg would wrap every pooled query in BEGIN/COMMIT: two extra
