@@ -77,7 +77,8 @@ impl Param {
             Self::Decimal(_) => "decimal.Decimal",
             Self::Json(_) => "dict/list (JSON)",
             Self::Array(_) => "list/tuple (array)",
-            Self::List(_) => "list",
+            // As the same list is described once the statement is prepared.
+            Self::List(_) => "dict/list (JSON)",
         }
     }
 }
@@ -363,12 +364,23 @@ fn convert_list(list: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Param, Con
 /// The elements of a list or tuple, converted for elements of type `ty` (if known).
 fn elements(seq: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Vec<Param>, ConvertError> {
     let element = |(i, item): (usize, Bound<'_, PyAny>)| {
-        let nested = item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>();
+        let list = item.is_instance_of::<PyList>();
+        let nested = list || item.is_instance_of::<PyTuple>();
         if nested && ty.is_some_and(|ty| !is_json(ty)) {
             return Err(ConvertError::Invalid(format!(
                 "element {i}: multi-dimensional arrays are not supported (got a nested {})",
                 item.get_type().name()?
             )));
+        }
+        if list && ty.is_none() {
+            // Only an element of a json/jsonb array can be a list, so it is only encoded as
+            // JSON (and its own elements aren't converted, level after level).
+            return Ok(Param::List(Box::new(UntypedList {
+                array: Err(format!(
+                    "element {i}: multi-dimensional arrays are not supported (got a nested list)"
+                )),
+                json: json_encode(&item).map_err(|e| e.to_string()),
+            })));
         }
         convert(&item, ty).map_err(|e| e.in_element(i))
     };

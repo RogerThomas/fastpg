@@ -352,6 +352,7 @@ async def test_list_for_json_is_still_json(conn: fastpg.Connection) -> None:
         ("SELECT $1::int[]", [object()], r"unsupported"),  # first use: as JSON
         ("SELECT $1::jsonb", (1, 2), r"cannot encode list/tuple \(array\) as .* type jsonb"),
         ("SELECT $1::text", (1, 2), r"cannot encode list/tuple \(array\) as .* type text"),
+        ("SELECT $1::text", [1, 2], r"cannot encode dict/list \(JSON\) as .* type text"),
     ],
 )
 async def test_parameter_errors_name_the_element(
