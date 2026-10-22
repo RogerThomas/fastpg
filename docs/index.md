@@ -43,6 +43,8 @@ New here? Start with [Getting started](guide/getting-started.md).
 * **A pool you query directly.** No `acquire()` for a single query. See
   [Connection pool](guide/pool.md).
 * **Safe parameters.** `$1`, `:name` or t-strings. See [Queries](guide/queries.md).
+* **Arrays and grouping.** `list[X]` fields, lists as parameters, and `select_and_group`
+  for one-to-many rows. See [Arrays and grouping](guide/lists.md).
 * **Fast bulk writes.** `copy_in`, `insert_many`, `execute_many`. See
   [Bulk writes](guide/writes.md).
 * **Transactions, TLS and clear errors.** See [Transactions](guide/transactions.md),
