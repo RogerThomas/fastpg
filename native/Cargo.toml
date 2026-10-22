@@ -17,7 +17,7 @@ alloc-stats = []
 [dependencies]
 bytes = "1"
 fallible-iterator = "0.2"
-pyo3 = "0.29"
+pyo3 = "0.30"
 itoa = "1"
 percent-encoding = "2"
 postgres-protocol = "0.6"
