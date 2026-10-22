@@ -153,6 +153,7 @@ async def test_close_during_a_transaction_rolls_it_back(
     assert await conn.select_one("SELECT count(*)::int FROM edge_close") == (0,)
 
 
+@pytest.mark.timing
 async def test_a_close_that_timed_out_still_counts_as_closed(dsn: str) -> None:
     # close() waits for queries in flight; giving up on it (asyncio.timeout) must not make
     # the connection look unclosed once it's collected.
@@ -343,6 +344,7 @@ async def test_pool_close_waits_for_a_checked_out_connection(dsn: str) -> None:
     assert pool.stats().size == 0
 
 
+@pytest.mark.timing
 async def test_cancelled_pool_close_terminates_checked_out_connections(dsn: str) -> None:
     name = "edge_close_pool_cancelled"
     pool = await fastpg.create_pool(f"{dsn}?application_name={name}", min_size=2, max_size=2)

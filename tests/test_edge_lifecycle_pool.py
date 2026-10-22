@@ -35,7 +35,14 @@ def _tagged(dsn: str, name: str) -> str:
 
 async def _settled(pool: fastpg.Pool) -> fastpg.PoolStats:
     async with asyncio.timeout(10):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        # Checkouts too: one cancelled inside its block is given back in the background.
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
     return pool.stats()
 

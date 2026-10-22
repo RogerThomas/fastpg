@@ -15,6 +15,9 @@ import pytest
 import fastpg
 from fastpg import errors
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -26,9 +29,16 @@ pg_terminate_backend) or a lost connection (the server process died)."""
 
 
 async def _settle(pool: fastpg.Pool) -> None:
-    """Wait until nothing is in flight, waiting or opening."""
+    """Wait until nothing is in flight, waiting, opening or checked out (not while holding one)."""
     async with asyncio.timeout(5):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        # Checkouts too: one cancelled inside its block is given back in the background.
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
 
 
