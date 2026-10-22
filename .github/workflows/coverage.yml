@@ -73,9 +73,11 @@ jobs:
           tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
       - run: task coverage -- -ra
 
+      # An upload that fails (Codecov down, or the repo not set up there yet) shows as a
+      # failed step, but doesn't fail the job: the tests and the measurement above do.
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        continue-on-error: ${{ env.UNTRUSTED == 'true' }}
+        continue-on-error: true
         with:
           files: coverage/python.xml
           disable_search: true
@@ -85,7 +87,7 @@ jobs:
           fail_ci_if_error: true
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        continue-on-error: ${{ env.UNTRUSTED == 'true' }}
+        continue-on-error: true
         with:
           files: coverage/rust.lcov
           disable_search: true
