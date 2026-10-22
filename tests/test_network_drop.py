@@ -8,16 +8,12 @@ pool replaces the connection.
 # ruff: noqa: S608 - SQL is built from fixture-generated table names
 
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
 
 import pytest
+from faults import FaultProxy
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from faults import FaultProxy
 
 _LOST = "connection lost"
 _BIG = "SELECT n, repeat('x', 100) FROM generate_series(1, 20000) AS n"  # ~2.3 MB

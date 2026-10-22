@@ -155,7 +155,7 @@ class DatabaseError(FastPGError):
         column_name: str | None,
         data_type_name: str | None,
         constraint_name: str | None,
-    ) -> DatabaseError:
+    ) -> "DatabaseError":
         """Build the most specific subclass for a server ErrorResponse (called from Rust)."""
         return SQLStateRegistry.error_class(sqlstate)(
             message,

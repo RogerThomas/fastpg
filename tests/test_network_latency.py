@@ -9,20 +9,16 @@ than one per statement, and nothing times out on its own (fastpg has no internal
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
 
 import msgspec
 import pytest
+from faults import FaultProxy
 
 import fastpg
 
 # Every test here times something: run after the rest, alone (`task test`).
 pytestmark = pytest.mark.timing
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from faults import FaultProxy
 
 
 class Row(msgspec.Struct):

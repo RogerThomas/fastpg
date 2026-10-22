@@ -16,5 +16,5 @@ fastpg is alpha software. This is what it can't do yet.
 * **Cancelling a query** stops it on the server only when it is the only query running on
   its connection.
 * **Queries sent at the same time on one connection may not run in the order you sent them.**
-* **Free-threaded Python** (3.14t) works, but importing fastpg turns the GIL back on.
+* **Free-threaded Python** (3.14t, 3.15t) works, but importing fastpg turns the GIL back on.
 * **Some TLS options aren't supported.** See [TLS](guide/tls.md).

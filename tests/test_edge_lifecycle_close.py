@@ -3,16 +3,12 @@
 import asyncio
 import gc
 import warnings
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
+from conftest import LoopErrors
 
 import fastpg
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
-
-    from conftest import LoopErrors
 
 
 class BlockError(Exception):

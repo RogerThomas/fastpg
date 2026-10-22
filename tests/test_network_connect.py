@@ -3,18 +3,14 @@ pool starts, and when it grows."""
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
 
 import pytest
-from faults import with_params
+from faults import FaultProxy, with_params
 
 import fastpg
 
 # Every test here times something: run after the rest, alone (`task test`).
 pytestmark = pytest.mark.timing
-
-if TYPE_CHECKING:
-    from faults import FaultProxy
 
 
 @pytest.mark.parametrize(

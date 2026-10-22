@@ -1,16 +1,16 @@
-"""Features working together: pool, t-strings and bulk writes, and failure paths across them."""
+"""Features working together: pool and bulk writes, and failure paths across them.
+
+(The pool's t-string queries are tested in test_templates.py.)
+"""
 
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Iterator
 
 import msgspec
 import pytest
 
 import fastpg
 from fastpg import errors
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
 
 
 class Item(msgspec.Struct):
@@ -48,18 +48,6 @@ async def _insert_then_abort(pool: fastpg.Pool, items: str) -> None:
 
 def _rows(count: int) -> Iterator[tuple[int, str]]:
     return ((i, "v") for i in range(count))
-
-
-async def test_pool_runs_t_string_queries(pool: fastpg.Pool) -> None:
-    item_id = 7
-    got = await pool.select_one(t"SELECT {item_id}::int4 AS id, {'v'}::text AS v", into=Item)
-    assert got == Item(7, "v")
-    assert await pool.select_many(t"SELECT generate_series(1, {3}::int4)") == [(1,), (2,), (3,)]
-
-
-async def test_pool_t_string_script_with_identifier(pool: fastpg.Pool, items: str) -> None:
-    await pool.execute_script(t"INSERT INTO {fastpg.Identifier(items)} VALUES (1, 'v')")
-    assert await pool.select_one(t"SELECT count(*) FROM {fastpg.Identifier(items)}") == (1,)
 
 
 async def test_pool_bulk_writes(pool: fastpg.Pool, items: str) -> None:

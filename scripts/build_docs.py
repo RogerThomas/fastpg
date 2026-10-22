@@ -32,7 +32,7 @@ def _signature_markdown(name: str, symbol: object) -> str:
         return ""
     try:
         signature = inspect.signature(symbol)
-    except NameError, TypeError, ValueError:
+    except (NameError, TypeError, ValueError):
         return ""
     prefix = "async def " if inspect.iscoroutinefunction(symbol) else ""
     return f"```python\n{prefix}{name}{signature}\n```"

@@ -1,5 +1,8 @@
 #!yeet
-"""Minimal fastpg example. Run: ./examples/basic.py --person-id 42"""
+"""Minimal fastpg example. Run: ./examples/basic.py --person-id 42
+
+Needs Python 3.14 or later, for its t-string query.
+"""
 
 from typing import Annotated
 

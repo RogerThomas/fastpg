@@ -8,20 +8,16 @@ recovers on its own as soon as the server is back (measured: within a second of
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from faults import DisposableServer
 
 import fastpg
 from fastpg import errors
 
 # Every test here times something: run after the rest, alone (`task test`).
 pytestmark = pytest.mark.timing
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from faults import DisposableServer
 
 _GONE = (errors.OperationalError, fastpg.ConnectionClosedError)
 """A statement in flight when the server goes: 57P01 (terminated by the server's shutdown or

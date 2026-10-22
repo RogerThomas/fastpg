@@ -11,23 +11,18 @@ behind it wait for it.
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from contextlib import suppress
-from typing import TYPE_CHECKING
 
 import pytest
-from faults import with_params
+from conftest import LoopErrors
+from faults import FaultProxy, with_params
 
 import fastpg
 from fastpg import errors
 
 # Every test here times something: run after the rest, alone (`task test`).
 pytestmark = pytest.mark.timing
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-    from conftest import LoopErrors
-    from faults import FaultProxy
 
 
 @pytest.fixture

@@ -65,6 +65,7 @@ A name with no value raises `ParameterError`.
 ### t-strings
 
 Python 3.14's t-strings look like f-strings, but each `{value}` is sent as a parameter.
+t-string queries need Python 3.14 or newer.
 
 ```python
 person_id, min_age = 42, 30

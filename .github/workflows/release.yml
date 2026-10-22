@@ -14,10 +14,10 @@
 # is deployed by docs.yml, on every push to main that changes it (the release's version bump
 # included).
 #
-# Wheels for CPython 3.14 and the free-threaded 3.14t (which fastpg runs with the GIL back on, ADR
-# 0011), on Linux (manylinux_2_28 and musllinux_1_2, x86_64 and aarch64) and macOS (x86_64 and
-# arm64): the platforms ADR 0011 supports; not Windows, whose default event loop has no
-# add_reader. Not abi3: the extension builds Structs, tuples and lists in place through CPython's
+# Wheels for CPython 3.13, 3.14 and 3.15 and the free-threaded 3.14t and 3.15t (which fastpg runs
+# with the GIL back on; no 3.13t, where free threading was experimental: ADR 0011), on Linux
+# (manylinux_2_28 and musllinux_1_2, x86_64 and aarch64) and macOS (x86_64 and arm64): the
+# platforms ADR 0011 supports; not Windows, whose default event loop has no add_reader. Not abi3: the extension builds Structs, tuples and lists in place through CPython's
 # object layouts (native/src/decode.rs, structs.rs), outside the limited API, and an abi3 wheel
 # doesn't load on a free-threaded Python anyway.
 name: Release
@@ -101,7 +101,8 @@ jobs:
       matrix:
         # Each on a runner of its own architecture (no emulation), as its test job is. The images are
         # the ones maturin-action picks for each, pinned. The manylinux ones hold every CPython
-        # (cp314t included); for musl, maturin cross-compiles with its own sysconfig data.
+        # (cp313 to cp315t, on PATH as python3.13 ... python3.15t); for musl, maturin
+        # cross-compiles with its own sysconfig data.
         platform:
           - name: manylinux x86_64
             runner: ubuntu-24.04
@@ -138,7 +139,9 @@ jobs:
           # may be published.
           sccache: ${{ github.event_name == 'pull_request' }}
           # Listed rather than --find-interpreter, which would also take the images' PyPy.
-          args: --release --locked --out dist --interpreter python3.14 python3.14t
+          args: >-
+            --release --locked --out dist
+            --interpreter python3.13 python3.14 python3.14t python3.15 python3.15t
       - name: Record the SHA-256
         run: sh .github/scripts/sha256.sh record dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -206,15 +209,15 @@ jobs:
         env:
           UV_PYTHON_PREFERENCE: only-managed
           FASTPG_TEST_OWN_SERVERS: 1
-        run: sh .github/scripts/test-wheel.sh dist 3.14 3.14t
+        run: sh .github/scripts/test-wheel.sh dist 3.13 3.14 3.14t 3.15 3.15t
       - name: Test (musl, in Alpine)
         if: matrix.platform.libc == 'musl'
-        # 3.14 on the Alpine image's Python; 3.14t on one uv downloads, in the same image (there's
-        # no free-threaded image). On the host's network, to reach the compose servers; without
-        # Docker, so without the two test files that pause and kill a server of their own. The
-        # wheels are mounted read-only.
+        # 3.14 on the Alpine image's Python, the others on ones uv downloads into the same image
+        # (there's no free-threaded image). On the host's network, to reach the compose servers;
+        # without Docker, so without the two test files that pause and kill a server of their
+        # own. The wheels are mounted read-only.
         run: |
-          for python in 3.14 3.14t; do
+          for python in 3.13 3.14 3.14t 3.15 3.15t; do
             docker run --rm --network host \
               --volume "$PWD:/io" --volume "$PWD/dist:/io/dist:ro" --workdir /io \
               --env UV_VERSION --env PYTHON="$python" \
@@ -258,6 +261,10 @@ jobs:
           persist-credentials: false
       # A wheel for each of these Pythons, which maturin is given by path.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python313
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         id: python314
         with:
           python-version: "3.14"
@@ -265,6 +272,14 @@ jobs:
         id: python314t
         with:
           python-version: "3.14t"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python315
+        with:
+          python-version: "3.15"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python315t
+        with:
+          python-version: "3.15t"
       - name: Build
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -274,8 +289,11 @@ jobs:
           sccache: ${{ github.event_name == 'pull_request' }}
           args: >-
             --release --locked --out dist --interpreter
+            ${{ steps.python313.outputs.python-path }}
             ${{ steps.python314.outputs.python-path }}
             ${{ steps.python314t.outputs.python-path }}
+            ${{ steps.python315.outputs.python-path }}
+            ${{ steps.python315t.outputs.python-path }}
       - name: Record the SHA-256
         run: sh .github/scripts/sha256.sh record dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -330,7 +348,7 @@ jobs:
         # a request for 3.14 could find its free-threaded 3.14t, which can't load a cp314 wheel.
         env:
           UV_PYTHON_PREFERENCE: only-managed
-        run: sh .github/scripts/test-wheel.sh dist 3.14 3.14t
+        run: sh .github/scripts/test-wheel.sh dist 3.13 3.14 3.14t 3.15 3.15t
       - name: Show the server's log
         if: failure()
         run: cat "$RUNNER_TEMP/postgres/server.log"

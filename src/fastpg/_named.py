@@ -23,11 +23,11 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from operator import attrgetter, itemgetter
-from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import msgspec
 
+from fastpg._template import Template
 from fastpg.errors import ParameterError
 
 if TYPE_CHECKING:
