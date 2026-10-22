@@ -16,7 +16,7 @@ alloc-stats = []
 
 [dependencies]
 bytes = "1"
-fallible-iterator = "0.3"
+fallible-iterator = "0.2"
 pyo3 = "0.29"
 itoa = "1"
 percent-encoding = "2"
@@ -31,7 +31,7 @@ sha2 = "0.11"
 # Sync primitives and `select!` only: fastpg runs no tokio runtime (see `event_loop.rs`).
 tokio = { version = "1.48", features = ["sync", "macros"] }
 webpki-roots = "1"
-xitca-io = { version = "0.6.0", features = ["runtime"] }
+xitca-io = { version = "0.5.1", features = ["runtime"] }
 xitca-postgres = "0.4"
 
 [lints.clippy]

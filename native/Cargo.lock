@@ -142,17 +142,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 
 [[package]]
-name = "fallible-iterator"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
-
-[[package]]
 name = "fastpg-native"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "fallible-iterator 0.3.0",
+ "fallible-iterator",
  "itoa",
  "percent-encoding",
  "postgres-protocol",
@@ -165,7 +159,7 @@ dependencies = [
  "sha2",
  "tokio",
  "webpki-roots",
- "xitca-io 0.6.0",
+ "xitca-io",
  "xitca-postgres",
 ]
 
@@ -321,7 +315,7 @@ dependencies = [
  "base64",
  "byteorder",
  "bytes",
- "fallible-iterator 0.2.0",
+ "fallible-iterator",
  "hmac",
  "md-5",
  "memchr",
@@ -337,7 +331,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "851ca9db4932932d69f3ea811b1abe63087a0f740a47692619dd40d4899b68be"
 dependencies = [
  "bytes",
- "fallible-iterator 0.2.0",
+ "fallible-iterator",
  "postgres-protocol",
 ]
 
@@ -692,16 +686,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-uring-xitca"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf51c4785c395f6a83448f25bfc70e2c4d0a0396367aa2ff00c4f805fd7afbae"
-dependencies = [
- "bytes",
- "tokio",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,24 +855,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "xitca-io"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49f4c68b7fcd1ad3ed7984269050e5d79151dca8964635f0a8ebb23749005ceb"
-dependencies = [
- "bytes",
- "tokio",
- "tokio-uring-xitca",
- "xitca-unsafe-collection",
-]
-
-[[package]]
 name = "xitca-postgres"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b2f5b49f1f9af38063a5f06c92d0cb152ef482b8c60da4744372093d8c8b786"
 dependencies = [
- "fallible-iterator 0.2.0",
+ "fallible-iterator",
  "futures-core",
  "lru",
  "percent-encoding",
@@ -896,7 +868,7 @@ dependencies = [
  "postgres-types",
  "tokio",
  "tracing",
- "xitca-io 0.5.1",
+ "xitca-io",
  "xitca-unsafe-collection",
 ]
 
