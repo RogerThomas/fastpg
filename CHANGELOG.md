@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/RogerThomas/fastpg/compare/v0.1.1...v0.1.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* a NULL in a non-optional field is a NullValueError under msgpack and json too ([#24](https://github.com/RogerThomas/fastpg/issues/24)) ([2e1ee67](https://github.com/RogerThomas/fastpg/commit/2e1ee67172388c4ae10d13c7c2ae8754e5c84b4b))
+
 ## [0.1.1](https://github.com/RogerThomas/fastpg/compare/v0.1.0...v0.1.1) (2026-10-22)
 
 
