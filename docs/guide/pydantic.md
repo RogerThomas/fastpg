@@ -1,7 +1,11 @@
-# Pydantic models
+# pydantic models
 
-`into=` also takes a pydantic v2 `BaseModel` subclass, with the `pydantic` extra installed
-(`uv add 'fastpg[pydantic]'`).
+If your app already uses pydantic, `into=` also takes a pydantic v2 model.
+Install the extra first:
+
+```sh
+uv add 'fastpg[pydantic]'
+```
 
 ```python
 import datetime
@@ -20,43 +24,20 @@ person = await conn.select_one(query, 3, into=Person)
 print(person.account_id, person.name)  # 3 person-3
 ```
 
-| `strategy=` | how |
-|---|---|
-| `"auto"` (default) | `"direct"` when it's equivalent to validation, else `"json"` |
-| `"direct"` | Rust builds each instance the way `model_construct` does, without validation |
-| `"json"` | Rust encodes the rows as JSON for pydantic-core's `validate_json`: fully validated |
+Each column fills the field with the same alias, or the same name if it has no alias.
+A field with a default can be left out of the query.
 
-`"msgpack"` raises `UnsupportedTypeError` for pydantic models.
+## Validation
 
-## When direct construction is used
+fastpg only skips pydantic's validation when it would change nothing.
+A model with plain field types and no validators or constraints is built directly, which is
+fast.
+Any other model is validated by pydantic as usual.
 
-Only when validation would change nothing, decided once per model from its core schema:
+To make sure a model always takes the fast path, pass `strategy="direct"`.
+It then raises `UnsupportedTypeError`, with the reason, instead of validating.
 
-* every field is `bool`, `int`, `float`, `str`, `bytes`, `datetime`, `date`, `time`, `UUID`,
-  `Decimal` or `Any` (each optionally `| None`), or JSON-shaped (list, dict, tuple, set,
-  nested model, `TypedDict`, dataclass) from a `json`/`jsonb` column;
-* no field constraints (`Field(gt=...)`, `max_length`, `strict`, ...);
-* no validators, `model_post_init`, custom `__init__` or private attributes, and not a
-  `RootModel`;
-* `extra` isn't `"allow"`, and aliases are plain strings (no `AliasPath`, `AliasChoices`)
-  matched as aliases only (no `validate_by_name`/`populate_by_name`, nor
-  `validate_by_alias=False`);
-* defaults are `None`, `bool`, `int`, `float`, `str` or `bytes`, with no `default_factory`
-  or `validate_default`.
+A row that fails validation raises `fastpg.DecodeError`.
+pydantic's `ValidationError` is its `__cause__`.
 
-Otherwise `"auto"` uses `"json"`, and `"direct"` raises `UnsupportedTypeError` with the reason.
-
-## Binding and errors
-
-* A column matches a field's `validation_alias`, else its `alias`, else its name. Fields with
-  defaults may be missing; extra columns raise `UnknownColumnError` only with
-  `extra="forbid"`.
-* JSON-shaped fields are validated even under `"direct"`, by a cached `TypeAdapter`. A `str`
-  field fed from `json`/`jsonb` gets the raw JSON text.
-* Directly built instances get `model_fields_set` from the columns, as `model_construct`
-  would.
-* A `numeric` `NaN` or `±Infinity` for a `Decimal` field raises `fastpg.DecodeError` under
-  both strategies, as pydantic's validation does; `Field(allow_inf_nan=True)` accepts them
-  (through `"json"`).
-* A validation failure raises `fastpg.DecodeError`, with pydantic's `ValidationError` as its
-  `__cause__`.
+msgspec [Structs](structs.md) are faster than pydantic models, so prefer them for new code.

@@ -10,9 +10,9 @@
 # suite against the installed wheel), each wheel on the Python it's for; and when a release was
 # created, once every build and test passed, publishes them all to PyPI with trusted publishing,
 # checking first that each SHA-256 still matches: what's published is exactly what was tested.
-# Once they're published, it builds the documentation site (mkdocs.yml) and deploys it to GitHub
-# Pages. Pull requests that touch the build and manual runs build and test only; a manual run with
-# `docs-only` instead deploys just the docs, as they are on the branch it runs on.
+# Pull requests that touch the build and manual runs build and test only. The documentation site
+# is deployed by docs.yml, on every push to main that changes it (the release's version bump
+# included).
 #
 # Wheels for CPython 3.14 and the free-threaded 3.14t (which fastpg runs with the GIL back on, ADR
 # 0011), on Linux (manylinux_2_28 and musllinux_1_2, x86_64 and aarch64) and macOS (x86_64 and
@@ -26,11 +26,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      docs-only:
-        description: "Only build and deploy the docs to GitHub Pages (no wheels, nothing published to PyPI)"
-        type: boolean
-        default: false
   pull_request:
     paths:
       - "native/**"
@@ -97,7 +92,7 @@ jobs:
     name: Build ${{ matrix.platform.name }}
     needs: release-please
     if: >-
-      ${{ !cancelled() && needs.release-please.result != 'failure' && !inputs.docs-only &&
+      ${{ !cancelled() && needs.release-please.result != 'failure' &&
       (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
@@ -240,7 +235,7 @@ jobs:
     name: Build ${{ matrix.platform.name }}
     needs: release-please
     if: >-
-      ${{ !cancelled() && needs.release-please.result != 'failure' && !inputs.docs-only &&
+      ${{ !cancelled() && needs.release-please.result != 'failure' &&
       (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
@@ -344,7 +339,7 @@ jobs:
     name: Build sdist
     needs: release-please
     if: >-
-      ${{ !cancelled() && needs.release-please.result != 'failure' && !inputs.docs-only &&
+      ${{ !cancelled() && needs.release-please.result != 'failure' &&
       (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -482,44 +477,3 @@ jobs:
           # shellcheck disable=SC2016 # the backquotes are Markdown's, not the shell's
           printf 'Install from [PyPI](%s): `uv add fastpg==%s`\n\n%s\n' "$url" "$VERSION" "$notes" > notes.md
           gh release edit "$TAG" --notes-file notes.md
-
-  docs:
-    name: Deploy the docs
-    needs:
-      - release-please
-      - publish
-    # After a release is published, or on a manual run with docs-only (publish is then skipped).
-    if: >-
-      ${{ !cancelled() && (needs.publish.result == 'success' ||
-      (github.event_name == 'workflow_dispatch' && inputs.docs-only)) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    permissions:
-      contents: read # check out the repository
-      pages: write # deploy to GitHub Pages
-      id-token: write # prove to GitHub Pages that the deployment comes from this workflow
-    concurrency:
-      group: github-pages # one deployment at a time, none cancelled midway
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: false # no caches in a workflow that publishes
-      # scripts/build_docs.py imports fastpg for the agent docs' API reference: the extension is
-      # built.
-      - name: Install Rust (rust-toolchain.toml)
-        run: rustup toolchain install
-      - name: Build
-        run: uv run --locked --group docs yeet ./scripts/build_docs.py --strict --clean
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: site/
-      - id: deploy
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

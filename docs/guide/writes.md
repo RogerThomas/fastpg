@@ -1,7 +1,14 @@
-# Writes, bulk and COPY
+# Bulk writes
 
-Connections, transactions and pools have three atomic bulk-write methods, each returning the
-number of rows written.
+Three methods write many rows in one call.
+Each returns the number of rows written.
+Each is all or nothing: if one row fails, none are written.
+
+| method | use it to |
+|---|---|
+| `copy_in(table, rows)` | load rows into a table, as fast as possible (binary `COPY`) |
+| `insert_many(table, rows)` | load the same rows with `INSERT` statements |
+| `execute_many(query, rows)` | run one statement once per row, e.g. an upsert |
 
 ```python
 import msgspec
@@ -13,50 +20,39 @@ class Score(msgspec.Struct):
 
 
 await conn.execute_script("CREATE TEMP TABLE scores (player text, points int)")
-rows = (Score(f"p{i}", i * 10) for i in range(10_000))
+rows = [Score(f"p{i}", i * 10) for i in range(10_000)]
 print(await conn.copy_in("scores", rows))  # 10000
 print(await conn.select_one("SELECT count(*), sum(points) FROM scores"))  # (10000, 499950000)
 ```
 
-| method | rows | how |
-|---|---|---|
-| `copy_in(table, rows, *, columns=None)` | Structs, pydantic models, mappings or sequences | binary `COPY ... FROM STDIN`, encoded in Rust, 4,096 rows per chunk; the fastest |
-| `insert_many(table, rows, *, columns=None)` | the same | multi-row `INSERT ... VALUES`, 64 rows per statement (fewer if 65,535 parameters would be exceeded) |
-| `execute_many(query, rows)` | sequences of parameters for `$1..$n` | one prepared statement per row, pipelined 1,024 rows per protocol `Sync`; any statement, `ON CONFLICT` and `UPDATE` included |
+`execute_many` takes one tuple of `$1, $2, ...` values per row:
 
 ```python
 await conn.execute_script("CREATE TEMP TABLE totals (player text PRIMARY KEY, points int)")
-upsert = """INSERT INTO totals VALUES ($1, $2)
-            ON CONFLICT (player) DO UPDATE SET points = totals.points + excluded.points"""
+upsert = """
+    INSERT INTO totals VALUES ($1, $2)
+    ON CONFLICT (player) DO UPDATE SET points = totals.points + excluded.points
+"""
 print(await conn.execute_many(upsert, [("a", 1), ("b", 2), ("a", 3)]))  # 3
 print(await conn.select_many("SELECT * FROM totals ORDER BY player"))  # [('a', 4), ('b', 2)]
 ```
 
-## Rows and columns
+## Rows
 
-For `copy_in` and `insert_many`, every row must be of the first row's kind:
+`copy_in` and `insert_many` take rows of one kind:
 
 | rows | columns written |
 |---|---|
-| msgspec Structs | the fields' encoded names (`rename=` applies) |
-| pydantic models | the fields' aliases |
-| mappings | the first row's keys; every row must have exactly those keys |
-| sequences | every column of the table, in order |
+| msgspec Structs | the field names (after `rename=`) |
+| pydantic models | the field aliases |
+| dicts | the first row's keys |
+| tuples | every column of the table, in order |
 
-* `columns=` picks and orders the columns: a subset of the fields, the keys to take from
-  mappings, or the columns a sequence fills. Use it with sequences for tables with generated
-  columns.
-* `table` is `"name"`, `"schema.name"` or a tuple of parts; each part is quoted, so names
-  match case-sensitively.
-* Values take the [parameter types](queries.md#types); `json`/`jsonb` columns also take
-  anything msgspec serialises, but not pydantic models.
+Pass `columns=` to choose the columns, e.g. `columns=["player"]`.
+`table` can be `"name"` or `"schema.name"`.
+Names are matched exactly, including case.
 
-## Atomicity and errors
-
-Each call runs in its own `BEGIN ... COMMIT`, or, inside your transaction, a `SAVEPOINT`: a
-failed or cancelled bulk write leaves your transaction as it was, and usable. A call
-cancelled before its last rows are handed over is cancelled on the server too (a chunk
-waiting there for a lock doesn't hold up the rollback); one cancelled after that commits.
+## Errors
 
 ```python
 await conn.execute_script("CREATE TEMP TABLE items (id int PRIMARY KEY)")
@@ -65,13 +61,13 @@ async with conn.transaction() as tx:
     try:
         await tx.copy_in("items", [(1,), (2,), (2,), (3,)])
     except fastpg.UniqueViolationError as e:
-        print(e.row_index, e.constraint_name)  # 2 items_pkey
+        print(e.row_index)  # 2
 print(await conn.select_many("SELECT id FROM items"))  # [(0,)]
 ```
 
-* Errors carry `row_index`, the failing row's 0-based position in your input, when it's
-  known: always for encoding errors (`ParameterError`) and `execute_many`; from the server's
-  `COPY` context for `copy_in`. For `insert_many` it's `None`, and a note names the 64-row
-  range. Deferred constraints fail at `COMMIT`, with `row_index=None`.
-* While a bulk write runs, other queries on its connection wait. The pool's bulk methods use a
-  connection to themselves for the call.
+The error's `row_index` is the position of the failed row in your input.
+`insert_many` writes up to 64 rows per statement, so it often can't tell which row failed.
+Its `row_index` is then `None`.
+
+Inside a transaction, a failed bulk write undoes only its own rows.
+The transaction can carry on, as above.
