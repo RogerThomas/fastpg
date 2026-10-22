@@ -13,6 +13,9 @@ from faults import DisposableServer, FaultProxy
 
 import fastpg
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 
 async def _settle(pool: fastpg.Pool) -> None:
     """Wait until nothing is in flight, waiting or opening."""

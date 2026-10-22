@@ -208,9 +208,20 @@ async def _in_transaction(conn: fastpg.Connection) -> bool:
 
 
 async def _settled(pool: fastpg.Pool) -> fastpg.PoolStats:
-    """The pool's stats once nothing is in flight, waiting or opening."""
+    """The pool's stats once nothing is in flight, waiting, opening or checked out.
+
+    Checked out included: a checkout cancelled inside its block is reset and given back in
+    the background (`Pool._give_back`), so it's still acquired for a round trip after its
+    task is done. (A connection that never came back still fails, after the timeout.)
+    """
     async with asyncio.timeout(10):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
     return pool.stats()
 
@@ -433,7 +444,9 @@ async def test_connect_timeout_against_a_silent_server_closes_the_socket(
     port = silent_server.getsockname()[1]
     fds = _open_fds()
     dsn = f"postgresql://u:p@127.0.0.1:{port}/db?sslmode={sslmode}"
-    assert await asyncio.create_task(_connect_times_out(dsn, 0.2))
+    # 1 s, not less: on a loaded runner the client must get as far as connecting first.
+    assert await asyncio.create_task(_connect_times_out(dsn, 1))
+    silent_server.settimeout(5)  # fail rather than hang if it never connected
     accepted, _ = silent_server.accept()
     with accepted:
         accepted.settimeout(5)

@@ -21,6 +21,9 @@ from faults import FaultProxy, with_params
 import fastpg
 from fastpg import errors
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 
 @pytest.fixture
 async def locked_row(conn: fastpg.Connection) -> AsyncIterator[str]:
@@ -187,7 +190,9 @@ async def test_a_timed_out_copy_waiting_for_a_lock_is_cancelled(
             with pytest.raises(TimeoutError):
                 async with asyncio.timeout(0.5):
                     await writer.copy_in("net_slow_items", rows)
-            async with asyncio.timeout(2):
+            # The transaction still holds the lock: without the server-side cancel this would
+            # wait for it however long the budget, so a generous one proves as much.
+            async with asyncio.timeout(10):
                 assert await writer.select_one("SELECT 1") == (1,)
         assert await conn.select_one("SELECT count(*) FROM net_slow_items") == (2,)
 

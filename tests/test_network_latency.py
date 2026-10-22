@@ -17,6 +17,9 @@ from faults import FaultProxy
 
 import fastpg
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 
 class Row(msgspec.Struct):
     n: int

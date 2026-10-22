@@ -46,9 +46,16 @@ async def sequence(conn: fastpg.Connection) -> AsyncIterator[None]:
 
 
 async def _settle(pool: fastpg.Pool) -> None:
-    """Wait until nothing is in flight, waiting or opening."""
+    """Wait until nothing is in flight, waiting, opening or checked out (not while holding one)."""
     async with asyncio.timeout(5):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        # Checkouts too: one cancelled inside its block is given back in the background.
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
 
 
@@ -114,6 +121,7 @@ async def test_many_concurrent_shared_queries(dsn: str) -> None:
         assert stats.idle == stats.size
 
 
+@pytest.mark.timing
 async def test_routes_to_an_idle_connection(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=2, max_size=2) as pool:
         slow = asyncio.create_task(_pid_of_sleeper(pool, 0.3))
@@ -168,7 +176,10 @@ async def test_avoids_connection_behind_known_slow_statement(dsn: str) -> None:
         assert pid != (await known)[0]
 
 
+@pytest.mark.timing
 async def test_age_counts_from_the_oldest_statement_still_in_flight(dsn: str) -> None:
+    # Every interval is 3x what the reasoning needs, so the routing decisions below have
+    # 150 ms of margin rather than 50 ms on a slow runner.
     sleep = "SELECT pg_backend_pid(), pg_sleep($1)"
     async with await fastpg.create_pool(
         dsn,
@@ -176,17 +187,17 @@ async def test_age_counts_from_the_oldest_statement_still_in_flight(dsn: str) ->
         max_size=2,
         max_inflight_per_conn=4,
     ) as pool:
-        await pool.select_one(sleep, 0.2)  # the pool learns that `sleep` takes ~200 ms
-        first = asyncio.create_task(pool.select_one("SELECT pg_backend_pid(), pg_sleep(0.3)"))
-        await asyncio.sleep(0.1)
-        overrun = asyncio.create_task(pool.select_one(sleep, 0.6))  # on the other connection
-        await asyncio.sleep(0.05)
-        # Both busy: 150 ms into an unknown statement beats 200 ms expected, so this one is
+        await pool.select_one(sleep, 0.6)  # the pool learns that `sleep` takes ~600 ms
+        first = asyncio.create_task(pool.select_one("SELECT pg_backend_pid(), pg_sleep(0.9)"))
+        await asyncio.sleep(0.3)
+        overrun = asyncio.create_task(pool.select_one(sleep, 1.8))  # on the other connection
+        await asyncio.sleep(0.15)
+        # Both busy: 450 ms into an unknown statement beats 600 ms expected, so this one is
         # pipelined behind `first`.
-        behind = asyncio.create_task(pool.select_one("SELECT pg_backend_pid(), pg_sleep(0.2)"))
-        await asyncio.sleep(0.25)
-        # `first` is done. Its connection is 250 ms into `behind`, the other one 300 ms into
-        # `overrun` (scored by `first`'s send time, the first would look 400 ms busy).
+        behind = asyncio.create_task(pool.select_one("SELECT pg_backend_pid(), pg_sleep(0.6)"))
+        await asyncio.sleep(0.75)
+        # `first` is done. Its connection is 750 ms into `behind`, the other one 900 ms into
+        # `overrun` (scored by `first`'s send time, the first would look 1200 ms busy).
         (pid,) = await pool.select_one("SELECT pg_backend_pid()")
         assert pid == (await first)[0] == (await behind)[0]
         assert pid != (await overrun)[0]
@@ -265,6 +276,7 @@ async def test_cancelled_shared_query_keeps_its_slot_until_the_server_is_done(ds
         assert await pool.select_one("SELECT 1") == (1,)
 
 
+@pytest.mark.timing
 async def test_cancelled_shared_query_keeps_its_connection_busy(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=2, max_size=2) as pool:
         task = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.3)"))
@@ -513,6 +525,7 @@ async def test_cancelled_acquire_waiter(dsn: str) -> None:
         assert pool.stats().acquired == 0
 
 
+@pytest.mark.timing
 async def test_cancelled_acquire_waiter_undrains_the_connection(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
         sleeper = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1)"))
@@ -531,6 +544,7 @@ async def test_cancelled_acquire_waiter_undrains_the_connection(dsn: str) -> Non
         await sleeper
 
 
+@pytest.mark.timing
 async def test_drained_connection_rejoins_shared_rotation_when_the_acquire_is_served_elsewhere(
     dsn: str,
 ) -> None:

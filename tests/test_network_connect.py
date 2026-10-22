@@ -9,6 +9,9 @@ from faults import FaultProxy, with_params
 
 import fastpg
 
+# Every test here times something: run after the rest, alone (`task test`).
+pytestmark = pytest.mark.timing
+
 
 @pytest.mark.parametrize(
     ("dsn", "message"),

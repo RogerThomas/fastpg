@@ -103,6 +103,12 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 # A hung test (e.g. a query whose response never arrives) fails instead of stalling the suite.
 timeout = 30
+# A misspelled marker (e.g. a `timing` typo, which would leave a test in the parallel pass)
+# is an error, not a warning.
+addopts = ["--strict-markers"]
+markers = [
+    "timing: asserts how long something takes; `task test` runs these after the rest, alone",
+]
 
 [tool.ruff]
 target-version = "py313"
