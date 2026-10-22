@@ -181,11 +181,12 @@ async def test_every_param_type(
     assert type(got) is type(expected)
 
 
-async def test_lists_are_json_not_arrays(conn: fastpg.Connection) -> None:
+async def test_lists_are_arrays_or_json_as_the_parameter_type_says(
+    conn: fastpg.Connection,
+) -> None:
     ids = [1, 2, 3]
-    with pytest.raises(fastpg.ParameterError, match=r"dict/list \(JSON\) as PostgreSQL type _int4"):
-        await conn.select_many(t"SELECT id FROM people WHERE id = ANY({ids})")
-    # Until arrays are supported, unpack a JSON array server-side.
+    rows = await conn.select_many(t"SELECT id FROM people WHERE id = ANY({ids}) ORDER BY id")
+    assert rows == [(1,), (2,), (3,)]
     rows = await conn.select_many(
         t"SELECT id FROM people WHERE id IN (SELECT jsonb_array_elements_text({ids})::int)"
         t" ORDER BY id",

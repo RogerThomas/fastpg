@@ -288,8 +288,8 @@ async def test_infinite_date_is_a_decode_error(conn: fastpg.Connection) -> None:
 
 
 async def test_unsupported_type(conn: fastpg.Connection) -> None:
-    with pytest.raises(fastpg.UnsupportedTypeError, match=r"_int4"):
-        await conn.select_one("SELECT ARRAY[1, 2]")
+    with pytest.raises(fastpg.UnsupportedTypeError, match=r"interval\[\]"):
+        await conn.select_one("SELECT ARRAY['1 day'::interval]")
 
 
 async def test_unsupported_param_type(conn: fastpg.Connection) -> None:

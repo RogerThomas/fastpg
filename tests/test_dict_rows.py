@@ -68,8 +68,8 @@ async def test_duplicate_column_names_raise(conn: fastpg.Connection) -> None:
 
 
 async def test_unsupported_column_type(conn: fastpg.Connection) -> None:
-    with pytest.raises(fastpg.UnsupportedTypeError, match=r"_int4"):
-        await conn.select_one("SELECT ARRAY[1, 2] AS a", into=dict)
+    with pytest.raises(fastpg.UnsupportedTypeError, match=r"interval\[\]"):
+        await conn.select_one("SELECT ARRAY['1 day'::interval] AS a", into=dict)
 
 
 async def test_select_one_or_none_and_empty_results(conn: fastpg.Connection) -> None:
