@@ -45,7 +45,7 @@ async def sequence(conn: fastpg.Connection) -> AsyncIterator[None]:
 
 
 async def _settle(pool: fastpg.Pool) -> None:
-    """Wait until nothing is in flight, waiting or opening."""
+    """Wait until nothing is in flight, waiting, opening or checked out (not while holding one)."""
     async with asyncio.timeout(5):
         # Checkouts too: one cancelled inside its block is given back in the background.
         while (
@@ -524,6 +524,7 @@ async def test_cancelled_acquire_waiter(dsn: str) -> None:
         assert pool.stats().acquired == 0
 
 
+@pytest.mark.timing
 async def test_cancelled_acquire_waiter_undrains_the_connection(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
         sleeper = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1)"))

@@ -447,7 +447,9 @@ async def test_connect_timeout_against_a_silent_server_closes_the_socket(
     port = silent_server.getsockname()[1]
     fds = _open_fds()
     dsn = f"postgresql://u:p@127.0.0.1:{port}/db?sslmode={sslmode}"
-    assert await asyncio.create_task(_connect_times_out(dsn, 0.2))
+    # 1 s, not less: on a loaded runner the client must get as far as connecting first.
+    assert await asyncio.create_task(_connect_times_out(dsn, 1))
+    silent_server.settimeout(5)  # fail rather than hang if it never connected
     accepted, _ = silent_server.accept()
     with accepted:
         accepted.settimeout(5)
