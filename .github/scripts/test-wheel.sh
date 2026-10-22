@@ -6,6 +6,9 @@
 # the smoke test needs too; FASTPG_TLS_DSN and FASTPG_TLS_CA for the TLS tests, and pytest's own
 # PYTEST_ADDOPTS, as for the suite run any other way):
 #   sh .github/scripts/test-wheel.sh DIR PYTHON...
+# With FASTPG_TEST_OWN_SERVERS=1 (where Docker is available), the suite ignores those servers and
+# runs in parallel on throwaway ones of its own, a set per worker, as `task test` does; the smoke
+# test still uses FASTPG_DSN.
 # e.g. `sh .github/scripts/test-wheel.sh dist 3.14 3.14t` tests the one cp314 wheel in dist on
 # Python 3.14, then the one cp314t (free-threaded) wheel on 3.14t; uv finds or downloads each.
 set -eux
@@ -32,6 +35,11 @@ for python; do
         uv run --isolated --no-project --with "$wheel" -- python tests/smoke.py
         uv sync --locked --no-install-project # the dev dependencies, without building fastpg
         uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$wheel"
-        uv run --no-sync pytest -ra
+        if [ "${FASTPG_TEST_OWN_SERVERS:-}" = 1 ]; then
+            env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
+                uv run --no-sync pytest -ra -n auto --maxprocesses 8 --dist loadfile
+        else
+            uv run --no-sync pytest -ra
+        fi
     )
 done
