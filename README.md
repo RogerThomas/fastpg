@@ -97,24 +97,13 @@ other" is the fastest of asyncpg, psycopg 3 and psqlpy, each through its own poo
 | Single-row INSERT, 16 tasks | 35,860/s | 16,087/s asyncpg, no reset² | **2.23x** |
 | Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s psycopg | **1.41x** |
 
-¹ fastpg pipelines here; with pipelining off it does 37,599/s (2.14x).
+¹ With pipelining off: 37,599/s (2.14x).
 
-² asyncpg with its pool's reset query turned off (a no-op `reset=` in `create_pool`). By
-default its pool resets the session every time a connection goes back to it, one extra round
-trip per query. fastpg's pool queries aren't reset either (they mustn't change session state),
-nor are psycopg's or psqlpy's, so this is the like-for-like asyncpg.
+² With its per-query session reset off. fastpg's pool doesn't reset either.
 
-These are client-side numbers on one shared GitHub runner (4 vCPUs), with PostgreSQL on the
-same VM. Each driver uses its own pool of 16 with its recommended settings, every typed
-workload returns the same msgspec Struct from every driver, and every result is checked.
-fastpg's narrowest lead is a six-round-trip transaction: 1.27x asyncpg, which resets the session
-after it as fastpg's `pool.transaction()` does (in the COMMIT's round trip), and 1.13x the
-configurations that don't. Over a real network the round trip shrinks single-query gaps. All workloads, latency and caveats:
-[Benchmarks] and [Methodology].
-
-fastpg's own CPU per query (each row type, the query forms and the bulk writes) is also
-tracked on every pull request by [CodSpeed](https://app.codspeed.io/RogerThomas/fastpg),
-under CPU simulation: `benchmarks/`, run by `.github/workflows/codspeed.yml`.
+One GitHub runner, PostgreSQL on the same VM, every result checked. Narrowest lead: a
+transaction, 1.13x. Full results: [Benchmarks] and [Methodology]. fastpg's CPU per query is also
+tracked on every PR by [CodSpeed](https://app.codspeed.io/RogerThomas/fastpg).
 
 ## Documentation
 
