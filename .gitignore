@@ -39,3 +39,8 @@ tmp_*.py
 
 # Not part of fastpg
 faster/
+
+# Coverage data and reports (task coverage)
+.coverage
+.coverage.*
+coverage/

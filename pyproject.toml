@@ -86,6 +86,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-codspeed>=5.0.3",
+    "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "rich>=15.0.0",
@@ -108,6 +109,28 @@ timeout = 30
 addopts = ["--strict-markers"]
 markers = [
     "timing: asserts how long something takes; `task test` runs these after the rest, alone",
+]
+
+# Python coverage (`task coverage`, with pytest-cov). Each process writes a data file of its own:
+# every pytest-xdist worker, and the Python subprocesses the tests start. pytest-cov combines
+# them after each pytest run, and --cov-append adds each run to the previous ones.
+[tool.coverage.run]
+source = ["fastpg"]
+branch = true
+parallel = true
+patch = ["subprocess"]
+relative_files = true
+
+[tool.coverage.paths]
+# `task coverage` measures a non-editable install: reported as the sources it was built from.
+source = ["src/fastpg/", "*/site-packages/fastpg/"]
+
+[tool.coverage.report]
+skip_empty = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@overload",
+    "raise NotImplementedError",
 ]
 
 [tool.ruff]

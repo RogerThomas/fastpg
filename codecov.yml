@@ -1,0 +1,52 @@
+# Codecov: the reports .github/workflows/coverage.yml uploads (`task coverage` makes the same
+# ones locally), one per flag: python (src/fastpg) and rust (native/src, the extension).
+# validate-codecov-config.yml checks this file.
+codecov:
+  notify:
+    # Both flags' uploads, before the statuses and the comment.
+    after_n_builds: 2
+
+coverage:
+  range: 70..100
+  round: down
+  precision: 1
+  # Informational for now: reported on every pull request, never blocking a merge.
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0.5%
+        informational: true
+      python:
+        flags: [python]
+        target: auto
+        threshold: 0.5%
+        informational: true
+      rust:
+        flags: [rust]
+        target: auto
+        threshold: 0.5%
+        informational: true
+    patch:
+      default:
+        target: 80%
+        informational: true
+
+flag_management:
+  individual_flags:
+    - name: python
+      paths: [src/fastpg/]
+    - name: rust
+      paths: [native/src/]
+
+comment:
+  layout: "condensed_header, diff, flags, files"
+  after_n_builds: 2
+
+ignore:
+  - tests/
+  - benchmarks/
+  - bench/
+  - scripts/
+  - examples/
+  - faster/
