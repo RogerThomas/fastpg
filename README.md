@@ -6,6 +6,11 @@
   </picture>
 </h1>
 
+<a href="https://pypi.org/project/fastpg/"><img src="https://img.shields.io/pypi/v/fastpg" alt="PyPI"/></a>
+<a href="https://pypi.org/project/fastpg/"><img src="https://img.shields.io/pypi/pyversions/fastpg" alt="Python versions"/></a>
+<a href="https://github.com/RogerThomas/fastpg/blob/main/LICENSE"><img src="https://img.shields.io/github/license/RogerThomas/fastpg" alt="License"/></a>
+<a href="https://github.com/RogerThomas/fastpg/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/RogerThomas/fastpg/ci.yml?branch=main&amp;label=CI" alt="CI"/></a>
+<a href="https://codecov.io/gh/RogerThomas/fastpg"><img src="https://codecov.io/gh/RogerThomas/fastpg/graph/badge.svg" alt="Coverage"/></a>
 <a href="https://app.codspeed.io/RogerThomas/fastpg?utm_source=badge"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"/></a>
 
 fastpg is a fast async PostgreSQL client for Python, written in Rust.

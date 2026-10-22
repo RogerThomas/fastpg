@@ -89,6 +89,39 @@ tasks:
     desc: Build and test entirely inside Docker (Postgres + Linux build of fastpg)
     cmd: docker compose --profile test run --rm --build tests
 
+  coverage:
+    desc: >-
+      `task test` under coverage, as CI's Coverage workflow runs it: the Python package
+      (coverage/python.xml) and the Rust extension, from its unit tests and the pytest suite
+      (coverage/rust.lcov). Needs cargo-llvm-cov (`cargo install cargo-llvm-cov`)
+    env:
+      # A venv and a Rust build directory of its own, so the instrumented build of the extension
+      # replaces neither .venv's nor native/target's. Not editable: an editable install's
+      # extension is src/fastpg's, the one .venv imports too.
+      UV_PROJECT_ENVIRONMENT: .venv-coverage
+      UV_NO_EDITABLE: "1"
+      CARGO_TARGET_DIR: native/target/llvm-cov-target
+      # Still optimised, as the tests' timings expect, but quicker to build than the release
+      # profile's fat LTO.
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    cmds:
+      - rustup component add llvm-tools
+      # One shell: cargo-llvm-cov's environment (an instrumenting rustc wrapper, and where each
+      # process writes its profile) covers the build, every test process and the report.
+      - |
+        set -eu
+        eval "$(cargo llvm-cov show-env --sh --manifest-path native/Cargo.toml)"
+        cargo llvm-cov clean --workspace --manifest-path native/Cargo.toml
+        rm -rf .coverage .coverage.* coverage
+        uv sync --reinstall-package fastpg
+        {{.TASK_EXE}} test -- --cov --cov-append --cov-report= {{.CLI_ARGS}}
+        mkdir coverage
+        uv run --no-sync coverage xml -o coverage/python.xml
+        uv run --no-sync coverage report
+        cargo llvm-cov report --manifest-path native/Cargo.toml --release --lcov --output-path coverage/rust.lcov
+        cargo llvm-cov report --manifest-path native/Cargo.toml --release --summary-only
+
   check:
     desc: Lint and type-check everything (the git hooks + clippy + pyright strict)
     cmds:
