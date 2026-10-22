@@ -40,6 +40,8 @@ from dataclasses import InitVar, dataclass, field
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Self, overload
 
+import msgspec
+
 from fastpg._connection import (
     Connection,
     Fetcher,
@@ -49,6 +51,7 @@ from fastpg._connection import (
     cancelling,
     connect,
 )
+from fastpg._group import grouping_for
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import TemplateCompiler
@@ -1009,6 +1012,26 @@ class Pool:
         if params is not None:
             query, args = self._named.bind(query, args, params)
         return await self._query(self._ALL, query, args, into, strategy)
+
+    async def select_and_group[T: msgspec.Struct](
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[T],
+        strategy: Strategy = "auto",
+    ) -> list[T]:
+        """Shared mode ``Connection.select_and_group``: the rows grouped into `into` Structs."""
+        grouping = grouping_for(into)
+        rows = await self.select_many(
+            query,
+            *args,
+            params=params,
+            into=grouping.row,
+            strategy=strategy,
+        )
+        return grouping.group(rows)
 
     async def execute(
         self,

@@ -20,7 +20,10 @@ from pathlib import Path
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, overload
 
+import msgspec
+
 from fastpg import _writes
+from fastpg._group import grouping_for
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Connection as NativeConnection
 from fastpg._native import after_fork_in_child, dsn_socket_options, dsn_targets
@@ -343,6 +346,39 @@ class _Queries:
         except asyncio.CancelledError:
             self._canceller.abandon(future)
             raise
+
+    async def select_and_group[T: msgspec.Struct](
+        self,
+        query: str | Template,
+        /,
+        *args: object,
+        params: NamedParams | None = None,
+        into: type[T],
+        strategy: Strategy = "auto",
+    ) -> list[T]:
+        """Return the rows grouped into `into` Structs: one per group of rows, in the order
+        each group's first row arrives.
+
+        Rows with equal values in all of `into`'s fields that aren't lists form a group.
+        Each ``list[X]`` field collects one value per row of its group, in row order, from
+        the column of the same name. A ``list[S]`` field, ``S`` a Struct, collects one ``S``
+        per row, from the columns named ``<field>__<S field>`` (e.g. ``items__sku``); a row
+        where all of those are NULL (a LEFT JOIN without a match) adds none.
+
+        Columns match fields as for ``select_many(..., into=...)``, with the same errors;
+        a NULL fits a list field only if its item type allows None. Raises ``TypeError``
+        before running the query if `into` isn't a Struct with a list field, and when a
+        group key value is unhashable.
+        """
+        grouping = grouping_for(into)
+        rows = await self.select_many(
+            query,
+            *args,
+            params=params,
+            into=grouping.row,
+            strategy=strategy,
+        )
+        return grouping.group(rows)
 
     async def execute(
         self,
