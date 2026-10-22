@@ -1147,9 +1147,12 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
     let shared = task.shared.clone();
     let _gate = shared.gate.write().await;
     // Nothing is sent while a cancel is in progress, and the call can be cancelled itself
-    // (see `cancel.rs`): it is alone on the wire while it holds the gate.
+    // (see `cancel.rs`): it is alone on the wire while it holds the gate. Only from once a
+    // cancel can't hurt the caller's transaction, though (`flight`, set below): a cancel that
+    // lands on the probes or on our SAVEPOINT, inside a transaction, would abort it with no
+    // savepoint to roll back to.
     shared.cancels.settled().await;
-    let _flight = shared.in_flight(&task.done);
+    let mut flight = None;
     let client = task.client.clone();
 
     // One round trip: transaction probe + prepare (fresh statements per call, so a stale
@@ -1164,6 +1167,11 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
     let prepared_single = (group > 1).then(|| Statement::named(&single_sql, &[]).execute(&*client));
     let set = probe_set.await;
     let in_txn = read_probe(probe_get).await;
+    // Outside a transaction a cancel only ends our own: cancellable from here on (a prepare
+    // waiting for a lock included). Inside one, from when the server has made our savepoint.
+    if matches!((&set, &in_txn), (Ok(_), Ok(false))) {
+        flight = Some(shared.in_flight(&task.done));
+    }
     let stmt = prepared.await.map(|s| s.leak());
     let single = match prepared_single {
         Some(fut) => fut.await.map(|s| Some(s.leak())),
@@ -1218,6 +1226,7 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
     } else {
         ("BEGIN", "COMMIT")
     };
+    let mut savepoint_pending = false;
     let mut q: VecDeque<Pending> = VecDeque::new();
     let (mut began, mut ended, mut finished, mut aborted, mut failed) =
         (false, false, false, false, false);
@@ -1243,6 +1252,12 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
         };
         match event {
             Event::Result(result) => {
+                if savepoint_pending && matches!(q.front(), Some(Pending::Control(_))) {
+                    savepoint_pending = false;
+                    if result.is_ok() && !aborted && !finished && flight.is_none() {
+                        flight = Some(shared.in_flight(&task.done));
+                    }
+                }
                 // Each of our requests is one cycle, in order: consume it even if unused.
                 let cycle = collecting.as_ref().and_then(|_| watch.take_cycle());
                 let error = match (q.pop_front(), result) {
@@ -1278,6 +1293,7 @@ async fn execute_many_task(mut task: Task, statements: Statements) {
                     if !began {
                         q.push_back(Pending::Control(begin.execute(&*client)));
                         began = true;
+                        savepoint_pending = in_txn;
                     }
                     let batch = Batch {
                         first: rows.first,
@@ -1411,9 +1427,9 @@ async fn next_copy_message(
 async fn copy_in_task(mut task: Task, table: String, columns: Option<Vec<String>>) {
     let shared = task.shared.clone();
     let _gate = shared.gate.write().await;
-    // As in `execute_many_task`.
+    // As in `execute_many_task`, including when it becomes cancellable (`flight`).
     shared.cancels.settled().await;
-    let _flight = shared.in_flight(&task.done);
+    let mut flight = None;
     let client = task.client.clone();
 
     let select_list = match &columns {
@@ -1430,6 +1446,9 @@ async fn copy_in_task(mut task: Task, table: String, columns: Option<Vec<String>
     let described = Statement::named(&describe_sql, &[]).execute(&*client);
     let set = probe_set.await;
     let in_txn = read_probe(probe_get).await;
+    if matches!((&set, &in_txn), (Ok(_), Ok(false))) {
+        flight = Some(shared.in_flight(&task.done));
+    }
     let stmt = described.await.map(|s| s.leak());
     let in_txn = match set.and(in_txn) {
         Ok(in_txn) => in_txn,
@@ -1491,16 +1510,32 @@ async fn copy_in_task(mut task: Task, table: String, columns: Option<Vec<String>
             break;
         }
         enum Event {
+            Savepoint(Result<u64, xitca_postgres::Error>),
             Server(Result<(), xitca_postgres::Error>),
             Input(Option<Msg>),
         }
         let event = tokio::select! {
             biased;
+            r = poll_fn(|cx| match savepoint.as_mut() {
+                Some(f) => Pin::new(f).poll(cx),
+                None => Poll::Pending,
+            }), if savepoint.is_some() => Event::Savepoint(r),
             r = next_copy_message(&mut stream), if streaming => Event::Server(r),
             m = task.rx.recv(), if input_open => Event::Input(m),
         };
         let mut error = None;
         match event {
+            // Our savepoint exists: from now on a cancel only undoes our COPY.
+            Event::Savepoint(result) => {
+                savepoint = None;
+                match result {
+                    Ok(_) if !aborted && !finished && flight.is_none() => {
+                        flight = Some(shared.in_flight(&task.done));
+                    }
+                    Ok(_) => {}
+                    Err(e) => error = Some(e.into()),
+                }
+            }
             Event::Server(Err(e))
                 if !copy_started && e.downcast_ref::<UnexpectedMessage>().is_some() =>
             {
