@@ -25,6 +25,17 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    # fastpg passes these crates' types to and from xitca-postgres (and postgres-protocol), so
+    # they must stay on the versions xitca-postgres itself uses: two copies of one crate don't
+    # share traits. Below 1.0 a minor bump is a breaking one; move them by hand, together with
+    # xitca-postgres.
+    ignore:
+      - dependency-name: xitca-io
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: fallible-iterator
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: postgres-protocol
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: uv
     directory: /
