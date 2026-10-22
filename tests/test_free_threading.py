@@ -1,6 +1,6 @@
-"""fastpg on free-threaded CPython (3.14t): the extension declares `gil_used = true`, since it
-hasn't been audited for running without the GIL, so importing it turns the GIL back on. Checked in
-a fresh interpreter, since this one has imported fastpg already.
+"""fastpg on free-threaded CPython (3.14t, 3.15t): the extension declares `gil_used = true`,
+since it hasn't been audited for running without the GIL, so importing it turns the GIL back on.
+Checked in a fresh interpreter, since this one has imported fastpg already.
 """
 
 import os
