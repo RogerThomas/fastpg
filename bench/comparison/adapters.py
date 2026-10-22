@@ -565,6 +565,9 @@ class Config:
     # workloads that check a connection out (transactions, bulk writes) would run the very
     # same code path, so they're skipped for it.
     shared_variant_of: str | None = None
+    # Its pool resets session state (SET, advisory locks, LISTEN, ...) when a connection goes
+    # back to it. Of the others only asyncpg's default does; psycopg's and psqlpy's pools don't.
+    resets_session: bool = False
 
 
 class Configs:
@@ -599,6 +602,7 @@ class Configs:
                 package="asyncpg",
                 factory=AsyncpgAdapter,
                 notes="create_pool defaults (reset query on every release)",
+                resets_session=True,
             ),
             Config(
                 name="asyncpg-noreset",

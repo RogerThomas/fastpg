@@ -13,6 +13,12 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Documentation changes can't change the timings. (Pushes to main always run: they're
+    # the baselines pull requests are compared against.)
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - mkdocs.yml
   # Lets CodSpeed trigger runs on past commits for an initial baseline.
   workflow_dispatch:
 
