@@ -11,8 +11,8 @@ edit_uri: edit/main/docs/
 
 nav:
   - Home: index.md
-  - Guide:
-      - Getting started: guide/getting-started.md
+  - Getting started: guide/getting-started.md
+  - Guides:
       - Queries and results: guide/queries.md
       - Structs and decoding: guide/structs.md
       - Pydantic models: guide/pydantic.md
@@ -21,10 +21,11 @@ nav:
       - Transactions: guide/transactions.md
       - TLS: guide/tls.md
       - Errors: guide/errors.md
-  - Performance: performance.md
-  - Benchmark methodology: benchmarks.md
-  - Architecture: architecture.md
   - API reference: api.md
+  - Performance:
+      - Benchmarks: performance.md
+      - Methodology: benchmarks.md
+  - Architecture: architecture.md
   - Limitations: limitations.md
 
 plugins:

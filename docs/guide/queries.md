@@ -89,6 +89,18 @@ column = fastpg.Identifier("name")
 print(await conn.select_one(t"SELECT {column} FROM {table} WHERE id = {5}"))  # ('person-5',)
 ```
 
+A t-string interpolated into another is spliced in, with its values renumbered:
+
+```python
+min_age, max_id = 70, 100
+where = t"age >= {min_age} AND id <= {max_id}"
+rows = await conn.select_many(t"SELECT id, age FROM people WHERE {where} ORDER BY id LIMIT {2}")
+print(rows)  # [(52, 70), (53, 71)]
+```
+
+Conversions and format specs (`{x!r}`, `{x:.2f}`) and a literal `$1` in a t-string raise
+`ValueError`.
+
 ## Types
 
 Parameters are encoded for the server-declared type; a misfit raises `ParameterError`

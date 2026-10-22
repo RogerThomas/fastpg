@@ -7,12 +7,12 @@ is. The suite is `bench/compare.py` (code in `bench/comparison/`); the
 [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
 runs it on every push to `main` that changes the library or the benchmarks, weekly, on pull
 requests labelled `benchmark`, and on demand (any ref, x86_64 or arm64). It writes the results
-to the run's summary page, with the raw JSON as an artifact.
+to the run's summary page, with the raw JSON as an artifact. The latest results are on
+[Benchmarks](performance.md).
 
-The goal is a comparison a skeptic can't dismiss: every driver set up the way its own
-documentation recommends, the same work and the same data for all of them, checked results,
-repeated interleaved trials, and the workloads where fastpg doesn't win reported like the
-others.
+The principles: every driver set up the way its own documentation recommends, the same work
+and the same data for all of them, checked results, repeated interleaved trials, and every
+workload reported, including those where fastpg's lead is small.
 
 ## Running it
 
@@ -190,6 +190,6 @@ Arrays aren't in any workload because fastpg doesn't decode them yet (see
 * **The configurations aren't identical by nature**: fastpg's pool can pipeline and the
   others can't (hence `fastpg-inflight1`); asyncpg resets connections on release (hence
   `asyncpg-noreset`); psqlpy's pool opens its connections lazily (the warm-up opens them).
-* **We wrote this suite.** It covers query shapes an API service runs, and the results include
-  the workloads where fastpg ties or loses. Rerun it on your hardware and with your queries;
+* **We wrote this suite.** It covers query shapes an API service runs, and every workload is
+  reported, however small fastpg's lead or if it has none. Rerun it on your hardware and with your queries;
   issues and pull requests that make another driver faster here are welcome.

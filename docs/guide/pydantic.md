@@ -1,7 +1,7 @@
 # Pydantic models
 
 `into=` also takes a pydantic v2 `BaseModel` subclass, with the `pydantic` extra installed
-(`uv add /path/to/fastpg --extra pydantic`).
+(`uv add 'fastpg[pydantic]'`).
 
 ```python
 import datetime
