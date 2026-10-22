@@ -1,7 +1,8 @@
-# Structs and decoding
+# Structs
 
-Pass a `msgspec.Struct` subclass as `into=` and each row becomes an instance of it, built
-from the binary values with no intermediate tuples or dicts.
+Pass a [msgspec](https://msgspec.dev/) Struct class as `into=`, and each row becomes an
+instance of it.
+This is the recommended way to read rows, and the fastest.
 
 ```python
 import datetime
@@ -24,23 +25,49 @@ print(person.name, person.balance, person.created_at)
 # person-1 0.37 2024-01-01 00:01:01+00:00
 ```
 
-## Strategies
+`select_many(..., into=Person)` returns a `list[Person]`, and type checkers know it.
 
-| `strategy=` | how |
-|---|---|
-| `"auto"` (default) | `"direct"` when it gives the same result as validation would, else `"msgpack"` |
-| `"direct"` | Rust decodes each value and calls the Struct's own `__init__` through vectorcall |
-| `"msgpack"`, `"json"` | Rust encodes the rows as MessagePack maps or JSON, and a cached msgspec decoder builds and validates them |
+## How columns match fields
 
-Direct construction supports fields of type `bool`, `int`, `float`, `str`, `bytes`,
-`datetime`, `date`, `time`, `uuid.UUID`, `decimal.Decimal` and `Any`, each optionally
-`| None`, plus JSON-shaped fields (lists, dicts, nested Structs, ...) read from `json`/`jsonb`
-columns, which a cached `msgspec.json.Decoder` validates.
+* Each column fills the field with the same name. Column order doesn't matter.
+* Use msgspec's `rename=` when a field's name differs from its column.
+* A field with a default can be left out of the query.
+* Extra columns are ignored.
 
-A Struct that needs msgspec's validation goes through msgpack under `"auto"`, and raises
-`UnsupportedTypeError` under `"direct"`. That's any Struct with a `msgspec.Meta` or `tz=`
-constraint, an enum or `Literal` field, a union other than `T | None`, or another type only
-validation produces:
+```python
+import msgspec
+
+
+class Contact(msgspec.Struct, rename={"display_name": "name"}):
+    display_name: str
+    verified: bool = False
+
+
+query = "SELECT id, name FROM people WHERE id <= $1 ORDER BY id"
+print(await conn.select_many(query, 2, into=Contact))
+# [Contact(display_name='person-1', verified=False), Contact(display_name='person-2', verified=False)]
+```
+
+fastpg checks the columns against the fields before it reads any rows.
+A mismatch raises an error, even when the query returns no rows:
+
+* a required field with no column: `MissingColumnError`;
+* a column whose type doesn't fit its field, or the same column name twice:
+  `TypeMismatchError`;
+* an extra column, if the Struct sets `forbid_unknown_fields=True`: `UnknownColumnError`.
+
+A `NULL` in a field that isn't `| None` raises `NullValueError`.
+
+## Field types
+
+Fields can be `bool`, `int`, `float`, `str`, `bytes`, `datetime`, `date`, `time`,
+`uuid.UUID`, `decimal.Decimal` or `Any`, each optionally `| None`.
+A `json` or `jsonb` column can also fill a list, a dict or a nested Struct.
+See [Types](queries.md#types) for which column fills which field.
+
+## Validation
+
+msgspec checks constraints, enums and `Literal` fields as usual:
 
 ```python
 from typing import Annotated
@@ -55,65 +82,34 @@ class Adult(msgspec.Struct):
 
 query = "SELECT name, age FROM people WHERE id = $1"
 print(await conn.select_one(query, 1, into=Adult))  # Adult(name='person-1', age=19)
+```
 
+A Struct with plain fields is built directly, which is fastest.
+A Struct that needs validation is a little slower.
+To make sure a Struct always takes the fast path, pass `strategy="direct"`.
+It then raises `UnsupportedTypeError` instead of validating:
+
+```python
 try:
     await conn.select_one(query, 1, into=Adult, strategy="direct")
 except fastpg.UnsupportedTypeError as e:
-    print(e)
-    # strategy='direct' unavailable:
-    #   Adult.age: constraints {'ge': 18} need msgspec validation
+    print(e)  # strategy='direct' unavailable: Adult.age: constraints {'ge': 18} need msgspec validation
 ```
 
-`strategy="direct"` guarantees a Struct never takes the slower route. Defaults and
-`__post_init__` work under every strategy.
-
-## Binding columns to fields
-
-Columns bind to fields once per (prepared statement, Struct type), before any row is
-decoded, so mismatches raise even for an empty result:
-
-* A column matches a field's encoded name, so `rename=` applies. Column order doesn't matter.
-* A field's column may appear only once: a repeated name (`SELECT a.*, b.*` with an `id`
-  in both) raises `TypeMismatchError` under every strategy, rather than one value silently
-  replacing the other.
-* A field with a default may be missing; a required one raises `MissingColumnError`.
-* Extra columns are ignored, unless `forbid_unknown_fields=True` makes them raise
-  `UnknownColumnError`.
-* Under `"direct"`, a column's type must fit its field, else `TypeMismatchError`: `int` takes
-  `int2`, `int4`, `int8` and `oid`; `float` also takes those; `str` takes the text types and
-  enums; `datetime` takes `timestamp` (naive) and `timestamptz` (aware, UTC); the others take
-  their own type (see [Types](queries.md#types)).
-
-```python
-import msgspec
-
-
-class Contact(msgspec.Struct, rename={"display_name": "name"}):
-    display_name: str
-    verified: bool = False
-
-
-query = "SELECT id, name FROM people WHERE id <= $1 ORDER BY id"
-print(await conn.select_many(query, 2, into=Contact))
-# [Contact(display_name='person-1', verified=False),
-#  Contact(display_name='person-2', verified=False)]
-```
+Defaults and `__post_init__` work as usual.
 
 ## Dicts and NamedTuples
 
-`into=dict` makes each row a `dict[str, Any]` keyed by column name, in column order, with
-the values a tuple row would hold. Column names must be distinct: a name that appears twice
-(`SELECT 1, 2` names both `?column?`) raises `TypeMismatchError` rather than keeping only
-one of the values, as `dict(record)` does in asyncpg.
+`into=dict` gives each row as a dict, keyed by column name:
 
 ```python
 row = await conn.select_one("SELECT id, name, email FROM people WHERE id = $1", 7, into=dict)
 print(row)  # {'id': 7, 'name': 'person-7', 'email': None}
 ```
 
-A `typing.NamedTuple` binds like a Struct: by field name, with the same type checks, NULL
-rules and defaults, and extra columns ignored. Each row calls the class positionally with
-every field.
+Column names must be unique: a repeated name raises `TypeMismatchError`.
+
+A `typing.NamedTuple` works like a Struct, with the same matching rules:
 
 ```python
 from typing import NamedTuple
@@ -126,20 +122,10 @@ class NameAge(NamedTuple):
 
 
 query = "SELECT age, name FROM people WHERE id = $1"
-print(await conn.select_one(query, 3, into=NameAge))
-# NameAge(name='person-3', age=21, verified=False)
+print(await conn.select_one(query, 3, into=NameAge))  # NameAge(name='person-3', age=21, verified=False)
 ```
 
-Both are built directly only: `strategy="msgpack"` or `"json"` raises
-`UnsupportedTypeError`, as does a NamedTuple field that needs msgspec validation.
+## Good to know
 
-## Gotchas
-
-* A `str` field fed from a `json`/`jsonb` column gets the raw JSON text, under every strategy.
-* `"msgpack"` and `"json"` encode rows as maps, so `array_like=True` Structs can only be
-  built directly.
-* JSON has no form of `NaN` or `±Infinity` that msgspec accepts, so under `"json"` a
-  non-finite `float4`/`float8` value raises `DecodeError` naming its column; `"direct"`
-  and `"msgpack"` decode it.
-* A NULL in a non-optional field raises `NullValueError` only when its row is decoded. All
-  decode errors are listed in [Errors](errors.md).
+* A `str` field filled from a `json` or `jsonb` column gets the raw JSON text.
+* Every decoding error is a `fastpg.DecodeError`. See [Errors](errors.md).
