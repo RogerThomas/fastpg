@@ -211,9 +211,20 @@ async def _in_transaction(conn: fastpg.Connection) -> bool:
 
 
 async def _settled(pool: fastpg.Pool) -> fastpg.PoolStats:
-    """The pool's stats once nothing is in flight, waiting or opening."""
+    """The pool's stats once nothing is in flight, waiting, opening or checked out.
+
+    Checked out included: a checkout cancelled inside its block is reset and given back in
+    the background (`Pool._give_back`), so it's still acquired for a round trip after its
+    task is done. (A connection that never came back still fails, after the timeout.)
+    """
     async with asyncio.timeout(10):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
     return pool.stats()
 

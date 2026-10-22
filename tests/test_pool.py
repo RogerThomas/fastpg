@@ -47,7 +47,14 @@ async def sequence(conn: fastpg.Connection) -> AsyncIterator[None]:
 async def _settle(pool: fastpg.Pool) -> None:
     """Wait until nothing is in flight, waiting or opening."""
     async with asyncio.timeout(5):
-        while (s := pool.stats()).in_flight or s.waiting or s.waiting_acquire or s.opening:
+        # Checkouts too: one cancelled inside its block is given back in the background.
+        while (
+            (s := pool.stats()).in_flight
+            or s.waiting
+            or s.waiting_acquire
+            or s.opening
+            or s.acquired
+        ):
             await asyncio.sleep(0.01)
 
 
