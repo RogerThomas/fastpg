@@ -39,7 +39,12 @@ All 297 runs passed the correctness checks.
 
 ## Throughput
 
-Higher is better. CPU is the client's CPU time per op.
+Higher is better. CPU is the client's CPU time per op. "vs asyncpg" is asyncpg's defaults,
+which reset the session after every pooled query: fastpg's pool queries and bulk writes don't
+(they mustn't change session state), so for those rows "vs best other" is the like-for-like
+column. fastpg's `pool.transaction()` does reset the session (in the COMMIT's round trip), as
+asyncpg's default does and the other pools don't: for the transaction row, "vs asyncpg" is the
+like-for-like one.
 
 | workload | fastpg | best other | vs best other | vs asyncpg | CPU/op: fastpg / best other |
 |---|---:|---|---:|---:|---:|
@@ -81,8 +86,9 @@ thread's CPU share.
 
 ## Where the lead is small
 
-* **Round-trip-bound work.** `transaction-c16` is six round trips per op, and fastpg leads
-  by 1.13x (1.39x in the [earlier run](https://github.com/RogerThomas/fastpg/actions/runs/39667991922)).
+* **Round-trip-bound work.** `transaction-c16` is six round trips per op. fastpg leads asyncpg,
+  which resets the session after it too, by 1.27x, and the pools that don't by 1.13x (1.39x in
+  the [earlier run](https://github.com/RogerThomas/fastpg/actions/runs/39667991922)).
 * **Tail latency at moderate load.** At 4,000 requests/s, fastpg's p99.9 is within 7% of
   psycopg's and asyncpg-noreset's: a tie on a shared runner.
 * **A real network.** Client and server share a VM, so round trips are short. Over a

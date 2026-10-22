@@ -87,29 +87,30 @@ query at a time, `await fastpg.connect(dsn)` opens a single connection with the 
 ## Benchmarks
 
 Throughput in [run 39671855945] of the [Benchmarks workflow] (`main`, 2026-10-21). "Best
-other" is the fastest of asyncpg, psycopg 3 and psqlpy, each through its own pool; "vs asyncpg"
-is asyncpg with its default settings.
+other" is the fastest of asyncpg, psycopg 3 and psqlpy, each through its own pool.
 
-| workload | fastpg | best other | vs best other | vs asyncpg |
-|---|---:|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s asyncpg, tuned² | **2.32x** | 3.60x |
-| Primary-key lookup, 64 tasks on 16 connections¹ | 54,019/s | 17,577/s asyncpg, tuned² | **3.07x** | 4.83x |
-| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s asyncpg, tuned² | **2.09x** | 2.70x |
-| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s asyncpg | **2.15x** | 2.15x |
-| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s asyncpg, tuned² | **2.23x** | 3.38x |
-| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s psycopg | **1.41x** | 2.65x |
+| workload | fastpg | best other | vs best other |
+|---|---:|---:|---:|
+| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s asyncpg, no reset² | **2.32x** |
+| Primary-key lookup, 64 tasks on 16 connections¹ | 54,019/s | 17,577/s asyncpg, no reset² | **3.07x** |
+| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s asyncpg, no reset² | **2.09x** |
+| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s asyncpg | **2.15x** |
+| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s asyncpg, no reset² | **2.23x** |
+| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s psycopg | **1.41x** |
 
 ¹ fastpg pipelines here; with pipelining off it does 37,599/s (2.14x).
 
 ² asyncpg with its pool's reset query turned off (a no-op `reset=` in `create_pool`). By
-default the pool runs that query every time a connection goes back to it, one extra round trip
-per query; without it asyncpg is faster, so we compare against that too.
+default its pool resets the session every time a connection goes back to it, one extra round
+trip per query. fastpg's pool queries aren't reset either (they mustn't change session state),
+nor are psycopg's or psqlpy's, so this is the like-for-like asyncpg.
 
 These are client-side numbers on one shared GitHub runner (4 vCPUs), with PostgreSQL on the
 same VM. Each driver uses its own pool of 16 with its recommended settings, every typed
 workload returns the same msgspec Struct from every driver, and every result is checked.
-fastpg's narrowest lead is a six-round-trip transaction (1.13x), and over a real network the
-round trip shrinks single-query latency gaps. All workloads, latency and caveats:
+fastpg's narrowest lead is a six-round-trip transaction: 1.27x asyncpg, which resets the session
+after it as fastpg's `pool.transaction()` does (in the COMMIT's round trip), and 1.13x the
+configurations that don't. Over a real network the round trip shrinks single-query gaps. All workloads, latency and caveats:
 [Benchmarks] and [Methodology].
 
 fastpg's own CPU per query (each row type, the query forms and the bulk writes) is also
