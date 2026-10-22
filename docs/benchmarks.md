@@ -133,7 +133,7 @@ A wrong result fails the run, and the CI job fails with it.
 | `open-loop-1000`, `open-loop-4000` | lookups arriving at a steady rate | – |
 
 Bulk loads write to an unlogged table, so the runner's disk isn't part of the measurement.
-Arrays aren't in any workload, because fastpg can't read them yet.
+No workload reads or sends arrays.
 
 ## How the numbers are computed
 

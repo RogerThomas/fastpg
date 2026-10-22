@@ -62,8 +62,30 @@ A `NULL` in a field that isn't `| None` raises `NullValueError`.
 
 Fields can be `bool`, `int`, `float`, `str`, `bytes`, `datetime`, `date`, `time`,
 `uuid.UUID`, `decimal.Decimal` or `Any`, each optionally `| None`.
+A `list[X]` field takes an array of values that fit `X`; use `list[X | None]` if the array
+can hold `NULL`s.
 A `json` or `jsonb` column can also fill a list, a dict or a nested Struct.
 See [Types](queries.md#types) for which column fills which field.
+
+`array_agg` reads one-to-many data in one query:
+
+```python
+import msgspec
+
+
+class AgeGroup(msgspec.Struct):
+    age: int
+    names: list[str]
+    emails: list[str | None]
+
+
+query = """
+SELECT age, array_agg(name ORDER BY id) AS names, array_agg(email ORDER BY id) AS emails
+FROM people WHERE id <= 110 AND age = 60 GROUP BY age
+"""
+print(await conn.select_many(query, into=AgeGroup))
+# [AgeGroup(age=60, names=['person-42', 'person-102'], emails=[None, 'person102@example.com'])]
+```
 
 ## Validation
 

@@ -108,9 +108,18 @@ print(rows)  # [(52, 70), (53, 71)]
 | `timestamp` | `datetime` without a time zone | the same |
 | `timestamptz` | `datetime` in UTC | a `datetime` with a time zone |
 | `json`, `jsonb` | parsed JSON | a `dict` or `list`, or a JSON `str` |
+| arrays of the types above (`int[]`, `text[]`, ...) | `list` | a `list` or `tuple` |
 
 A Python `enum.Enum` is sent as its `.value`.
 A value that doesn't fit its column raises `ParameterError` before anything is sent.
+
+A list is sent as an array where the query takes an array, and as JSON where it takes
+`json` or `jsonb`:
+
+```python
+query = "SELECT id FROM people WHERE id = ANY($1) ORDER BY id"
+print(await conn.select_many(query, [3, 8, 42]))  # [(3,), (8,), (42,)]
+```
 
 ## Prepared statements
 
@@ -121,10 +130,10 @@ or `create_pool()`.
 
 ## Not supported yet
 
-* Arrays, `interval`, ranges and composite types can't be read yet: they raise
+* `interval`, ranges and composite types can't be read yet: they raise
   `UnsupportedTypeError`.
-  Cast them in SQL instead, e.g. `SELECT tags::text`.
-* A list is sent as JSON, not as an array, so `= ANY($1)` doesn't work.
-  Use `WHERE id IN (SELECT jsonb_array_elements_text($1)::int)` instead.
+  Cast them in SQL instead, e.g. `SELECT period::text`.
+* Arrays must have one dimension and start at index 1 (the default).
+  Others raise `DecodeError`.
 
 More in [Limitations](../limitations.md).
