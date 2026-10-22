@@ -273,10 +273,11 @@ async def test_cancelled_shared_query_keeps_its_connection_busy(dsn: str) -> Non
             await task
         stats = pool.stats()
         assert (stats.idle, stats.in_flight) == (1, 1)
-        # Not pipelined behind the cancelled statement: the other connection answers.
+        # Not pipelined behind the cancelled statement: the other connection answers. (Not
+        # asserted after it that the first is still busy: the pool cancels the statement on
+        # the server too, which on a slow runner can be over before this query is.)
         async with asyncio.timeout(0.2):
             assert await pool.select_one("SELECT 1") == (1,)
-        assert pool.stats().idle == 1
         await _settle(pool)
         stats = pool.stats()
         assert (stats.size, stats.idle, stats.in_flight) == (2, 2, 0)
