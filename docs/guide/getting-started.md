@@ -4,8 +4,10 @@
 
 ```sh
 uv add fastpg                  # or: pip install fastpg
-uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
+
+msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
+models work too (`uv add 'fastpg[pydantic]'`, see [pydantic](pydantic.md)).
 
 * Python 3.14.3 or later, on macOS or Linux. Windows isn't supported.
 * Wheels for Linux (x86_64 and aarch64, glibc and musl) and macOS (x86_64 and arm64).

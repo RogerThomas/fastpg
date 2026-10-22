@@ -9,9 +9,8 @@
 <a href="https://app.codspeed.io/RogerThomas/fastpg?utm_source=badge"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"/></a>
 
 An async PostgreSQL client for Python 3.14, written in Rust on [xitca-postgres] and [PyO3].
-It decodes rows from PostgreSQL's binary format straight into [msgspec] Structs (or pydantic
-models), with no intermediate tuples or dicts, and runs the whole protocol on the asyncio
-event loop's thread. In CI benchmarks against asyncpg, psycopg 3 and psqlpy, it does 2-3x the
+It decodes rows from PostgreSQL's binary format straight into [msgspec] Structs, with no
+intermediate tuples or dicts, and runs the whole protocol on the asyncio event loop's thread. In CI benchmarks against asyncpg, psycopg 3 and psqlpy, it does 2-3x the
 throughput of the fastest of them on primary-key lookups, pages of rows into Structs, and
 single-row writes.
 
@@ -21,8 +20,10 @@ Status: alpha. macOS and Linux only.
 
 ```sh
 uv add fastpg                  # or: pip install fastpg
-uv add 'fastpg[pydantic]'      # with pydantic v2 support
 ```
+
+msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
+models work too (`uv add 'fastpg[pydantic]'`, see [pydantic]).
 
 Python 3.14.3 or later. Wheels for Linux (x86_64, aarch64; glibc and musl) and macOS (x86_64,
 arm64); elsewhere pip builds it from the sdist, which needs a Rust toolchain.
@@ -66,11 +67,11 @@ query at a time, `await fastpg.connect(dsn)` opens a single connection with the 
 
 ## Features
 
-* **Rows into Structs.** `into=Person` builds msgspec Structs, pydantic models, NamedTuples
-  or dicts. Values are decoded in Rust and passed straight to the Struct's own `__init__`;
-  columns are bound to fields and type-checked once per statement. A type that needs
-  validation (constraints, enums, validators) is validated by msgspec or pydantic, never
-  skipped. See [Structs] and [pydantic].
+* **Rows into Structs.** `into=Person` builds msgspec Structs (also NamedTuples, dicts, or
+  pydantic models). Values are decoded in Rust and passed straight to the Struct's own
+  `__init__`; columns are bound to fields and type-checked once per statement. A type that
+  needs validation (constraints, enums) is validated by msgspec, never skipped. See
+  [Structs].
 * **On the event loop.** fastpg starts no threads: the protocol runs on the event loop's
   thread, so a query costs no thread hand-off. Statements are prepared on first use and cached per connection.
 * **A pool with no `acquire()` for single statements.** `pool.select_one(...)` goes to an
@@ -86,26 +87,30 @@ query at a time, `await fastpg.connect(dsn)` opens a single connection with the 
 ## Benchmarks
 
 Throughput in [run 39671855945] of the [Benchmarks workflow] (`main`, 2026-10-21). "Best
-other" is the fastest of asyncpg, psycopg 3 and psqlpy.
+other" is the fastest of asyncpg, psycopg 3 and psqlpy, each through its own pool.
 
-| workload | fastpg | best other | vs best other | vs asyncpg |
-|---|---:|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s asyncpg² | **2.32x** | 3.60x |
-| Primary-key lookup, 64 tasks on 16 connections¹ | 54,019/s | 17,577/s asyncpg² | **3.07x** | 4.83x |
-| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s asyncpg² | **2.09x** | 2.70x |
-| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s asyncpg | **2.15x** | 2.15x |
-| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s asyncpg² | **2.23x** | 3.38x |
-| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s psycopg | **1.41x** | 2.65x |
+| workload | fastpg | best other | vs best other |
+|---|---:|---:|---:|
+| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s asyncpg, no reset² | **2.32x** |
+| Primary-key lookup, 64 tasks on 16 connections¹ | 54,019/s | 17,577/s asyncpg, no reset² | **3.07x** |
+| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s asyncpg, no reset² | **2.09x** |
+| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s asyncpg | **2.15x** |
+| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s asyncpg, no reset² | **2.23x** |
+| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s psycopg | **1.41x** |
 
 ¹ fastpg pipelines here; with pipelining off it does 37,599/s (2.14x).
 
-² With its per-release reset query turned off, which saves it a round trip.
+² asyncpg with its pool's reset query turned off (a no-op `reset=` in `create_pool`). By
+default its pool resets the session every time a connection goes back to it, one extra round
+trip per query. fastpg's pool queries aren't reset either (they mustn't change session state),
+nor are psycopg's or psqlpy's, so this is the like-for-like asyncpg.
 
 These are client-side numbers on one shared GitHub runner (4 vCPUs), with PostgreSQL on the
 same VM. Each driver uses its own pool of 16 with its recommended settings, every typed
 workload returns the same msgspec Struct from every driver, and every result is checked.
-fastpg's narrowest lead is a six-round-trip transaction (1.13x), and over a real network the
-round trip shrinks single-query latency gaps. All workloads, latency and caveats:
+fastpg's narrowest lead is a six-round-trip transaction: 1.27x asyncpg, which resets the session
+after it as fastpg's `pool.transaction()` does (in the COMMIT's round trip), and 1.13x the
+configurations that don't. Over a real network the round trip shrinks single-query gaps. All workloads, latency and caveats:
 [Benchmarks] and [Methodology].
 
 fastpg's own CPU per query (each row type, the query forms and the bulk writes) is also
