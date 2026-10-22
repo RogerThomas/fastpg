@@ -46,7 +46,7 @@ class StructSpec:
     def __new__(
         cls,
         struct_type: type[Any],
-        fields: Sequence[tuple[str, str, int, bool, bool, object | None]],
+        fields: Sequence[tuple[str, str, int, bool, bool, object | None, tuple[int, bool] | None]],
         *,
         forbid_unknown_fields: bool,
         positional_fields: int,

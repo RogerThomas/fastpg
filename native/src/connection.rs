@@ -917,9 +917,12 @@ impl Connection {
     ) -> PyResult<()> {
         let py = sql.py();
         let client = self.require_client(py)?;
-        let params = params::from_py_tuple(params)?;
         let sql = sql.to_str()?;
-        let source = match self.shared.cache.get(sql) {
+        let cached = self.shared.cache.get(sql);
+        // A prepared statement's parameter types decide what lists become (see `convert`).
+        let types = cached.as_ref().map(|stmt| stmt.statement().params());
+        let params = params::from_py_tuple(params, types)?;
+        let source = match cached {
             Some(stmt) => StmtSource::Cached(stmt),
             None => StmtSource::Sql(sql.to_owned()),
         };
@@ -1199,7 +1202,7 @@ impl<'a, 'py: 'a> RowMaker<'a, 'py> {
                     .codecs()
                     .map_err(|m| py_err(py, "UnsupportedTypeError", m))?;
                 Self::Tuple {
-                    untrack: scalar_columns(&codecs),
+                    untrack: scalar_columns(codecs.iter().copied()),
                     codecs,
                     cache,
                     columns,

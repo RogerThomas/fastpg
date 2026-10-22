@@ -9,7 +9,7 @@
 //! Non-finite floats use the `NaN`/`Infinity` tokens pydantic accepts. msgspec rejects them,
 //! and has no other JSON form for them: for msgspec (`non_finite = false`) they are an error.
 
-use crate::decode::{Codec, char_text, read_i64, write_numeric};
+use crate::decode::{ArrayItems, Codec, char_text, read_i64, write_numeric};
 use crate::pgtime;
 use crate::rows::RowBuffer;
 
@@ -243,6 +243,21 @@ fn encode_value(
             } else {
                 out.extend_from_slice(text);
             }
+        }
+        Codec::Array(elem) => {
+            out.push(b'[');
+            for (i, item) in ArrayItems::parse(raw)?.enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                match item? {
+                    None => out.extend_from_slice(b"null"),
+                    Some(value) => {
+                        encode_value(out, scratch, elem.codec(), as_text, non_finite, value)?;
+                    }
+                }
+            }
+            out.push(b']');
         }
     }
     Ok(())

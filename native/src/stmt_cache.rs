@@ -58,7 +58,7 @@ impl CachedStmt {
                             format!(
                                 "column {:?} has PostgreSQL type {}, which fastpg cannot decode",
                                 c.name(),
-                                c.r#type().name()
+                                crate::decode::type_name(c.r#type())
                             )
                         })
                     })

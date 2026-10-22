@@ -134,9 +134,24 @@ struct FieldSpec {
     nullable: bool,
     required: bool,
     json_decoder: Option<Py<PyAny>>,
+    /// For a `list[X]` field whose items are built directly (`X` a scalar or JSON-shaped
+    /// type, optionally `| None`): the kind of `X` and whether it takes None. Such a field
+    /// takes an array column of elements a field of type `X` would take.
+    item: Option<(FieldKind, bool)>,
 }
 
-/// `(attr_name, encode_name, kind, nullable, required, json_decoder)` as passed from Python.
+impl FieldSpec {
+    /// The field type, as type-mismatch errors name it.
+    fn expects(&self) -> String {
+        match self.item {
+            Some((kind, _)) => format!("list[{}]", kind.python_name()),
+            None => self.kind.python_name().to_owned(),
+        }
+    }
+}
+
+/// `(attr_name, encode_name, kind, nullable, required, json_decoder, item)` as passed from
+/// Python, `item` being `(kind, nullable)` of a list's items.
 type FieldArg<'py> = (
     Bound<'py, PyString>,
     String,
@@ -144,6 +159,7 @@ type FieldArg<'py> = (
     bool,
     bool,
     Option<Bound<'py, PyAny>>,
+    Option<(u8, bool)>,
 );
 
 /// `(has_default, default)` pairs as passed from Python → the default of each field, if any.
@@ -183,9 +199,10 @@ impl StructSpec {
 
 #[pymethods]
 impl StructSpec {
-    /// `fields`: `(attr_name, encode_name, kind, nullable, required, json_decoder)` tuples,
-    /// in field order, where `attr_name` is the class's own (interned) field-name object and
-    /// `json_decoder` is a callable taking JSON bytes.
+    /// `fields`: `(attr_name, encode_name, kind, nullable, required, json_decoder, item)`
+    /// tuples, in field order, where `attr_name` is the class's own (interned) field-name
+    /// object, `json_decoder` is a callable taking JSON bytes and `item` is `(kind, nullable)`
+    /// for a list whose items can be built directly from an array's elements.
     ///
     /// `pydantic_defaults` (one `(has_default, default)` per field) switches to pydantic
     /// mode: instances are built by filling `__dict__` and the `__pydantic_*__` slots
@@ -232,21 +249,26 @@ impl StructSpec {
             .to_owned();
         let mut by_name = HashMap::with_capacity(fields.len());
         let mut specs = Vec::with_capacity(fields.len());
-        for (i, (attr, encode_name, kind, nullable, required, json_decoder)) in
+        let kind_of = |code: u8| {
+            FieldKind::from_code(code).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("unknown field kind {code}"))
+            })
+        };
+        for (i, (attr, encode_name, kind, nullable, required, json_decoder, item)) in
             fields.into_iter().enumerate()
         {
-            let kind = FieldKind::from_code(kind).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!("unknown field kind {kind}"))
-            })?;
             let attr_name = attr.to_str()?.to_owned();
             specs.push(FieldSpec {
                 column_name: (encode_name != attr_name).then(|| encode_name.clone()),
                 attr_name,
                 attr: attr.unbind(),
-                kind,
+                kind: kind_of(kind)?,
                 nullable,
                 required,
                 json_decoder: json_decoder.map(Bound::unbind),
+                item: item
+                    .map(|(kind, nullable)| Ok::<_, PyErr>((kind_of(kind)?, nullable)))
+                    .transpose()?,
             });
             by_name.insert(encode_name, i);
         }
@@ -386,7 +408,7 @@ fn unsupported_column(py: Python<'_>, column: &Column) -> PyErr {
         format!(
             "column {:?} has PostgreSQL type {}, which fastpg cannot decode",
             column.name(),
-            column.r#type().name()
+            decode::type_name(column.r#type())
         ),
     )
 }
@@ -503,30 +525,46 @@ impl Binding {
             let Some(codec) = Codec::for_type(ty) else {
                 return Err(unsupported_column(py, column));
             };
-            let Some(int_as_float) = f.kind.accepts(codec) else {
+            let pydantic = matches!(spec.mode, Mode::Pydantic { .. });
+            // An array feeds a `list[X]` field (or `Any`) when its elements would feed a
+            // field of type `X`: the element codec and rules go into the column's codec.
+            let (accepted, value_kind, codec) = match (codec, f.item) {
+                (Codec::Array(elem), Some((item, nullable))) => (
+                    item.accepts(elem.codec()),
+                    item,
+                    Codec::Array(elem.with_rules(nullable, item == FieldKind::Decimal && pydantic)),
+                ),
+                (Codec::Array(_), None) if f.kind != FieldKind::Any => (None, f.kind, codec),
+                _ => (f.kind.accepts(codec), f.kind, codec),
+            };
+            let Some(int_as_float) = accepted else {
                 return Err(py_err(
                     py,
                     "TypeMismatchError",
                     format!(
                         "column {:?} has PostgreSQL type {}, but {}.{} expects {}",
                         column.name(),
-                        ty.name(),
+                        decode::type_name(ty),
                         spec.cls_name,
                         f.attr_name,
-                        f.kind.python_name()
+                        f.expects()
                     ),
                 ));
+            };
+            let value_codec = match codec {
+                Codec::Array(elem) => elem.codec(),
+                _ => codec,
             };
             bound.push(BoundColumn {
                 col,
                 field,
                 codec,
                 int_as_float,
-                json_as_text: f.kind == FieldKind::Str
-                    && matches!(codec, Codec::Json | Codec::Jsonb),
+                json_as_text: value_kind == FieldKind::Str
+                    && matches!(value_codec, Codec::Json | Codec::Jsonb),
                 nullable: f.nullable,
-                finite_decimal: f.kind == FieldKind::Decimal
-                    && matches!(spec.mode, Mode::Pydantic { .. }),
+                // An array's elements are checked as they are decoded (`decode::Elem`).
+                finite_decimal: f.kind == FieldKind::Decimal && pydantic,
             });
         }
         let missing: Vec<String> = spec
@@ -596,9 +634,7 @@ impl Binding {
         };
         let untrack = spec.untrackable
             && bound.len() == spec.fields.len()
-            && bound
-                .iter()
-                .all(|b| !matches!(b.codec, Codec::Json | Codec::Jsonb));
+            && scalar_columns(bound.iter().map(|b| b.codec));
         Ok(Self {
             columns: bound,
             make,
@@ -628,8 +664,14 @@ fn column_error(py: Python<'_>, column: &Column, failure: DecodeFailure) -> PyEr
             format!(
                 "column {:?} ({}): {msg}",
                 column.name(),
-                column.r#type().name()
+                decode::type_name(column.r#type())
             ),
+        ),
+        // Only raised for a field (see `StructBuilder::cell_error`); kept for completeness.
+        DecodeFailure::NullElement(i) => py_err(
+            py,
+            "NullValueError",
+            format!("column {:?} has a NULL element ({i})", column.name()),
         ),
     }
 }
@@ -720,7 +762,7 @@ impl<'a, 'py> StructBuilder<'a, 'py> {
                         json_decoder,
                     };
                     decode::decode(py, self.cache, b.codec, raw, target)
-                        .map_err(|e| column_error(py, &self.columns[b.col], e))?
+                        .map_err(|e| self.cell_error(b, e))?
                 }
             };
             self.values.push(value);
@@ -787,6 +829,30 @@ unsafe fn call<'py>(
 }
 
 impl<'py> StructBuilder<'_, 'py> {
+    /// The error for a cell that failed to decode: a NULL array element names the field.
+    #[cold]
+    fn cell_error(&self, b: &BoundColumn, failure: DecodeFailure) -> PyErr {
+        let column = &self.columns[b.col];
+        match (failure, self.spec.fields.get(b.field)) {
+            (DecodeFailure::NullElement(i), Some(f)) => {
+                let item = f.expects();
+                py_err(
+                    self.py,
+                    "NullValueError",
+                    format!(
+                        "column {:?} has a NULL element ({i}) but {}.{} is {item}, not {} | \
+                         None]",
+                        column.name(),
+                        self.spec.cls_name,
+                        f.attr_name,
+                        item.trim_end_matches(']')
+                    ),
+                )
+            }
+            (failure, _) => column_error(self.py, column, failure),
+        }
+    }
+
     /// A dict row: each column's value under its interned name. (Copying a presized template
     /// and replacing its placeholders measured no faster for a 10-column row.)
     fn dict(&self, keys: &[Py<PyString>]) -> PyResult<Bound<'py, PyAny>> {
@@ -892,12 +958,13 @@ impl<'py> StructBuilder<'_, 'py> {
     }
 }
 
-/// Whether tuple rows of these columns hold only scalars (no json/jsonb values), so they
-/// can be left untracked by the cyclic GC, as CPython itself does for tuples of atoms.
-pub fn scalar_columns(codecs: &[Codec]) -> bool {
+/// Whether rows of these columns hold only scalars (no json/jsonb values, no arrays' lists),
+/// so they can be left untracked by the cyclic GC, as CPython itself does for tuples of
+/// atoms.
+pub fn scalar_columns(codecs: impl IntoIterator<Item = Codec>) -> bool {
     codecs
-        .iter()
-        .all(|c| !matches!(c, Codec::Json | Codec::Jsonb))
+        .into_iter()
+        .all(|c| !matches!(c, Codec::Json | Codec::Jsonb | Codec::Array(_)))
 }
 
 /// Build one tuple per row using each column's natural Python type. `untrack`: the columns
