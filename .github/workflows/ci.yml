@@ -30,6 +30,33 @@ env:
   UV_VERSION: 0.13.0
 
 jobs:
+  # A pull request that changes only documentation (docs/, Markdown files at the top level,
+  # mkdocs.yml) skips the type-check and the test jobs: lint and the docs build still run.
+  # Not a workflow-level paths filter: "CI passed" is required, so it must always report.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            code=true
+          elif git diff --name-only "$BASE...HEAD" | grep -qvE '^(docs/|[^/]+\.md$|mkdocs\.yml$)'; then
+            code=true
+          else
+            code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
@@ -71,6 +98,8 @@ jobs:
 
   typecheck:
     name: Type-check
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -93,6 +122,8 @@ jobs:
 
   test:
     name: Test (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -144,6 +175,8 @@ jobs:
 
   test-macos:
     name: Test (macOS arm64, Python 3.14)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -219,15 +252,22 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [lint, typecheck, test, test-macos, docs]
+    needs: [changes, lint, typecheck, test, test-macos, docs]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Check every job passed
+      # Skipped is fine only where `changes` skipped it (documentation-only changes): a job
+      # skipped because one it needs failed shows up as that failure.
+      - name: Check every job passed (or was skipped for a docs-only change)
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          CODE: ${{ needs.changes.outputs.code }}
         run: |
-          echo "Results: $RESULTS"
+          echo "Results: $RESULTS (code changed: $CODE)"
           for result in $RESULTS; do
-            [ "$result" = success ] || { echo "::error::A required job ended with: $result"; exit 1; }
+            case "$result" in
+              success) ;;
+              skipped) [ "$CODE" = false ] || { echo "::error::A required job was skipped"; exit 1; } ;;
+              *) echo "::error::A required job ended with: $result"; exit 1 ;;
+            esac
           done
