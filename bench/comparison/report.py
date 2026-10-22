@@ -100,6 +100,7 @@ class WorkloadInfo(msgspec.Struct, kw_only=True):
     rows_per_op: int
     typed: bool | None
     skipped: dict[str, str]
+    resets_session: bool = False
 
 
 class ConfigInfo(msgspec.Struct, kw_only=True):
@@ -107,6 +108,7 @@ class ConfigInfo(msgspec.Struct, kw_only=True):
     package: str
     version: str
     notes: str
+    resets_session: bool = False
 
 
 class Report(msgspec.Struct, kw_only=True):
@@ -355,6 +357,8 @@ class Markdown:
     def __init__(self, report: Report) -> None:
         self._report = report
         self._configs = [c.name for c in report.configs]
+        self._resetting = {c.name for c in report.configs if c.resets_session}
+        self._workloads = {w.name: w for w in report.workloads}
         self._aggs = {(a.workload, a.config): a for a in report.aggregates}
 
     @staticmethod
@@ -455,7 +459,17 @@ class Markdown:
         if mine is None or mine.ops_per_s is None or mine.failed or not others:
             return "-"
         best, name = max(others)
-        return f"{mine.ops_per_s.median / best:.2f}x {name}"
+        overall = f"{mine.ops_per_s.median / best:.2f}x {name}"
+        info = self._workloads.get(workload)
+        if info is None or not info.resets_session:
+            return overall
+        # fastpg resets the session here: like for like is a configuration that resets too.
+        like = [(ops, c) for ops, c in others if c in self._resetting]
+        if not like or max(like)[1] == name:
+            return overall
+        like_best, like_name = max(like)
+        like_ratio = mine.ops_per_s.median / like_best
+        return f"{like_ratio:.2f}x {like_name} (both reset the session); {overall} (no reset)"
 
     def _throughput(self) -> list[str]:
         closed = [w for w in self._report.workloads if w.category != "open-loop"]
@@ -476,7 +490,10 @@ class Markdown:
             "",
             (
                 "Higher is better. One op is one query, transaction or batch (see the details). "
-                "*n/a*: not run for that configuration (same code path as `fastpg`)."
+                "*n/a*: not run for that configuration (same code path as `fastpg`). Where "
+                "fastpg resets the session when the connection goes back (transactions), it's "
+                "compared first with the configurations that reset too: only `asyncpg`'s "
+                "default does; `asyncpg-noreset`'s, psycopg's and psqlpy's pools don't."
             ),
             "",
             *self._table(headers, rows),
@@ -628,6 +645,7 @@ def build(
                 rows_per_op=w.rows_per_op,
                 typed=w.typed,
                 skipped=skipped.get(w.name, {}),
+                resets_session=w.resets_session,
             )
             for w in workloads
         ],
@@ -637,6 +655,7 @@ def build(
                 package=c.package,
                 version=environment.packages.get(c.package, "unknown"),
                 notes=c.notes,
+                resets_session=c.resets_session,
             )
             for c in configs
         ],

@@ -82,6 +82,9 @@ class Workload:
     rows_per_op: int = 1
     typed: bool | None = None  # None: no rows returned
     exclusive: bool = False  # checks a connection out (transaction / bulk write)
+    # fastpg resets the session when the connection goes back (pool.transaction(); not shared
+    # statements or bulk writes): it's compared with the configurations that reset too.
+    resets_session: bool = False
     max_ops: int | None = None  # cap on measured ops (bulk writes), on top of the duration
 
     async def prepare(self, control: AsyncConnection) -> int:
@@ -349,6 +352,7 @@ class Workloads:
                 category="write",
                 concurrency=16,
                 exclusive=True,
+                resets_session=True,
             ),
             BulkInsert(
                 name="executemany-1000",
