@@ -1,198 +1,204 @@
 # Benchmark methodology
 
-How fastpg is compared with [asyncpg](https://github.com/MagicStack/asyncpg),
-[psycopg 3](https://www.psycopg.org/psycopg3/) (async) and
-[psqlpy](https://github.com/psqlpy-python/psqlpy), and why the comparison is built the way it
-is. The suite is `bench/compare.py` (code in `bench/comparison/`); the
-[Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
-runs it on every push to `main` that changes the library or the benchmarks, weekly, on pull
-requests labelled `benchmark`, and on demand (any ref, x86_64 or arm64). It writes the results
-to the run's summary page, with the raw JSON as an artifact. The latest results are on
-[Benchmarks](performance.md).
+This page explains how the [benchmarks](performance.md) are run, and why.
 
-The principles: every driver set up the way its own documentation recommends, the same work
-and the same data for all of them, checked results, repeated interleaved trials, and every
-workload reported, including those where fastpg's lead is small.
+The aim is a fair comparison:
+
+* every driver set up the way its own docs recommend;
+* the same queries and the same data for every driver;
+* every result checked;
+* repeated, interleaved trials;
+* every workload reported, including those where fastpg's lead is small.
+
+The suite is `bench/compare.py`, with its code in `bench/comparison/`.
+The [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
+runs it in GitHub Actions: on pushes to `main` that change the library or the benchmarks,
+weekly, on pull requests labelled `benchmark`, and on demand.
+Each run writes its results to the run's summary page, with the raw JSON as an artifact.
 
 ## Running it
 
 ```sh
-task db-up bench-ci                          # exactly what CI runs (3 trials x 3 s)
-task bench-ci TRIALS=5 DURATION=10           # longer, steadier
+task db-up bench-ci                          # what CI runs: 3 trials of 3 s
+task bench-ci TRIALS=5 DURATION=10           # longer and steadier
 task bench-ci -- -k 'point-*' -d fastpg -d 'asyncpg*'
-uv run yeet ./bench/compare.py --list        # workloads and driver configurations
+uv run yeet ./bench/compare.py --list        # list workloads and drivers
 ```
 
-`task bench-ci` takes `DSN` (default: the `task db-up` database), `TRIALS`, `DURATION`,
-`WARMUP`, `OUT` (where `compare-<timestamp>.json` and `.md` go) and `SUMMARY` (a file to
-append the Markdown to); anything after `--` goes to `bench/compare.py`. In GitHub, run
-*Actions → Benchmarks → Run workflow*; it takes the same knobs. With the defaults a run is 99
-measurements per trial, about 25 minutes, plus the build.
+`task bench-ci` also takes `DSN`, `WARMUP`, `OUT` (the output directory) and `SUMMARY` (a
+file to append the Markdown summary to).
+Anything after `--` goes to `bench/compare.py`.
+A full run takes about 25 minutes.
 
-The suite creates its own `fastpg_bench` schema (dropped and recreated at the start of a
-run; `--keep-schema` reuses it) and seeds it from closed-form formulas, so it needs an empty
-database and touches nothing else. On macOS, Docker Desktop's port forwarding adds a few
-hundred µs to every round trip (see `perf-notes.md`): use a Linux host or a native server.
+The suite creates its own `fastpg_bench` schema and fills it with generated data.
+It touches nothing else in the database.
 
-## Driver configurations
+On macOS, Docker Desktop adds a few hundred microseconds to every round trip.
+Use a Linux host, or a PostgreSQL that runs natively.
 
-Each configuration is one column of the results. All of them use the driver's own pool,
-with the same size (16 connections, `min = max` where the pool has a minimum), the same
-concurrency, the same SQL and the same argument streams, in the same process on the same
-uvloop event loop.
+## The setup in CI
+
+* A GitHub-hosted `ubuntu-24.04` runner: AMD EPYC 9V74, 4 vCPUs, 16 GB.
+* PostgreSQL 18.6 on the same machine, with `synchronous_commit=off`.
+* CPython 3.14.7 and uvloop.
+* fastpg 0.1.0, asyncpg 0.32.0, psycopg 3.3.6 and psqlpy 0.12.1.
+* 3 trials of 3 seconds for each workload and driver. The tables show the median.
+
+## Drivers
+
+Every driver uses its own pool of 16 connections, in the same process, on the same event
+loop.
 
 | name | setup |
 |---|---|
-| `fastpg` | `fastpg.create_pool(min_size=16, max_size=16)`, defaults otherwise: binary protocol, cached prepared statements, `max_inflight_per_conn=8`. |
-| `fastpg-inflight1` | The same with `max_inflight_per_conn=1`: never more than one statement in flight per connection, like every other pool here. |
-| `asyncpg` | `asyncpg.create_pool(min_size=16, max_size=16)`, defaults otherwise: binary protocol, statement cache, reset query on release. |
-| `asyncpg-noreset` | The same with `reset=` a no-op coroutine (asyncpg's documented hook), which skips the reset round trip. |
-| `psycopg` | `psycopg_pool.AsyncConnectionPool(min_size=16, max_size=16, kwargs={"autocommit": True})`, the C implementation (`psycopg[binary]`), default text results, server-side prepared statements after 5 executions. |
-| `psqlpy` | `psqlpy.ConnectionPool(max_db_pool_size=16)`, defaults otherwise: binary protocol, prepared statements. |
+| `fastpg` | `fastpg.create_pool(min_size=16, max_size=16)`, defaults otherwise |
+| `fastpg-inflight1` | the same with `max_inflight_per_conn=1`: one query per connection at a time, like the other pools |
+| `asyncpg` | `asyncpg.create_pool(min_size=16, max_size=16)`, defaults otherwise |
+| `asyncpg-noreset` | the same, with the session reset turned off (a no-op `reset=`) |
+| `psycopg` | `psycopg_pool.AsyncConnectionPool(min_size=16, max_size=16, kwargs={"autocommit": True})`, with the C extension |
+| `psqlpy` | `psqlpy.ConnectionPool(max_db_pool_size=16)`, defaults otherwise |
 
-The choices that make these each driver's best, and where the drivers genuinely differ:
+"Fastest other driver" in the results is the fastest of `asyncpg`, `asyncpg-noreset`,
+`psycopg` and `psqlpy`.
 
-* **Pipelining (fastpg).** A fastpg pool sends a statement to an idle connection first; only
-  when every connection is busy does it pipeline up to `max_inflight_per_conn` statements on
-  one. With no more tasks than connections (every workload except `point-c64` and the open
-  loop) there's always an idle connection, so it never pipelines (sampling `Pool.stats()`
-  during 16 tasks on 16 connections found no connection with two statements in flight;
-  with 64 tasks, every sample did); `fastpg-inflight1` shows those two without it, so no
-  result rests on pipelining alone. (The suite never
-  uses a single shared pipelined connection, which is faster still.)
-* **asyncpg's reset.** asyncpg's pool runs `SELECT pg_advisory_unlock_all(); CLOSE ALL;
-  UNLISTEN *; RESET ALL` every time a connection is released: one more round trip per
-  pooled query. That's its default, so `asyncpg` keeps it, and `asyncpg-noreset` removes it,
-  which is safe here because no workload changes session state. The other pools don't reset
-  (checked: a `SET` made on a pooled connection is still there for its next user): fastpg's
-  shared statements and bulk writes aren't reset (the pool guide says pool queries mustn't
-  change session state); psycopg's pool only rolls back a connection left in a transaction;
-  psqlpy recycles connections without a query. fastpg's `Pool.transaction()` does reset, within
-  the COMMIT's round trip, so for `transaction-c16` the summary compares fastpg first with the
-  configurations that reset too (only `asyncpg`), then with the rest.
-* **Autocommit.** Reads and single-row writes run in autocommit on every driver (fastpg's
-  shared mode, asyncpg's `pool.fetch*`, psycopg with `autocommit=True`, psqlpy by default).
-  Left at its default, psycopg would wrap every pooled query in BEGIN/COMMIT: two extra
-  round trips. Transactions are explicit everywhere.
-* **Prepared statements.** All four run the statements server-side prepared. psycopg
-  prepares a statement on a connection after 5 executions; the warm-up runs every statement
-  far more often than that on every connection.
-* **Result format.** asyncpg, fastpg and psqlpy only use the binary format. psycopg can do
-  either; its default text format measured equal or faster than `binary=True` in this suite
-  (e.g. 5,939 vs 5,589 ops/s on `wide-50-c16`, 682 vs 578 on `fetch-1000-c4-typed`), so
-  that's what it uses (`PsycopgAdapter(binary=True)` to try the other).
-* **jsonb.** asyncpg returns jsonb as `str` and psycopg parses it with `json.loads`; both get
-  `msgspec.json.decode` instead (`set_type_codec`, `set_json_loads`), so every driver parses
-  JSON, with the fastest decoder each allows. psqlpy and fastpg decode jsonb natively.
-* **Bulk writes.** `executemany` is all-or-nothing everywhere: asyncpg's and fastpg's are
-  atomic by design; psycopg's (pipelined) and psqlpy's run in an explicit transaction, as
-  in autocommit they would commit row by row. COPY is binary `COPY ... FROM STDIN` for all
-  four (`copy_records_to_table`, `cursor.copy` + `set_types` + `write_row`, `copy_in`).
-  Every driver gets the same pre-built list of tuples.
-* **Not tuned:** anything the drivers' documentation doesn't recommend for a service, e.g.
-  cursor or protocol internals.
+Why each driver is set up this way:
 
-## Output types and correctness
+* **asyncpg's session reset.**
+  By default, asyncpg's pool runs a reset query each time a connection goes back to the
+  pool.
+  That costs one extra round trip per query.
+  fastpg's pool doesn't reset after single queries, and neither do psycopg's and psqlpy's.
+  So `asyncpg-noreset` is the like-for-like comparison.
+  It's safe here because no workload changes session state.
+  fastpg's `pool.transaction()` does reset, inside the `COMMIT`'s round trip, so on the
+  transaction workload default `asyncpg` is like for like: there fastpg leads it by 1.27x.
+* **Queueing on busy connections (fastpg).**
+  fastpg's pool sends a query to an idle connection first.
+  Only when all are busy does it send several queries to one connection.
+  With 16 tasks on 16 connections there's always an idle one, so this never happens.
+  With 64 tasks it does, so `fastpg-inflight1` shows fastpg without it.
+* **Autocommit.**
+  Single queries run in autocommit on every driver.
+  psycopg needs `autocommit=True` for this; otherwise it wraps each query in a transaction,
+  which costs two extra round trips.
+* **Prepared statements.**
+  Every driver runs prepared statements on the server.
+  psycopg prepares a statement after 5 runs; the warm-up runs each one far more often.
+* **Text or binary results.**
+  asyncpg, fastpg and psqlpy always use binary.
+  psycopg's default text format was as fast or faster than binary here, so it keeps it.
+* **JSON.**
+  asyncpg and psycopg are given `msgspec.json.decode` to parse `jsonb`, the fastest
+  decoder they allow. psqlpy and fastpg parse it natively.
+* **Bulk writes.**
+  `executemany` is all or nothing on every driver.
+  COPY is binary `COPY ... FROM STDIN` on every driver.
+  Every driver gets the same list of tuples.
+* **Nothing else is tuned.**
 
-The read workloads run twice, in two modes:
+## Row types
 
-* **Native rows**: each driver's default row type, with its default type mapping: fastpg
-  `tuple`, asyncpg `Record`, psycopg `tuple`, psqlpy `dict`. This is the least work each
-  driver can do. Where the defaults differ, it favours the other drivers: psqlpy returns
-  `uuid` columns as `str` (no `UUID` object is built).
-* **Typed rows** (`-typed`): every driver returns the same msgspec Structs, built the fastest
-  documented way for each: fastpg `into=Person` (built in Rust), asyncpg `Person(*record)`,
-  psycopg `row_factory=args_row(Person)`, psqlpy `result(as_tuple=True,
-  custom_decoders={uuid column: UUID})` then `Person(*row)`. This is the cost an
-  application that wants typed objects actually pays.
+The read workloads run twice:
 
-Before a read workload is timed, each driver's results for a set of arguments (first, middle
-and last rows) are compared with rows computed in Python from the same formulas as the seed
-data: typed rows must be the same Struct class with each field equal and of the expected type
-(a subclass is accepted: asyncpg's `UUID` subclasses `uuid.UUID`); native rows must have
-equal values column by column, psqlpy's `uuid` strings compared as UUIDs. After a write
-workload, the server-side state is checked through a separate psycopg connection: the row
-count equals the completed operations (warm-up included), every written value matches its
-formula, account balances grew by exactly the number of updates, and transfers left the total
-balance unchanged. A mismatch or a crash fails that measurement, is listed at the top of the
-summary, and makes the run exit non-zero (the CI job fails). Numbers never do.
+* **Native rows**: each driver's own row type (fastpg and psycopg tuples, asyncpg `Record`s,
+  psqlpy dicts). This is the least work each driver can do.
+* **Structs** (workloads ending in `-typed`): every driver returns the same msgspec Struct.
+  fastpg uses `into=Person`.
+  asyncpg uses `Person(*record)`, psycopg `row_factory=args_row(Person)`, and psqlpy
+  `Person(*row)` on its tuple rows.
+  This is what an app that wants typed objects really pays.
+
+## Checking results
+
+Before a read workload is timed, each driver's rows are compared with the expected values.
+After a write workload, the table contents are checked.
+A wrong result fails the run, and the CI job fails with it.
 
 ## Workloads
 
-| workload | what one op is | tasks | why |
-|---|---|---:|---|
-| `point-c1` | one `people` row by primary key | 1 | Per-query latency with nothing else going on. |
-| `point-c16` | same | 16 | The most common API query, at the pool's size. |
-| `point-c64` | same | 64 | More tasks than connections: tasks queue for the pool (and fastpg may pipeline). |
-| `point-c16-typed` | same, into a Struct | 16 | Decode included. |
-| `page-20-c16`(`-typed`) | 20 consecutive `people` rows | 16 | A list endpoint. |
-| `fetch-1000-c4`(`-typed`) | 1,000 `people` rows | 4 | A larger fetch (export, report): decode throughput. |
-| `wide-50-c16`(`-typed`) | 50 `wide` rows: uuid, timestamptz, date, numeric, float8, bool, text, nullable text, jsonb, bytea, int8 | 16 | The expensive types, which `people` barely has. |
-| `insert-c16` | INSERT one `events` row | 16 | The common write. |
-| `update-c16` | UPDATE one `accounts` row by primary key | 16 | The other common write (random rows of 10,000: occasional lock waits). |
-| `transaction-c16` | BEGIN; `SELECT ... FOR UPDATE` two accounts; two UPDATEs; one INSERT; COMMIT | 16 | A short business transaction: checkout plus six round trips. |
-| `executemany-1000` | a 1,000-row INSERT batch | 1 | Bulk insert through executemany. |
-| `copy-5000` | 5,000 rows by binary COPY | 1 | The fastest way to load rows. |
-| `open-loop-1000`, `open-loop-4000` | point lookups arriving at that rate (Poisson) | – | Latency at equal load (below). |
+| workload | one operation | tasks |
+|---|---|---:|
+| `point-c1` | one `people` row by primary key | 1 |
+| `point-c16` | the same | 16 |
+| `point-c64` | the same, with more tasks than connections | 64 |
+| `point-c16-typed` | the same, into a Struct | 16 |
+| `page-20-c16`(`-typed`) | 20 `people` rows | 16 |
+| `fetch-1000-c4`(`-typed`) | 1,000 `people` rows | 4 |
+| `wide-50-c16`(`-typed`) | 50 rows of 13 columns of costlier types (uuid, timestamptz, numeric, jsonb, ...) | 16 |
+| `insert-c16` | `INSERT` one row | 16 |
+| `update-c16` | `UPDATE` one row by primary key | 16 |
+| `transaction-c16` | `BEGIN`, lock two rows, two `UPDATE`s, one `INSERT`, `COMMIT` | 16 |
+| `executemany-1000` | a 1,000-row `INSERT` batch | 1 |
+| `copy-5000` | 5,000 rows by binary COPY | 1 |
+| `open-loop-1000`, `open-loop-4000` | lookups arriving at a steady rate | – |
 
-`people` (100,000 rows, 10 columns) uses the same formulas as `docker/initdb/02-seed.sql`;
-`wide` has 10,000 rows. Single-row writes go to logged tables; the bulk loads, which write
-hundreds of thousands of rows per run, go to an unlogged table so the runner's disk isn't
-part of the measurement. Bulk workloads also stop after 200 measured operations.
+Bulk loads write to an unlogged table, so the runner's disk isn't part of the measurement.
+Arrays aren't in any workload, because fastpg can't read them yet.
 
-Arrays aren't in any workload because fastpg doesn't decode them yet (see
-[Limitations](limitations.md)): that's a missing feature, not a result.
+## How the numbers are computed
 
-## Statistics
+* **Trials.** Each trial runs every workload. Within a workload, the drivers run in a
+  shuffled order, so drift over the run doesn't always hit the same driver.
+* **Each run** opens a fresh pool, checks results, warms up, then measures.
+  Before each run, the write tables are emptied and the server runs a `CHECKPOINT`.
+* **Throughput** is operations per second of the measured phase. Tables show the median of
+  the trials.
+* **Latency** is measured around each `await`. Tables show the median of the trials.
+* **CPU per operation** is the benchmark process's CPU time, all threads included, divided
+  by the operations. The server's CPU isn't counted.
+* **Steady-rate latency.** Requests arrive at random times, at a fixed average rate,
+  whether or not earlier ones have finished. Latency counts from when a request was due,
+  so a driver that keeps the event loop busy pays for the delay it causes.
 
-* **Runs.** One run is one (trial, workload, configuration). Before it, the write tables are
-  emptied and the server runs a `CHECKPOINT`, so no run pays for evicting the dirty pages of
-  the one before (the bulk loads leave up to a million rows; without this, later runs' tails
-  grew by tens of milliseconds locally). `CHECKPOINT` needs superuser or `pg_checkpoint`;
-  without either the run goes on and the environment records `checkpoint_between_runs=no`.
-  Then: open a fresh pool, check the results, warm up for `WARMUP` seconds at the workload's
-  own concurrency (at least 3 ops per task), collect garbage, measure for `DURATION`
-  seconds, check the writes, close the pool.
-* **Interleaving.** Each trial runs every workload; within a workload the configurations run
-  back to back in an order shuffled per trial (seeded, recorded in the JSON as `position`).
-  Drift over the run (a noisy neighbour, thermal throttling, table growth) is spread over
-  every driver instead of always hitting whichever runs last.
-* **Throughput** is the measured ops over the measured phase's wall time. The summary gives
-  the median over trials with its min-max and interquartile range, the ratio of medians
-  against `asyncpg`, and fastpg against the best non-fastpg configuration of each workload.
-* **Latency** is per op (`perf_counter_ns` around the await): p50, p90, p99 and p99.9 for each
-  trial, reported as the median over trials.
-* **CPU per op** is the benchmark process's CPU time (every thread, so psqlpy's Rust runtime
-  threads count) over the measured phase, per op. The server's CPU isn't included.
-* **Open loop.** Requests arrive at a fixed rate from a seeded Poisson process, each as its
-  own task on the pool, whether or not earlier ones have finished. Latency counts from the
-  *scheduled* arrival, so a driver that keeps the event loop busy and delays later arrivals
-  pays for it (no coordinated omission); *service p99* (dispatch to result) and *loop busy*
-  (the event-loop thread's CPU share, i.e. the headroom left for the application) are
-  reported alongside. A rate is marked overloaded, and stopped, once more than 2,000
-  requests are outstanding.
-* **Environment.** Each run records the git SHA (and whether the tree was dirty), CPU model
-  and core counts, memory, OS, Python, event loop, PostgreSQL version and settings, the exact
-  version of every driver, and the CI runner image.
+## Limits
 
-## Limitations
+* **Shared, noisy machines.** The runners are shared VMs, with PostgreSQL on the same
+  machine. Compare drivers within one run, not across runs. Treat a few percent as a tie.
+  An [earlier run](https://github.com/RogerThomas/fastpg/actions/runs/39667991922), on a
+  different CPU, was 25-45% slower overall, with ratios within 0.3x of these.
+* **No network.** Client and server talk over loopback, so round trips are short.
+  Over a real network, the round trip adds the same time to every driver.
+* **Client-side only.** The server's CPU isn't measured.
+* **One shape.** One process, one event loop, a pool of 16, and small tables that fit in
+  memory.
+* **Structs with plain fields.** A Struct that needs msgspec validation is slower to build
+  (see [Structs](guide/structs.md#validation)).
+* **We wrote the suite.** Run it on your own hardware, with your own queries.
+  Pull requests that make another driver faster here are welcome.
 
-* **Hosted runners are shared, noisy VMs** (4 vCPUs on `ubuntu-24.04`), with PostgreSQL on the
-  same machine, competing with the client for CPU. Absolute numbers are indicative only and
-  move between runs; compare drivers *within* a run. The interleaving and medians reduce,
-  but don't remove, the noise: treat differences of a few percent as ties.
-* **No network.** Client and server talk over loopback, so round trips are short and client
-  overhead looms larger than over a real network, where the RTT dominates every driver's
-  latency alike. Sequential (`point-c1`) gaps shrink accordingly; concurrent throughput and
-  CPU per op are what carry over.
-* **Client-side cost only.** The server's work is identical across drivers, but its CPU isn't
-  measured, and on a 4-vCPU runner it limits the concurrent workloads for everyone.
-* **One process, one event loop (uvloop), one pool size (16), small hot tables** that fit in
-  shared buffers. Other shapes (thousands of connections, cold data, big rows, pgbouncer)
-  aren't covered. CI's short durations (3 s per run) favour repeatability over steady state.
-* **The configurations aren't identical by nature**: fastpg's pool can pipeline and the
-  others can't (hence `fastpg-inflight1`); asyncpg resets connections on release (hence
-  `asyncpg-noreset`); psqlpy's pool opens its connections lazily (the warm-up opens them).
-* **We wrote this suite.** It covers query shapes an API service runs, and every workload is
-  reported, however small fastpg's lead or if it has none. Rerun it on your hardware and with your queries;
-  issues and pull requests that make another driver faster here are welcome.
+## Full results
+
+From [run 39671855945](https://github.com/RogerThomas/fastpg/actions/runs/39671855945).
+"vs default asyncpg" compares with asyncpg's default pool, which resets the session after
+every query.
+CPU is the client's CPU time per operation.
+
+| workload | fastpg | fastest other | vs fastest other | vs default asyncpg | CPU/op: fastpg / fastest other |
+|---|---:|---|---:|---:|---:|
+| `point-c1` | 9,284/s | 6,310/s `asyncpg-noreset` | 1.47x | 2.65x | 39 / 85 µs |
+| `point-c16` | 38,402/s | 17,262/s `asyncpg-noreset` | 2.22x | 3.41x | 23 / 56 µs |
+| `point-c64` | 54,019/s | 17,577/s `asyncpg-noreset` | 3.07x | 4.83x | 17 / 55 µs |
+| `point-c16-typed` | 39,774/s | 17,144/s `asyncpg-noreset` | 2.32x | 3.60x | 23 / 57 µs |
+| `page-20-c16` | 19,270/s | 9,480/s `asyncpg-noreset` | 2.03x | 2.65x | 45 / 99 µs |
+| `page-20-c16-typed` | 19,002/s | 9,094/s `asyncpg-noreset` | 2.09x | 2.70x | 48 / 106 µs |
+| `fetch-1000-c4` | 1.14M rows/s | 545k rows/s `asyncpg-noreset` | 2.08x | 2.17x | 0.86 / 1.82 ms |
+| `fetch-1000-c4-typed` | 1.03M rows/s | 476k rows/s `asyncpg` | 2.15x | 2.15x | 0.96 / 2.09 ms |
+| `wide-50-c16` | 7,806/s | 4,889/s `asyncpg-noreset` | 1.60x | 1.84x | 122 / 200 µs |
+| `wide-50-c16-typed` | 6,522/s | 4,668/s `asyncpg-noreset` | 1.40x | 1.65x | 146 / 212 µs |
+| `insert-c16` | 35,860/s | 16,087/s `asyncpg-noreset` | 2.23x | 3.38x | 23 / 60 µs |
+| `update-c16` | 35,766/s | 17,718/s `asyncpg-noreset` | 2.02x | 2.99x | 22 / 52 µs |
+| `transaction-c16` | 5,893/s | 5,205/s `asyncpg-noreset` | 1.13x | 1.27x | 138 / 175 µs |
+| `executemany-1000` | 256k rows/s | 177k rows/s `asyncpg-noreset` | 1.44x | 1.48x | 0.62 / 2.42 ms |
+| `copy-5000` | 1.16M rows/s | 823k rows/s `psycopg` | 1.41x | 2.65x | 1.30 / 5.19 ms |
+
+Latency at a steady rate, with every configuration:
+
+| | fastpg | asyncpg | asyncpg-noreset | psycopg | psqlpy |
+|---|---:|---:|---:|---:|---:|
+| p99 at 1,000/s | 855 µs | 1,355 µs | 961 µs | 1,071 µs | 1,458 µs |
+| p99.9 at 1,000/s | 1,092 µs | 2,461 µs | 1,364 µs | 1,566 µs | 2,473 µs |
+| p99 at 4,000/s | 1,034 µs | 2,881 µs | 1,270 µs | 1,368 µs | 2,980 µs |
+| p99.9 at 4,000/s | 2,917 µs | 4,161 µs | 3,114 µs | 2,946 µs | 5,386 µs |
+| event loop busy at 4,000/s | 55% | 67% | 61% | 68% | 66% |
+
+All 297 runs passed the result checks.

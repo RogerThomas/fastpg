@@ -1,6 +1,6 @@
-# Queries and results
+# Queries
 
-A `Connection`, a `Transaction` and a `Pool` all run queries with the same methods.
+A connection, a pool and a transaction all have the same query methods.
 
 ```python
 row = await conn.select_one("SELECT id, name, email FROM people WHERE id = $1", 7)
@@ -10,67 +10,61 @@ rows = await conn.select_many("SELECT id, age FROM people WHERE id <= $1 ORDER B
 print(rows)  # [(1, 19), (2, 20), (3, 21)]
 
 await conn.execute_script("CREATE TEMP TABLE notes (id int, body text)")
-print(await conn.execute("INSERT INTO notes VALUES ($1, $2)", 1, "first"))  # 1
+count = await conn.execute("INSERT INTO notes VALUES ($1, $2)", 1, "first")
+print(count)  # 1
 ```
 
 | method | returns |
 |---|---|
-| `select_one(query, *args, into=T)` | `T`; `NoRowsError` if no row, `TooManyRowsError` if more than one |
-| `select_one_or_none(query, *args, into=T)` | `T \| None`; `TooManyRowsError` if more than one row |
-| `select_many(query, *args, into=T)` | `list[T]` |
-| `execute(query, *args)` | `int`: the rows affected, from the command tag (0 for DDL) |
-| `execute_script(query)` | `None`: `;`-separated statements, no parameters, one implicit transaction |
+| `select_one(query, *args)` | one row; raises `NoRowsError` if there is none |
+| `select_one_or_none(query, *args)` | one row, or `None` |
+| `select_many(query, *args)` | a list of rows |
+| `execute(query, *args)` | the number of rows changed |
+| `execute_script(sql)` | nothing; runs one or more `;`-separated statements, with no parameters |
 
-* Without `into=`, rows are tuples; with it, [Structs](structs.md),
-  [pydantic models](pydantic.md), or [dicts and NamedTuples](structs.md#dicts-and-namedtuples),
-  typed accordingly.
+The `select_one` methods also raise `TooManyRowsError` if the query returns more than one row.
+
+Rows are tuples by default.
+Pass `into=` to get [Structs](structs.md), [pydantic models](pydantic.md) or
+[dicts](structs.md#dicts-and-namedtuples) instead.
 
 ## Passing values
 
-### Positional parameters
+You can pass values three ways.
+In all of them, values are sent to the server apart from the SQL, so they can't change
+the query.
 
-`$1, $2, ...` with `*args`:
+### `$1`, `$2`, ...
 
 ```python
-print(await conn.select_one("SELECT name FROM people WHERE id = $1", 42))  # ('person-42',)
+row = await conn.select_one("SELECT name FROM people WHERE id = $1", 42)
+print(row)  # ('person-42',)
 ```
 
-### Named parameters
-
-`:name` with `params=`:
+### `:name` with `params=`
 
 ```python
 import msgspec
 
 
-class PersonSelect(msgspec.Struct):
+class Filter(msgspec.Struct):
     id: int
     min_age: int
 
 
 query = "SELECT name, age FROM people WHERE id = :id AND age >= :min_age"
-print(await conn.select_one(query, params=PersonSelect(id=42, min_age=30)))
-print(await conn.select_one(query, params={"id": 42, "min_age": 30}))
-# ('person-42', 60), twice; runs: ... WHERE id = $1 AND age >= $2
+print(await conn.select_one(query, params=Filter(id=42, min_age=30)))  # ('person-42', 60)
+print(await conn.select_one(query, params={"id": 42, "min_age": 30}))  # ('person-42', 60)
 ```
 
-* `params=` is a msgspec Struct, dataclass, pydantic model or `Mapping[str, object]`.
-  Unused fields and keys are ignored.
-* A name used twice is one parameter. `:name` in quotes, comments and dollar quotes is
-  text; `::` is a cast.
-* `\:` is a literal colon, e.g. for array slices: `r"arr[lo\:hi]"` (a raw string).
-* Without `params=` the query isn't scanned, so `:name` is sent as written.
+`params=` takes a msgspec Struct, a dataclass, a pydantic model or a dict.
+Fields the query doesn't use are ignored.
+A name with no value raises `ParameterError`.
+`::` casts still work.
 
-Errors, raised before anything is sent:
+### t-strings
 
-* a placeholder with no value in `params=`: `ParameterError`;
-* `params=` with positional parameters or a t-string, or of another type: `TypeError`;
-* a `$1` placeholder outside quotes in a query with `params=`: `ValueError`.
-
-### Template strings
-
-A Python 3.14 t-string ([PEP 750](https://peps.python.org/pep-0750/)). Values become bound
-parameters, never SQL text:
+Python 3.14's t-strings look like f-strings, but each `{value}` is sent as a parameter.
 
 ```python
 person_id, min_age = 42, 30
@@ -80,8 +74,7 @@ row = await conn.select_one(
 print(row)  # ('person-42', 60)
 ```
 
-Unlike `params=`, t-strings can also take dynamic table and column names, as
-`fastpg.Identifier`:
+For a table or column name, wrap it in `fastpg.Identifier`:
 
 ```python
 table = fastpg.Identifier("public", "people")
@@ -89,7 +82,7 @@ column = fastpg.Identifier("name")
 print(await conn.select_one(t"SELECT {column} FROM {table} WHERE id = {5}"))  # ('person-5',)
 ```
 
-A t-string interpolated into another is spliced in, with its values renumbered:
+You can build a query from smaller t-strings:
 
 ```python
 min_age, max_id = 70, 100
@@ -98,51 +91,40 @@ rows = await conn.select_many(t"SELECT id, age FROM people WHERE {where} ORDER B
 print(rows)  # [(52, 70), (53, 71)]
 ```
 
-Conversions and format specs (`{x!r}`, `{x:.2f}`) and a literal `$1` in a t-string raise
-`ValueError`.
-
 ## Types
 
-Parameters are encoded for the server-declared type; a misfit raises `ParameterError`
-before sending. Results are binary, decoded in Rust. NULL is `None` both ways; an
-`enum.Enum` is sent as its `.value`.
+`NULL` is `None`, both ways.
 
-| PostgreSQL | result | parameters accepted |
+| PostgreSQL | you get | you can pass |
 |---|---|---|
 | `bool` | `bool` | `bool` |
-| `int2`, `int4`, `int8`, `oid` | `int` | `int`, range-checked |
-| `float4`, `float8` | `float` | `float`, `int` |
+| `smallint`, `int`, `bigint` | `int` | `int` |
+| `real`, `double precision` | `float` | `float`, `int` |
 | `numeric` | `Decimal` | `Decimal`, `int`, `float`, `str` |
-| `text`, `varchar`, `bpchar`, `name`, `citext`, enums | `str` | `str` |
-| `"char"` | `str`, one character or `""` | `str`, at most one character |
+| `text`, `varchar`, `char(n)`, enums | `str` | `str` |
 | `bytea` | `bytes` | `bytes`, `bytearray`, `memoryview` |
 | `uuid` | `uuid.UUID` | `uuid.UUID`, `str` |
 | `date`, `time` | `date`, `time` | `date`, `time` |
-| `timestamp` | naive `datetime` | naive `datetime` only |
-| `timestamptz` | aware `datetime`, in UTC | aware `datetime` only |
-| `json`, `jsonb` | decoded with msgspec | `dict`, `list` (encoded with msgspec), `str` (JSON text) |
-| `void` | `None` | |
+| `timestamp` | `datetime` without a time zone | the same |
+| `timestamptz` | `datetime` in UTC | a `datetime` with a time zone |
+| `json`, `jsonb` | parsed JSON | a `dict` or `list`, or a JSON `str` |
+
+A Python `enum.Enum` is sent as its `.value`.
+A value that doesn't fit its column raises `ParameterError` before anything is sent.
 
 ## Prepared statements
 
-Statements are prepared on first use and kept in a per-connection LRU cache keyed by SQL
-text. `statement_cache_size=256` on `connect` or `create_pool` sets its size; it can't be
-turned off.
+fastpg prepares each query the first time it runs on a connection and reuses it after that.
+You don't need to do anything.
+Each connection keeps the last 256; change that with `statement_cache_size=` on `connect()`
+or `create_pool()`.
 
-A cached statement outlives schema changes. When DDL changes its result columns, or
-`DEALLOCATE ALL` / `DISCARD ALL` drops it, it is prepared again and the query retried once.
-Its parameter types are fixed when it is prepared: after `ALTER COLUMN ... TYPE`, a value
-of the new type that doesn't encode for the old one also re-prepares it and retries, while
-a server error about the old type (`operator does not exist`) fails that one query and
-drops the statement, so the next query prepares it afresh.
+## Not supported yet
 
-## Gotchas
+* Arrays, `interval`, ranges and composite types can't be read yet: they raise
+  `UnsupportedTypeError`.
+  Cast them in SQL instead, e.g. `SELECT tags::text`.
+* A list is sent as JSON, not as an array, so `= ANY($1)` doesn't work.
+  Use `WHERE id IN (SELECT jsonb_array_elements_text($1)::int)` instead.
 
-* No array parameters: a `list` is sent as JSON, so `= ANY($1)` fails. Use
-  `WHERE id IN (SELECT jsonb_array_elements_text($1)::int)` instead.
-* Arrays, `interval`, `timetz`, ranges and composite types raise `UnsupportedTypeError`, and
-  `infinity` dates and timestamps raise `DecodeError`. Cast in SQL, e.g. `tags::text`.
-* Concurrent tasks' queries on one connection are pipelined and unordered relative to each
-  other, and a slow one delays those behind it: see
-  [Connection pool](pool.md#head-of-line-blocking).
-* Statements are always named, so pgbouncer in transaction-pooling mode isn't supported.
+More in [Limitations](../limitations.md).

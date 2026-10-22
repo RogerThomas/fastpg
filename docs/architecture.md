@@ -57,7 +57,7 @@ thread hand-off.
   the loop thread between awaits, so neither half needs locks.
 
 Bulk writes encode rows in Rust a chunk at a time on the loop thread, and hold their
-connection exclusively while they run (see [Writes, bulk and COPY](guide/writes.md)).
+connection exclusively while they run (see [Bulk writes](guide/writes.md)).
 
 The decisions behind this design, and their trade-offs, are recorded as
 [architecture decision records](https://github.com/RogerThomas/fastpg/blob/main/adr/README.md).

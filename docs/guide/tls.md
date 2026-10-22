@@ -1,6 +1,6 @@
 # TLS
 
-TLS is configured with libpq's DSN keys, and they behave as in libpq.
+Set TLS options in the DSN, with the same keys as libpq and `psql`.
 
 ```python
 dsn = (
@@ -15,43 +15,27 @@ async with await fastpg.connect(dsn) as tls_conn:
 | key | values |
 |---|---|
 | `sslmode` | `disable`, `prefer` (default), `require`, `verify-ca`, `verify-full` |
-| `sslrootcert` | a PEM file or bundle, or `system` (needs `verify-full`) |
-| `sslnegotiation` | `postgres` (default), or `direct` (PostgreSQL 17+, needs `require` or stronger) |
-| `sslcert`, `sslkey` | a PEM client certificate and its unencrypted key, both or neither |
-| `sslsni` | `1` (default), `0` |
-| `channel_binding` | `disable`, `prefer` (default), `require` |
+| `sslrootcert` | a CA certificate file, or `system` |
+| `sslcert`, `sslkey` | a client certificate and its key |
+| `sslnegotiation` | `postgres` (default) or `direct` |
+| `sslsni` | `1` (default) or `0` |
+| `channel_binding` | `disable`, `prefer` (default) or `require` |
 
-* `prefer` and `require` encrypt without verifying (unless an `sslrootcert` file exists);
-  `verify-ca` checks the chain, and `verify-full` also the host name, against DNS or IP
-  subject alternative names. `prefer` falls back to plaintext only when the server declines
-  TLS.
-* Without `sslrootcert`, verification uses the system's roots (`SSL_CERT_FILE` /
-  `SSL_CERT_DIR` when set), or Mozilla's compiled-in roots if the system has none. For
-  Amazon RDS, pass the RDS CA bundle as `sslrootcert`.
-* With `prefer`, SCRAM logins over TLS are channel-bound (SCRAM-SHA-256-PLUS) whenever the
-  server offers it, so they fail against a server whose certificate is signed with Ed25519
-  or Ed448; `disable` never binds.
-* `channel_binding=require` only accepts a channel-bound SCRAM login over TLS. Without TLS,
-  or when the server asks for a password or md5, or skips authentication (`trust`), the
-  connect fails with `InterfaceError` before any password is sent.
-* Unix-socket connections never use TLS.
+* `prefer` and `require` encrypt the connection, but only check the server's certificate if
+  you pass `sslrootcert`.
+* Use `verify-full` to check the certificate and the host name.
+* Without `sslrootcert`, fastpg trusts your system's certificates.
+  For Amazon RDS, pass the RDS CA bundle as `sslrootcert`.
 
-## Not supported
+Some libpq options aren't supported, such as `sslmode=allow` and password-protected keys.
+An unsupported option raises `InterfaceError` before fastpg connects.
 
-`sslmode=allow`, encrypted client keys (`sslpassword`), certificate revocation lists,
-`ssl_min_protocol_version` / `ssl_max_protocol_version`, `sslcertmode`, `sslkeylogfile`,
-`gssencmode`, `hostaddr`, TLS session resumption, and anything from `~/.postgresql/` or
-`PG*` environment variables. An unsupported setting fails the connect with `InterfaceError`
-before any connection is opened.
+## Try it locally
 
-## The test server
-
-`task test` starts it in a throwaway container. To keep one running:
+The repository has a TLS-only test server on port 55433:
 
 ```sh
-task db-up db-tls-up    # a TLS-only PostgreSQL on localhost:55433, plus the plain one
-task test-tls           # tests/test_tls.py
+task db-tls-up
 ```
 
-It creates a throwaway CA and certificates in `docker/tls/certs/` on first start (in a
-temporary directory under `task test`).
+It creates its certificates in `docker/tls/certs/` the first time it starts.

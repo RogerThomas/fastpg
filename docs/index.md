@@ -3,17 +3,20 @@
 ![fastpg](assets/wordmark-dark.svg#only-dark){ width="240" }
 </h1>
 
-fastpg is an async PostgreSQL client for Python 3.14, written in Rust on
-[xitca-postgres](https://github.com/HFQR/xitca-web/tree/main/postgres) and
-[PyO3](https://pyo3.rs). It decodes rows from PostgreSQL's binary format straight into
-[msgspec](https://msgspec.dev/) Structs, with no intermediate tuples or dicts, and runs the
-whole protocol on the asyncio event loop's thread.
+fastpg is a fast async PostgreSQL client for Python, written in Rust.
+It turns rows straight into [msgspec](https://msgspec.dev/) Structs, so you get typed objects
+back with no extra code.
+
+```sh
+uv add fastpg
+```
 
 ```python
 import asyncio
 
-import fastpg
 import msgspec
+
+import fastpg
 
 
 class Person(msgspec.Struct):
@@ -32,46 +35,30 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## Performance
+New here? Start with [Getting started](guide/getting-started.md).
 
-Throughput against the fastest of asyncpg, psycopg 3 and psqlpy, each with its own pool of 16
-connections, every driver returning the same msgspec Structs, on a shared GitHub runner
-([details and caveats](performance.md)):
+## What you get
 
-| workload | fastpg | best other | vs best other |
+* **Typed rows.** `into=Person` gives you Structs. See [Structs](guide/structs.md).
+* **A pool you query directly.** No `acquire()` for a single query. See
+  [Connection pool](guide/pool.md).
+* **Safe parameters.** `$1`, `:name` or t-strings. See [Queries](guide/queries.md).
+* **Fast bulk writes.** `copy_in`, `insert_many`, `execute_many`. See
+  [Bulk writes](guide/writes.md).
+* **Transactions, TLS and clear errors.** See [Transactions](guide/transactions.md),
+  [TLS](guide/tls.md) and [Errors](guide/errors.md).
+* **pydantic too.** If your app uses pydantic, see [pydantic models](guide/pydantic.md).
+
+## Speed
+
+| workload | fastpg | fastest other driver | speed-up |
 |---|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s | 2.32x |
-| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s | 2.09x |
-| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s | 2.15x |
-| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s | 2.23x |
-| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s | 1.41x |
+| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s (asyncpg) | 2.32x |
+| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s (asyncpg) | 2.09x |
+| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s (asyncpg) | 2.15x |
+| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s (asyncpg) | 2.23x |
+| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s (psycopg) | 1.41x |
 
-## Install
+All workloads and how they're measured: [Benchmarks](performance.md).
 
-```sh
-uv add fastpg                  # or: pip install fastpg
-```
-
-msgspec comes with it: Structs are the recommended row type, and the fastest. pydantic v2
-models work too (`uv add 'fastpg[pydantic]'`, see [pydantic](guide/pydantic.md)).
-
-Python 3.14.3 or later, on macOS or Linux, from wheels (see
-[Getting started](guide/getting-started.md#install)).
-
-## Features
-
-* **Typed rows**: `into=Person` builds msgspec Structs (also NamedTuples, dicts, or pydantic
-  v2 models) from the binary values; a type that needs validation is validated, never
-  skipped. See [Structs](guide/structs.md).
-* **Prepared, binary, on the loop**: statements are prepared on first use and cached per
-  connection, and a query costs no thread hand-off.
-* **A routing pool**: single statements need no `acquire()`; they go to idle connections, or
-  pipeline onto the one with the least queued work. See [Connection pool](guide/pool.md).
-* **Bulk writes**: binary `COPY`, `insert_many` and `execute_many`, all-or-nothing. See
-  [Writes](guide/writes.md).
-* **Safe queries**: `$1` and `:name` parameters, and t-strings whose values are always bound.
-  See [Queries](guide/queries.md).
-* **Transactions, TLS, errors**: savepoints and isolation levels, libpq's `sslmode` keys, and
-  exceptions mapped from SQLSTATE.
-
-fastpg is alpha software; see [Limitations](limitations.md).
+fastpg is alpha software. See what it can't do yet in [Limitations](limitations.md).
