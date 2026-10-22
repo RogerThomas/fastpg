@@ -34,6 +34,7 @@ from fastpg._native import (
     dsn_targets,
 )
 from fastpg._native import Connection as NativeConnection
+from fastpg._nulls import null_value_error
 from fastpg._spec import Plan, Planner
 from fastpg._template import Template, TemplateCompiler
 from fastpg.errors import (
@@ -119,15 +120,20 @@ class _Queries:
         future: asyncio.Future[bytes | None],
         decode: Callable[[bytes], object],
         error: type[Exception],
+        into: type[Any],
     ) -> object:
-        """The result of a msgpack/json fetch, decoded (and validated) by `decode`."""
+        """The result of a msgpack/json fetch, decoded (and validated) by `decode`.
+
+        A NULL in a field that isn't optional raises `NullValueError`, as the direct route
+        does; any other failure, `DecodeError`.
+        """
         data = await future
         if data is None:
             return None
         try:
             return decode(data)
         except error as e:
-            raise DecodeError(str(e)) from e
+            raise (null_value_error(e, into) or DecodeError(str(e))) from e
 
     def _fetch_encoded(
         self,
@@ -137,6 +143,7 @@ class _Queries:
         shape: int,
         plan: Plan[Any],
         strategy: Strategy,
+        into: type[Any],
     ) -> Awaitable[Any]:
         """The msgpack and json routes: Rust encodes the rows, msgspec/pydantic decodes them."""
         if strategy == "msgpack":
@@ -169,7 +176,8 @@ class _Queries:
                 plan.field_columns,
                 non_finite_floats=plan.json_non_finite_floats,
             )
-        return self._decoded(future, many if shape == _ALL else one, plan.validation_error)
+        decode = many if shape == _ALL else one
+        return self._decoded(future, decode, plan.validation_error, into)
 
     def _fetch(
         self,
@@ -201,7 +209,7 @@ class _Queries:
                 raise UnsupportedTypeError(msg)
             self._native.fetch(future, query, params, shape, plan.spec)
             return future
-        return self._fetch_encoded(future, query, params, shape, plan, strategy)
+        return self._fetch_encoded(future, query, params, shape, plan, strategy, into)
 
     @overload
     async def select_one(
