@@ -206,9 +206,11 @@ jobs:
           enable-cache: false # no caches in a workflow that publishes
       - name: Test (glibc)
         if: matrix.platform.libc == 'glibc'
-        # On the Pythons uv downloads (python-build-standalone's).
+        # On the Pythons uv downloads (python-build-standalone's). The suite in parallel, on
+        # throwaway servers of its own (Docker is here); the compose ones serve the smoke test.
         env:
           UV_PYTHON_PREFERENCE: only-managed
+          FASTPG_TEST_OWN_SERVERS: 1
         run: sh .github/scripts/test-wheel.sh dist 3.14 3.14t
       - name: Test (musl, in Alpine)
         if: matrix.platform.libc == 'musl'
@@ -404,6 +406,7 @@ jobs:
       - name: Test the wheel built from the sdist
         env:
           UV_PYTHON_PREFERENCE: only-managed
+          FASTPG_TEST_OWN_SERVERS: 1 # in parallel, as the glibc wheels' tests
         run: sh .github/scripts/test-wheel.sh wheel 3.14
 
   publish:
