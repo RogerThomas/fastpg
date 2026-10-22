@@ -129,12 +129,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Each wheel platform's architecture natively, and the free-threaded build (which fastpg
-        # runs with the GIL back on: ADR 0011, tests/test_free_threading.py).
+        # Every supported Python on Linux x86_64: 3.13 (without t-strings), 3.14, 3.15 and the
+        # free-threaded builds (which fastpg runs with the GIL back on: ADR 0011,
+        # tests/test_free_threading.py). What differs between them is how the Python code runs
+        # and how the extension builds against each CPython, not the architecture, so aarch64
+        # (and macOS, test-macos) run one Python; release.yml tests every wheel natively.
         include:
+          - { name: "Linux x86_64, Python 3.13", runner: ubuntu-24.04, python: "3.13" }
           - { name: "Linux x86_64, Python 3.14", runner: ubuntu-24.04, python: "3.14" }
-          - { name: "Linux aarch64, Python 3.14", runner: ubuntu-24.04-arm, python: "3.14" }
+          - { name: "Linux x86_64, Python 3.15", runner: ubuntu-24.04, python: "3.15" }
           - { name: "Linux x86_64, Python 3.14t", runner: ubuntu-24.04, python: "3.14t" }
+          - { name: "Linux x86_64, Python 3.15t", runner: ubuntu-24.04, python: "3.15t" }
+          - { name: "Linux aarch64, Python 3.14", runner: ubuntu-24.04-arm, python: "3.14" }
     env:
       UV_PYTHON: ${{ matrix.python }} # instead of .python-version's; uv downloads it if need be
       UV_PYTHON_PREFERENCE: only-managed # the latest patch release, not the runner's own Python
@@ -160,10 +166,10 @@ jobs:
           key: ${{ matrix.python }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # `uv python find` (the Taskfile's PYO3_PYTHON) reads .python-version and ignores
-      # UV_PYTHON, so without this it looks for .python-version's exact release (or, on the
-      # 3.14t job, finds the GIL build): pin the matrix's Python for every uv command.
-      # --no-project: a bare "3.14" would include 3.14.0, below requires-python, so uv refuses
-      # to write it; the latest 3.14 it resolves to is within it.
+      # UV_PYTHON, so without this it looks for .python-version's exact release (or, on a
+      # free-threaded job, finds the GIL build): pin the matrix's Python for every uv command.
+      # --no-project: written as given, for this job only; uv resolves it to the latest
+      # release of that version.
       - name: Pin Python (matrix)
         run: uv python pin --no-project "$MATRIX_PYTHON"
         env:
