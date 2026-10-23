@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 
 use bytes::{BufMut, BytesMut};
-use pyo3::exceptions::PyOverflowError;
+use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{
@@ -90,6 +90,8 @@ pub(crate) struct PyTypes {
     pub(crate) decimal_cls: Py<PyAny>,
     enum_cls: Py<PyAny>,
     json_encode: Py<PyAny>,
+    /// `msgspec.to_builtins`: a value as the dicts, lists and scalars its JSON is made of.
+    to_builtins: Py<PyAny>,
     /// `datetime.timezone.utc`: aware datetimes in UTC need no `utcoffset()` call.
     utc: Py<PyAny>,
 }
@@ -111,6 +113,7 @@ pub(crate) fn types(py: Python<'_>) -> PyResult<&PyTypes> {
                 .call0()?
                 .getattr("encode")?
                 .unbind(),
+            to_builtins: py.import("msgspec")?.getattr("to_builtins")?.unbind(),
             utc: PyTzInfo::utc(py)?.to_owned().into_any().unbind(),
         })
     })
@@ -397,10 +400,66 @@ fn elements(seq: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Vec<Param>, Con
 }
 
 /// `obj` serialised as JSON by the shared `msgspec.json.Encoder`.
+///
+/// msgspec writes NaN and the infinities as `null`, which JSON has instead; they are refused
+/// rather than stored as something else. Only JSON with a `null` in it is searched for them.
 pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let py = obj.py();
-    let encoded = types(py)?.json_encode.bind(py).call1((obj,))?;
-    Ok(encoded.cast::<PyBytes>()?.as_bytes().to_vec())
+    let types = types(py)?;
+    let encoded = types.json_encode.bind(py).call1((obj,))?;
+    let json = encoded.cast::<PyBytes>()?.as_bytes();
+    if json.windows(4).any(|w| w == b"null")
+        && let Some((value, path)) = non_finite(types, obj)?
+    {
+        return Err(PyValueError::new_err(format!(
+            "{value} at ${path} has no JSON form (it would be stored as null)"
+        )));
+    }
+    Ok(json.to_vec())
+}
+
+/// The first NaN or infinity in `obj`, and its path below `obj` (`.key[0]`). Dicts, lists and
+/// tuples are walked as they are; other objects (Structs, dataclasses, ...) as the builtins
+/// msgspec encodes them as.
+fn non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<Option<(String, String)>> {
+    if let Some(float) = as_type::<PyFloat>(obj) {
+        if float.value().is_finite() {
+            return Ok(None);
+        }
+        return Ok(Some((float.repr()?.to_string(), String::new())));
+    }
+    if let Some(dict) = as_type::<PyDict>(obj) {
+        for (key, value) in dict.iter() {
+            if let Some((found, path)) = non_finite(types, &value)? {
+                let key = match as_type::<PyString>(&key) {
+                    Some(key) => format!(".{}", key.to_str()?),
+                    None => format!("[{key}]"),
+                };
+                return Ok(Some((found, key + &path)));
+            }
+        }
+        return Ok(None);
+    }
+    let items = match (as_type::<PyList>(obj), as_type::<PyTuple>(obj)) {
+        (Some(list), _) => list.iter().collect::<Vec<_>>(),
+        (_, Some(tuple)) => tuple.iter().collect(),
+        _ if obj.is_none() || obj.is_instance_of::<PyString>() || obj.is_instance_of::<PyInt>() => {
+            return Ok(None);
+        }
+        _ => {
+            let builtins = types.to_builtins.bind(obj.py()).call1((obj,))?;
+            if builtins.is_instance_of::<PyDict>() || builtins.is_instance_of::<PyList>() {
+                return non_finite(types, &builtins);
+            }
+            return Ok(None);
+        }
+    };
+    for (i, item) in items.iter().enumerate() {
+        if let Some((found, path)) = non_finite(types, item)? {
+            return Ok(Some((found, format!("[{i}]{path}"))));
+        }
+    }
+    Ok(None)
 }
 
 /// The protocol counts a statement's parameters in 16 bits. Past that, the server would

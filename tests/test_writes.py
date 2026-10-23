@@ -250,6 +250,21 @@ async def test_value_errors_name_row_and_column(
         await write(conn, tier, table, [("i", 1)], ["i", "v"])
 
 
+async def test_non_finite_float_in_a_json_column_is_refused(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+) -> None:
+    table = await make_table("i int, v jsonb")
+    with pytest.raises(
+        fastpg.ParameterError,
+        match=r"row 1, .*nan at \$\.x has no JSON form",
+    ) as exc:
+        await write(conn, tier, table, [(0, {"x": 1.0}), (1, {"x": float("nan")})], ["i", "v"])
+    assert exc.value.row_index == 1
+    assert await conn.select_one(f"SELECT count(*) FROM {table}") == (0,)
+
+
 async def test_float_beyond_float4_range_is_out_of_range(
     conn: fastpg.Connection,
     make_table: TableMaker,

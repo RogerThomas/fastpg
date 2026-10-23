@@ -4,6 +4,7 @@ import datetime as dt
 import math
 from decimal import Decimal
 
+import msgspec
 import pytest
 
 import fastpg
@@ -280,6 +281,30 @@ async def test_nul_in_a_text_parameter_is_refused_by_the_server(conn: fastpg.Con
     assert await conn.select_one("SELECT $1::bytea", b"a\x00b") == (b"a\x00b",)
 
 
-async def test_non_finite_float_in_a_json_parameter_becomes_null(conn: fastpg.Connection) -> None:
-    # msgspec's JSON encoding of NaN and infinities (JSON has no form for them).
-    assert await conn.select_one("SELECT $1::jsonb", [math.nan, math.inf]) == ([None, None],)
+class Reading(msgspec.Struct):
+    value: float
+
+
+@pytest.mark.parametrize(
+    ("value", "found"),
+    [
+        ([1.5, math.nan], r"nan at \$\[1\]"),
+        ({"a": {"b": -math.inf}}, r"-inf at \$\.a\.b"),
+        ({"readings": [Reading(math.inf)]}, r"inf at \$\.readings\[0\]\.value"),
+    ],
+)
+async def test_non_finite_float_in_a_json_parameter_is_refused(
+    conn: fastpg.Connection,
+    value: object,
+    found: str,
+) -> None:
+    # msgspec would encode it as null: JSON has no form for NaN or the infinities.
+    expected = rf"^parameter \$1: ValueError: {found} has no JSON form"
+    with pytest.raises(fastpg.ParameterError, match=expected):
+        await conn.select_one("SELECT $1::jsonb", value)
+    assert await conn.select_one("SELECT 1") == (1,)
+
+
+async def test_null_in_a_json_parameter_is_kept(conn: fastpg.Connection) -> None:
+    value = {"none": None, "text": "null", "list": [None, 1.5]}
+    assert await conn.select_one("SELECT $1::jsonb", value) == (value,)
