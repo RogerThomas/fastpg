@@ -223,19 +223,23 @@ jobs:
       - name: Test (musl, in Alpine)
         if: matrix.platform.libc == 'musl'
         # 3.14 on the Alpine image's Python, the others on ones uv downloads into the same image
-        # (there's no free-threaded image). On the host's network, to reach the compose servers;
-        # without Docker, so without the two test files that pause and kill a server of their
-        # own. The wheels are mounted read-only.
+        # (there's no free-threaded image). The suite in parallel on throwaway servers of its own,
+        # as for glibc, through the host's Docker socket; the compose ones serve the smoke test.
+        # On the host's network, so the servers' published ports are on 127.0.0.1. The repo and
+        # /tmp are mounted at their host paths, since the host's daemon resolves the servers'
+        # bind mounts (docker/, and the TLS server's certificates in pytest's tmp_path). The
+        # wheels are mounted read-only.
         run: |
           for python in 3.13 3.14 3.14t 3.15 3.15t; do
             docker run --rm --network host \
-              --volume "$PWD:/io" --volume "$PWD/dist:/io/dist:ro" --workdir /io \
+              --volume /var/run/docker.sock:/var/run/docker.sock --volume /tmp:/tmp \
+              --volume "$PWD:$PWD" --volume "$PWD/dist:$PWD/dist:ro" --workdir "$PWD" \
               --env UV_VERSION --env PYTHON="$python" \
               --env UV_PYTHON_PREFERENCE="$([ "$python" = 3.14 ] && echo system || echo only-managed)" \
-              --env FASTPG_DSN --env FASTPG_TLS_DSN --env FASTPG_TLS_CA \
-              --env PYTEST_ADDOPTS="--ignore tests/test_network_server.py --ignore tests/test_network_stall.py" \
+              --env FASTPG_DSN --env FASTPG_TEST_OWN_SERVERS=1 \
+              --env TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
               "$ALPINE_PYTHON_314" sh -euxc '
-                apk add --no-cache build-base
+                apk add --no-cache build-base docker-cli
                 pip install --root-user-action=ignore --disable-pip-version-check "uv==$UV_VERSION"
                 sh .github/scripts/test-wheel.sh dist "$PYTHON"
               '
