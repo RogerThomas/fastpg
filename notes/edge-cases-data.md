@@ -240,7 +240,10 @@ macOS, release build, against the throwaway container:
 * Decimal `NaN`, `-NaN`, `sNaN` → numeric NaN, `±Infinity` → numeric ±Infinity; `NaN123`
   (payload) is refused; a scale beyond 16383 is the server's `DataError`.
 * NUL: refused by the server in text (22021) and jsonb; fine in `json` and `bytea`.
-* NaN/±Inf inside a dict/list parameter become JSON `null` (msgspec's encoding), silently.
+* **Fixed** (`160c840`): NaN/±Inf inside a dict/list parameter (or a json/jsonb value in a
+  bulk write) became JSON `null` (msgspec's encoding), silently. They are now a
+  `ParameterError` naming the value and its path (`nan at $.a[0] has no JSON form`). Only
+  JSON containing `null` is searched, walking the value without copying it.
 * **Fixed** (`caf4919`): ints beyond 64 bits were refused even for numeric (documented as
   taking `int`) and float parameters; they now go as their decimal digits, and integer
   types say "int out of range" (also in bulk writes).
@@ -281,8 +284,7 @@ macOS, release build, against the throwaway container:
 * **O5. `Any` fields differ by route.** Direct gives the column's Python type (`Decimal`,
   `datetime`, `UUID`); msgpack/json give their text (`"NaN"`, ISO strings), because that is
   what those encodings carry. By design, but undocumented.
-* **O6. NaN in a JSON parameter becomes `null`.** msgspec's choice; fastpg could refuse it
-  (`ParameterError`), as it refuses other values that don't survive.
+* **O6. NaN in a JSON parameter becomes `null`.** Fixed (`160c840`), see section 8.
 * **O7. 42883/42804 after a column type change fail once.** The re-prepare happens on the
   next call. A transparent retry needs to know the error came from Bind (re-planning), not
   from executing the statement, which xitca doesn't expose.
