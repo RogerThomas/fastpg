@@ -225,7 +225,9 @@ jobs:
         # 3.14 on the Alpine image's Python, the others on ones uv downloads into the same image
         # (there's no free-threaded image). The suite in parallel on throwaway servers of its own,
         # as for glibc, through the host's Docker socket; the compose ones serve the smoke test.
-        # On the host's network, so the servers' published ports are on 127.0.0.1. The repo and
+        # On the host's network, so the servers' published ports are on localhost (the name the
+        # TLS certificate is for); testcontainers is told so, as inside a container it would
+        # otherwise connect through the Docker gateway (172.17.0.1). The repo and
         # /tmp are mounted at their host paths, since the host's daemon resolves the servers'
         # bind mounts (docker/, and the TLS server's certificates in pytest's tmp_path). The
         # wheels are mounted read-only.
@@ -237,7 +239,7 @@ jobs:
               --env UV_VERSION --env PYTHON="$python" \
               --env UV_PYTHON_PREFERENCE="$([ "$python" = 3.14 ] && echo system || echo only-managed)" \
               --env FASTPG_DSN --env FASTPG_TEST_OWN_SERVERS=1 \
-              --env TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 \
+              --env TESTCONTAINERS_CONNECTION_MODE=docker_host --env TESTCONTAINERS_HOST_OVERRIDE=localhost \
               "$ALPINE_PYTHON_314" sh -euxc '
                 apk add --no-cache build-base docker-cli
                 pip install --root-user-action=ignore --disable-pip-version-check "uv==$UV_VERSION"
