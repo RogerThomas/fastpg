@@ -207,7 +207,7 @@ jobs:
         run: sh .github/scripts/sha256.sh check dist/*.sha256
       - name: Start PostgreSQL (docker-compose.yml, and its TLS-only server)
         run: docker compose --profile tls up --detach --wait postgres postgres-tls
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         if: matrix.platform.libc == 'glibc'
         with:
           version: ${{ env.UV_VERSION }}
@@ -276,23 +276,23 @@ jobs:
         with:
           persist-credentials: false
       # A wheel for each of these Pythons, which maturin is given by path.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python313
         with:
           python-version: "3.13"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python314
         with:
           python-version: "3.14"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python314t
         with:
           python-version: "3.14t"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python315
         with:
           python-version: "3.15"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python315t
         with:
           python-version: "3.15t"
@@ -355,7 +355,7 @@ jobs:
           brew install postgresql@18
           PATH="$(brew --prefix postgresql@18)/bin:$PATH" \
             sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres" 55432
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -381,7 +381,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -422,7 +422,7 @@ jobs:
         run: sh .github/scripts/sha256.sh check dist/*.sha256
       - name: Start PostgreSQL (docker-compose.yml, and its TLS-only server)
         run: docker compose --profile tls up --detach --wait postgres postgres-tls
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
@@ -484,7 +484,7 @@ jobs:
           test -f "dist/fastpg-${python_version}.tar.gz" \
             || { echo "::error::Release ${VERSION} doesn't match the version built (from native/Cargo.toml)"; exit 1; }
           echo "python_version=$python_version" >> "$GITHUB_OUTPUT"
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   link-pypi:
     name: Link the release to PyPI
