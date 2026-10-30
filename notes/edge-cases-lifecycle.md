@@ -63,7 +63,7 @@ keeps the traceback's frames alive.
 | 3 | other tasks' queries through the connection during a transaction | run inside it, as `Connection.transaction`'s docstring says | no (documented) | | `tx::test_other_tasks_queries_on_the_connection_run_inside_its_transaction` |
 | 4 | `asyncio.run()` ends with connections and a pool open | `ResourceWarning`, but 4 descriptors and the native state leaked per connection for good | **yes** | `8ac641d` | `loop::test_connections_left_open_when_the_loop_closes_release_everything` |
 | 4 | same, with a connection's query in flight | released (after the fix above) | no | | `loop::test_a_query_in_flight_when_the_loop_closes` |
-| 4 | same, with a pool's shared query in flight | connection and descriptors leak | **yes, open** | | `loop::test_a_shared_query_in_flight_when_the_loop_closes` (xfail, strict) |
+| 4 | same, with a pool's shared queries in flight | connection and descriptors leak | **yes, open** | | `loop::test_shared_queries_in_flight_when_the_loop_closes` (xfail, strict) |
 | 4 | the loop is run from another thread than the one it connected on | every query hung and the loop spun at 100% CPU | **yes** | `f139bf8` | `loop::test_a_loop_run_on_another_thread_keeps_serving_its_connection` |
 | 4 | awaited from another loop (same thread, or another thread) | asyncio's `RuntimeError` "attached to a different loop"; the statement still runs; connection fine | partly (open, minor) | | `loop::test_a_connection_awaited_from_*` |
 | 4 | `fork()`: the child queries, closes or drops an inherited connection | the query went out on the shared socket and killed (or desynchronised) the parent's connection; dropping it sent Terminate and ended the parent's session | **yes** | `e6a2915` | `loop::test_a_forked_child_*` |
