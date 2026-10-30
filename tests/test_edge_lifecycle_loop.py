@@ -9,7 +9,6 @@ import gc
 import os
 import resource
 import sys
-import sysconfig
 import threading
 import warnings
 from collections.abc import Callable, Coroutine
@@ -72,10 +71,17 @@ async def _leave_a_query_in_flight(dsn: str, holder: list[object]) -> None:
     await asyncio.sleep(0.01)
 
 
-async def _leave_a_shared_query_in_flight(dsn: str, holder: list[object]) -> None:
-    """The same with a pool's shared query (cancelling it spawns the pool's ghost flush)."""
-    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1)
-    holder.append(asyncio.create_task(pool.select_one("SELECT pg_sleep(0.2)")))
+async def _leave_shared_queries_in_flight(dsn: str, holder: list[object]) -> None:
+    """The same with a pool's shared queries (cancelling them spawns the pool's ghost flush).
+
+    Two on one connection: neither is alone on it, so neither is cancelled on the server, and
+    the flush's no-op waits behind both pg_sleeps. It's still pending when the loop closes,
+    however long asyncio.run takes to shut down. With one query, the server cancels it and
+    answers the no-op within milliseconds: a slow shutdown sees the flush finish.
+    """
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1, max_inflight_per_conn=2)
+    for _ in range(2):
+        holder.append(asyncio.create_task(pool.select_one("SELECT pg_sleep(5)")))
     holder.append(pool)
     await asyncio.sleep(0.01)
 
@@ -244,19 +250,18 @@ def test_a_query_in_flight_when_the_loop_closes(dsn: str) -> None:
 
 
 @pytest.mark.xfail(
-    # Free-threaded builds' collector sometimes reclaims the cycle anyway: not strict there.
-    strict=not sysconfig.get_config_var("Py_GIL_DISABLED"),
+    strict=True,
     reason="open: a task pending when the loop closes, awaiting a native future, forms a "
     "reference cycle through the native connection that the GC can't see (notes/"
     "edge-cases-lifecycle.md, 'Uncollectable cycles through a native connection')",
 )
-def test_a_shared_query_in_flight_when_the_loop_closes(dsn: str) -> None:
-    # asyncio.run() cancels the query's task; the pool then spawns its ghost flush (a task
+def test_shared_queries_in_flight_when_the_loop_closes(dsn: str) -> None:
+    # asyncio.run() cancels the queries' tasks; the pool then spawns its ghost flush (a task
     # awaiting a no-op on the connection), which asyncio.run never sees or cancels.
     name = "edge_loop_closed_shared"
     fds = _open_fds()
     holder: list[object] = []
-    asyncio.run(_leave_a_shared_query_in_flight(_tagged(dsn, name), holder))
+    asyncio.run(_leave_shared_queries_in_flight(_tagged(dsn, name), holder))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ResourceWarning)
         _drop_all(holder)
