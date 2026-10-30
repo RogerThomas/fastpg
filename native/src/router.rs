@@ -14,14 +14,31 @@
 //! In Python this bookkeeping was a few dozen bytecodes per statement (~400 ns) and the
 //! scoring loop ~120 ns per connection; here it is two or three calls of ~30 ns each, plus
 //! a loop of a few ns per connection (`notes/perf-pool.md`). Times are nanoseconds since
-//! the router was created.
+//! the router was created, on a clock that keeps counting while the machine sleeps.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
 
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
+
+/// Nanoseconds on a monotonic clock that counts time asleep. `Instant`'s doesn't (it is
+/// `CLOCK_UPTIME_RAW` on macOS, `CLOCK_MONOTONIC` on Linux), so a laptop asleep all night
+/// would wake with its connections only seconds idle, though the server or the network has
+/// long since dropped them: `max_idle` wouldn't close them.
+fn clock_ns() -> i64 {
+    #[cfg(target_vendor = "apple")]
+    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
+    #[cfg(not(target_vendor = "apple"))]
+    const CLOCK: libc::clockid_t = libc::CLOCK_BOOTTIME;
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec to write to, and `CLOCK` exists on this platform.
+    unsafe { libc::clock_gettime(CLOCK, &raw mut ts) };
+    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
+}
 
 /// `old + (service - old) // 4`, with Python's floor division.
 fn ewma(old: i64, service: i64) -> i64 {
@@ -154,7 +171,7 @@ fn same(text: &Py<PyString>, sql: &Bound<'_, PyString>) -> PyResult<bool> {
 /// (PyO3's borrow flag turns any concurrent use into an error).
 #[pyclass(module = "fastpg._native")]
 pub struct Router {
-    epoch: Instant,
+    epoch: i64,
     slots: Slots,
     costs: Costs,
     n_costs: usize,
@@ -164,7 +181,7 @@ pub struct Router {
 
 impl Router {
     fn now(&self) -> i64 {
-        i64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(i64::MAX)
+        clock_ns() - self.epoch
     }
 
     fn cost(&self, sql: &Bound<'_, PyString>) -> PyResult<i64> {
@@ -206,7 +223,7 @@ impl Router {
     #[new]
     fn new(default_cost: i64, max_costs: usize) -> Self {
         Self {
-            epoch: Instant::now(),
+            epoch: clock_ns(),
             slots: Slots::default(),
             costs: HashMap::new(),
             n_costs: 0,

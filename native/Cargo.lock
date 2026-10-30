@@ -148,6 +148,7 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "itoa",
+ "libc",
  "percent-encoding",
  "postgres-protocol",
  "pyo3",

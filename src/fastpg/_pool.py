@@ -428,6 +428,17 @@ class Pool:
             time.perf_counter_ns() - entry.born_ns > self._max_lifetime_ns
         )
 
+    def _stale(self, entry: _Entry) -> bool:
+        """Whether idle ``entry`` should be dropped, not used: it's closed, or idle past
+        max_idle with more than min_size open. Checked when it's picked too, not only by
+        _tidy: after the machine sleeps, a statement can come before _tidy runs again.
+        """
+        return entry.conn.closed or (
+            bool(self._max_idle_ns)
+            and len(self._entries) > self.min_size
+            and self._router.idle_ns(entry.slot) > self._max_idle_ns
+        )
+
     def _retire(self, entry: _Entry) -> None:
         """Close an idle ``entry`` that outlived max_lifetime, replacing it first if closing
         it would leave fewer than min_size connections open (make before break).
@@ -461,11 +472,7 @@ class Pool:
                 if entry.state == _Entry.SHARED and self._expired(entry):
                     self._set_state(entry, _Entry.RETIRING)  # closed by _finish once idle
                 continue
-            if entry.conn.closed or (
-                self._max_idle_ns
-                and len(self._entries) > self.min_size
-                and self._router.idle_ns(entry.slot) > self._max_idle_ns
-            ):
+            if self._stale(entry):
                 self._discard(entry)
             elif self._expired(entry):
                 self._retire(entry)
@@ -491,9 +498,9 @@ class Pool:
         idle = self._idle
         while idle:
             entry = idle.popitem()[0]
-            if not entry.conn.closed:
+            if not self._stale(entry):
                 return entry
-            self._discard(entry)  # died since its last statement
+            self._discard(entry)  # died, or idle too long, since its last statement
         # Nothing idle (so every shared connection has statements in flight): score them.
         # Score = max(expected work queued, age of the oldest statement): see Router.best.
         slot = self._router.best(self.max_inflight_per_conn)
@@ -517,7 +524,7 @@ class Pool:
         for stack in (self._drained, self._idle):
             while stack:
                 entry = next(reversed(stack))
-                if not entry.conn.closed:
+                if not self._stale(entry):
                     return entry
                 self._discard(entry)
         return None
@@ -728,9 +735,10 @@ class Pool:
         idle = self._idle
         if idle and not self._waiting and self._closing is None:
             # Rule 1, the common case, without the general routing: the most recently idle
-            # connection, taken off the stack. A dead one is dropped, and routing starts over.
+            # connection, taken off the stack. A dead or stale one is dropped, and routing
+            # starts over.
             entry = idle.popitem()[0]
-            if entry.conn.closed:
+            if self._stale(entry):
                 self._discard(entry)
                 entry = self._route()
         else:

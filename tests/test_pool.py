@@ -1023,6 +1023,19 @@ async def test_max_idle_shrinks_while_light_load_continues(dsn: str) -> None:
                 await asyncio.sleep(0.02)
 
 
+async def test_max_idle_is_checked_when_a_connection_is_picked(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=0, max_size=1, max_idle=0.2) as pool:
+        (pid,) = await pool.select_one("SELECT pg_backend_pid()")
+        # Block the loop, as the machine sleeping does: the pool's upkeep can't close the
+        # connection before the next statement picks it.
+        time.sleep(0.3)
+        (new_pid,) = await pool.select_one("SELECT pg_backend_pid()")
+        assert new_pid != pid
+        time.sleep(0.3)
+        async with pool.acquire() as conn:
+            assert await conn.select_one("SELECT pg_backend_pid()") != (new_pid,)
+
+
 async def test_stats(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=2, max_size=4) as pool:
         assert pool.stats() == fastpg.PoolStats(

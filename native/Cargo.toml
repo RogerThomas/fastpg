@@ -19,6 +19,8 @@ bytes = "1"
 fallible-iterator = "0.2"
 pyo3 = "0.30"
 itoa = "1"
+# `clock_gettime` on a clock that counts sleep (`router.rs`).
+libc = "0.2"
 percent-encoding = "2"
 postgres-protocol = "0.6"
 rmp = "0.8"
