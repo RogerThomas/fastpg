@@ -102,6 +102,9 @@ class _Link:
 
     client: asyncio.StreamWriter
     server: asyncio.StreamWriter
+    answered: bool = True
+    """Whether the server's last bytes reached the client since it last sent: its next
+    bytes start a new round trip."""
 
     def drop(self, *, rst: bool) -> None:
         _drop(self.client, rst=rst)
@@ -123,6 +126,9 @@ class FaultProxy:
     """Reset new connections at once, as a server that refuses them would."""
     accepted: int = 0
     """Connections accepted so far."""
+    round_trips: int = 0
+    """Times a client sent after the server's reply had reached it (or first sent), over
+    every connection: statements pipelined before a reply arrives share one."""
     port: int = 0
     """The port it listens on, once started."""
     _links: list[_Link] = field(default_factory=list[_Link])
@@ -136,10 +142,14 @@ class FaultProxy:
         source: asyncio.StreamReader,
         queue: asyncio.Queue[tuple[float, bytes]],
         faults: Faults,
+        link: _Link,
     ) -> None:
         loop = asyncio.get_running_loop()
         with contextlib.suppress(OSError):
             while data := await source.read(65536):
+                if faults is self.to_server and link.answered:
+                    link.answered = False
+                    self.round_trips += 1
                 queue.put_nowait((loop.time() + faults.delay, data))
         faults.ended += 1
         queue.put_nowait((loop.time() + faults.delay, b""))  # EOF
@@ -174,6 +184,7 @@ class FaultProxy:
         sink: asyncio.StreamWriter,
         queue: asyncio.Queue[tuple[float, bytes]],
         faults: Faults,
+        link: _Link,
     ) -> None:
         loop = asyncio.get_running_loop()
         with contextlib.suppress(OSError):
@@ -184,6 +195,8 @@ class FaultProxy:
                 await faults.flowing()  # stalled meanwhile
                 if not data or not await self._send(sink, data, faults):
                     break
+                if faults is self.to_client:
+                    link.answered = True
         sink.close()
 
     async def _flow(
@@ -191,9 +204,13 @@ class FaultProxy:
         source: asyncio.StreamReader,
         sink: asyncio.StreamWriter,
         faults: Faults,
+        link: _Link,
     ) -> None:
         queue: asyncio.Queue[tuple[float, bytes]] = asyncio.Queue()
-        await asyncio.gather(self._read(source, queue, faults), self._write(sink, queue, faults))
+        await asyncio.gather(
+            self._read(source, queue, faults, link),
+            self._write(sink, queue, faults, link),
+        )
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.accepted += 1
@@ -209,10 +226,11 @@ class FaultProxy:
             sock = side.get_extra_info("socket")
             if sock.family != socket.AF_UNIX:
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self._links.append(_Link(writer, upstream_writer))
+        link = _Link(writer, upstream_writer)
+        self._links.append(link)
         await asyncio.gather(
-            self._flow(reader, upstream_writer, self.to_server),
-            self._flow(upstream_reader, writer, self.to_client),
+            self._flow(reader, upstream_writer, self.to_server, link),
+            self._flow(upstream_reader, writer, self.to_client, link),
         )
 
     def _track(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

@@ -43,10 +43,14 @@ async def test_queries_cost_one_round_trip(
 ) -> None:
     fault_proxy.to_server.delay = fault_proxy.to_client.delay = rtt / 2
     async with await fastpg.connect(proxied_dsn) as conn:
-        assert await conn.select_one("SELECT $1::int", 1) == (1,)  # prepares: 2 round trips
+        trips = fault_proxy.round_trips
+        assert await conn.select_one("SELECT $1::int", 1) == (1,)
+        assert fault_proxy.round_trips - trips == 2  # prepares first
+        trips = fault_proxy.round_trips
         start = time.monotonic()
         assert await conn.select_one("SELECT $1::int", 2) == (2,)
-        assert rtt <= time.monotonic() - start < 2 * rtt
+        assert time.monotonic() - start >= rtt
+        assert fault_proxy.round_trips - trips == 1
         rows = await conn.select_many("SELECT n, n::text FROM generate_series(1, 5000) AS n")
         assert rows[-1] == (5000, "5000")
         assert len(rows) == 5000
@@ -61,10 +65,10 @@ async def test_pipelined_queries_share_round_trips(
     fault_proxy.to_server.delay = fault_proxy.to_client.delay = rtt / 2
     async with await fastpg.connect(proxied_dsn) as conn:
         await conn.select_one("SELECT $1::int", 0)
-        start = time.monotonic()
+        trips = fault_proxy.round_trips
         results = await asyncio.gather(*(conn.select_one("SELECT $1::int", i) for i in range(200)))
         assert results == [(i,) for i in range(200)]
-        assert time.monotonic() - start < 3 * rtt  # 200 statements, about one round trip
+        assert fault_proxy.round_trips - trips == 1  # 200 statements, one round trip
 
 
 async def test_pool_under_latency(proxied_dsn: str, fault_proxy: FaultProxy) -> None:
