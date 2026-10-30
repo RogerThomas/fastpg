@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/RogerThomas/fastpg/compare/v0.1.2...v0.1.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **pool:** max_idle counts time asleep and is checked when a connection is picked ([#32](https://github.com/RogerThomas/fastpg/issues/32)) ([7f8fbd1](https://github.com/RogerThomas/fastpg/commit/7f8fbd1e1def4bf83ec4d719ca0276f385ec0255))
+* refuse NaN and infinities in JSON parameters instead of storing null ([#27](https://github.com/RogerThomas/fastpg/issues/27)) ([2424c7b](https://github.com/RogerThomas/fastpg/commit/2424c7b8af4ac5ccd8a530abd3d049e2052d2547))
+
 ## [0.1.2](https://github.com/RogerThomas/fastpg/compare/v0.1.1...v0.1.2) (2026-10-22)
 
 
