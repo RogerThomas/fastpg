@@ -89,9 +89,17 @@ struct Slot {
     waker: Arc<TaskWaker>,
 }
 
+/// The tasks by id, and which ids are free.
+#[derive(Default)]
+struct Tasks {
+    slots: Vec<Option<Slot>>,
+    /// The ids of the empty slots, so `spawn` finds one without scanning every live task.
+    free: Vec<usize>,
+}
+
 /// A single-threaded executor for `Send` futures, polled only from `run()`.
 pub struct Executor {
-    slots: Mutex<Vec<Option<Slot>>>,
+    tasks: Mutex<Tasks>,
     ready: Arc<ReadyQueue>,
     /// Guards against re-entrant runs (a nested Python call during `drain`'s decoding).
     running: AtomicBool,
@@ -101,7 +109,7 @@ impl Executor {
     /// Create it on the asyncio loop's thread; `poke` wakes the connection's mailbox.
     pub fn new(poke: Poker) -> Self {
         Self {
-            slots: Mutex::new(Vec::new()),
+            tasks: Mutex::new(Tasks::default()),
             ready: Arc::new(ReadyQueue {
                 queue: Mutex::new(VecDeque::new()),
                 loop_thread: AtomicU64::new(thread_key()),
@@ -138,21 +146,23 @@ impl Executor {
 
     /// Queue `fut`; it is first polled by the next `run()`.
     pub fn spawn(&self, fut: impl Future<Output = ()> + Send + 'static) {
-        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-        let id = slots.iter().position(Option::is_none).unwrap_or_else(|| {
-            slots.push(None);
-            slots.len() - 1
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        // A freed id is reused, as before: a waker its old task left behind can only cause a
+        // spurious poll of the new one, which futures allow.
+        let id = tasks.free.pop().unwrap_or_else(|| {
+            tasks.slots.push(None);
+            tasks.slots.len() - 1
         });
         let waker = Arc::new(TaskWaker {
             id,
             queued: AtomicBool::new(false),
             ready: self.ready.clone(),
         });
-        slots[id] = Some(Slot {
+        tasks.slots[id] = Some(Slot {
             task: Some(Box::pin(fut)),
             waker: waker.clone(),
         });
-        drop(slots);
+        drop(tasks);
         waker.wake_by_ref();
     }
 
@@ -173,8 +183,8 @@ impl Executor {
             let Some(id) = id else { break };
             // `get_mut`: a waker can outlive its slot (see `clear`).
             let taken = {
-                let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-                slots.get_mut(id).and_then(Option::as_mut).and_then(|slot| {
+                let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+                tasks.slots.get_mut(id).and_then(Option::as_mut).and_then(|slot| {
                     slot.waker.queued.store(false, Ordering::Release);
                     slot.task.take().map(|task| (task, slot.waker.clone()))
                 })
@@ -187,10 +197,13 @@ impl Executor {
                 .as_mut()
                 .poll(&mut Context::from_waker(&std_waker))
                 .is_ready();
-            let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(slot) = slots.get_mut(id) {
+            let mut guard = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+            let tasks = &mut *guard;
+            if let Some(slot) = tasks.slots.get_mut(id) {
                 if done {
-                    *slot = None;
+                    if slot.take().is_some() {
+                        tasks.free.push(id);
+                    }
                 } else if let Some(slot) = slot.as_mut() {
                     slot.task = Some(task);
                 }
@@ -207,7 +220,7 @@ impl Executor {
         if self.running.load(Ordering::Acquire) {
             return;
         }
-        let tasks = std::mem::take(&mut *self.slots.lock().unwrap_or_else(PoisonError::into_inner));
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
         self.ready
             .queue
             .lock()
@@ -461,7 +474,54 @@ mod tests {
         }
         exec.run();
         assert_eq!(count.load(Ordering::SeqCst), 3);
-        assert!(exec.slots.lock().unwrap().iter().all(Option::is_none));
+        assert!(exec.tasks.lock().unwrap().slots.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn executor_reuses_freed_ids_without_growing() {
+        let mailbox = crate::mailbox::Mailbox::<()>::new().unwrap();
+        let exec = Executor::new(mailbox.poker().unwrap());
+        let finished = Arc::new(Mutex::new(Vec::new()));
+        // Task `label` runs until its sender fires, then records its label.
+        let spawn = |label: usize| {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let finished = finished.clone();
+            exec.spawn(async move {
+                let _ = rx.await;
+                finished.lock().unwrap().push(label);
+            });
+            Some(tx)
+        };
+        let mut senders: Vec<_> = (0..8).map(spawn).collect();
+        exec.run();
+        // Finish three out of order: their ids are freed.
+        for label in [5, 1, 6] {
+            senders[label].take().unwrap().send(()).unwrap();
+        }
+        exec.run();
+        let mut free = exec.tasks.lock().unwrap().free.clone();
+        free.sort_unstable();
+        assert_eq!(free, [1, 5, 6]);
+        // Three more take those ids: no slot is added.
+        senders.extend((8..11).map(spawn));
+        exec.run();
+        {
+            let tasks = exec.tasks.lock().unwrap();
+            assert!(tasks.free.is_empty());
+            assert_eq!(tasks.slots.len(), 8);
+            assert!(tasks.slots.iter().all(Option::is_some));
+        }
+        for tx in senders.iter_mut().filter_map(Option::take) {
+            tx.send(()).unwrap();
+        }
+        exec.run();
+        let mut done = finished.lock().unwrap().clone();
+        done.sort_unstable();
+        assert_eq!(done, (0..11).collect::<Vec<_>>());
+        let tasks = exec.tasks.lock().unwrap();
+        assert_eq!(tasks.slots.len(), 8);
+        assert!(tasks.slots.iter().all(Option::is_none));
+        assert_eq!(tasks.free.len(), 8);
     }
 
     /// A socket pair: our end as a `LoopSocket` (reported readable), and the peer.
@@ -542,7 +602,7 @@ mod tests {
         let mut sink = Vec::new();
         mailbox.take_into(&mut sink);
         exec.run();
-        assert!(exec.slots.lock().unwrap().iter().all(Option::is_none));
+        assert!(exec.tasks.lock().unwrap().slots.iter().all(Option::is_none));
     }
 
     #[test]
