@@ -90,8 +90,9 @@ async def test_shared_queries(dsn: str) -> None:
 
 
 async def test_repr_hides_the_password(dsn: str) -> None:
-    password = urlsplit(dsn).password
-    assert password
+    # As it appears in a DSN: a short password (CI's macOS server uses "fastpg") is
+    # in the repr anyway, inside the type names.
+    password = f":{urlsplit(dsn).password}@"
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
         assert password not in repr(pool)
 
