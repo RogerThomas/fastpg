@@ -5,17 +5,20 @@
 //! Encoding is type-directed: each `Param` checks the server-declared parameter type and
 //! fails with a precise [`ParamError`] instead of letting the server guess.
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
+use std::rc::Rc;
 
 use bytes::{BufMut, BytesMut};
 use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
+use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyDict,
-    PyFloat, PyInt, PyList, PyMemoryView, PyString, PyTime, PyTimeAccess, PyTuple, PyTzInfo,
-    PyTzInfoAccess,
+    PyFloat, PyInt, PyList, PyMemoryView, PyString, PyTime, PyTimeAccess, PyTuple, PyType,
+    PyTzInfo, PyTzInfoAccess,
 };
 use pyo3::{PyTypeCheck, ffi, intern};
 use xitca_postgres::types::{IsNull, Kind, ToSql, Type, to_sql_checked};
@@ -92,6 +95,10 @@ pub(crate) struct PyTypes {
     json_encode: Py<PyAny>,
     /// `msgspec.to_builtins`: a value as the dicts, lists and scalars its JSON is made of.
     to_builtins: Py<PyAny>,
+    /// The metaclass of msgspec Structs.
+    struct_meta: Py<PyAny>,
+    /// `msgspec.UNSET`: a Struct field left out of the JSON.
+    unset: Py<PyAny>,
     /// `datetime.timezone.utc`: aware datetimes in UTC need no `utcoffset()` call.
     utc: Py<PyAny>,
 }
@@ -114,9 +121,57 @@ pub(crate) fn types(py: Python<'_>) -> PyResult<&PyTypes> {
                 .getattr("encode")?
                 .unbind(),
             to_builtins: py.import("msgspec")?.getattr("to_builtins")?.unbind(),
+            struct_meta: py
+                .import("msgspec")?
+                .getattr("Struct")?
+                .get_type()
+                .into_any()
+                .unbind(),
+            unset: py.import("msgspec")?.getattr("UNSET")?.unbind(),
             utc: PyTzInfo::utc(py)?.to_owned().into_any().unbind(),
         })
     })
+}
+
+/// The slot offsets of a Struct type's fields, if they are all plain object slots.
+type StructSlots = Option<Rc<[ffi::Py_ssize_t]>>;
+
+/// How many Struct types each thread remembers in `STRUCT_SLOTS`. Structs of other types are
+/// searched by `non_finite`.
+const STRUCT_SLOTS_CAP: usize = 64;
+
+thread_local! {
+    /// Struct types seen by `may_be_non_finite`, with their `StructSlots`. Each type is kept
+    /// alive by a reference that is never released, so its pointer can't be reused.
+    static STRUCT_SLOTS: RefCell<Vec<(*mut ffi::PyTypeObject, StructSlots)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// The `StructSlots` of `cls`, a Struct type (see `member_offset`).
+fn struct_slots(cls: &Bound<'_, PyType>) -> PyResult<StructSlots> {
+    let ptr = cls.as_type_ptr();
+    let cached = STRUCT_SLOTS.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|(t, _)| *t == ptr)
+            .map(|(_, slots)| slots.clone())
+    });
+    if let Some(slots) = cached {
+        return Ok(slots);
+    }
+    let fields = cls.getattr(intern!(cls.py(), "__struct_fields__"))?;
+    let slots = fields
+        .cast::<PyTuple>()?
+        .iter()
+        .map(|name| crate::decode::member_offset(cls.as_any(), name.cast::<PyString>()?.to_str()?))
+        .collect::<PyResult<Option<Vec<_>>>>()?
+        .map(Rc::from);
+    STRUCT_SLOTS.with_borrow_mut(|cache| {
+        if cache.len() < STRUCT_SLOTS_CAP {
+            cache.push((cls.clone().into_ptr().cast(), slots.clone()));
+        }
+    });
+    Ok(slots)
 }
 
 impl PyTypes {
@@ -402,13 +457,15 @@ fn elements(seq: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Vec<Param>, Con
 /// `obj` serialised as JSON by the shared `msgspec.json.Encoder`.
 ///
 /// msgspec writes NaN and the infinities as `null`, which JSON has instead; they are refused
-/// rather than stored as something else. Only JSON with a `null` in it is searched for them.
+/// rather than stored as something else. Only JSON with a `null` in it is searched for them,
+/// first by the quick `may_be_non_finite`.
 pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let py = obj.py();
     let types = types(py)?;
     let encoded = types.json_encode.bind(py).call1((obj,))?;
     let json = encoded.cast::<PyBytes>()?.as_bytes();
-    if json.windows(4).any(|w| w == b"null")
+    if memchr::memchr_iter(b'n', json).any(|i| json[i..].starts_with(b"null"))
+        && may_be_non_finite(types, obj)?
         && let Some((value, path)) = non_finite(types, obj)?
     {
         return Err(PyValueError::new_err(format!(
@@ -416,6 +473,120 @@ pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
         )));
     }
     Ok(json.to_vec())
+}
+
+/// Whether `obj` may hold a NaN or an infinity: a quicker first pass than `non_finite`, which
+/// is never wrong when it says no. It builds no paths, reads a Struct's fields from its slots
+/// instead of converting the whole Struct with `to_builtins`, and looks at the usual scalars
+/// without taking a reference to them.
+fn may_be_non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let py = obj.py();
+    // SAFETY: `obj` is live.
+    if let Some(found) = unsafe { scalar_non_finite(obj.as_ptr()) } {
+        return Ok(found);
+    }
+    // Each item is looked at in place if it's a scalar, else walked as a new reference. Every
+    // `item` below is a live object, lent by the container being walked, which no Python code
+    // can change before it is looked at or taken. This relies on `gil_used = true` (`lib.rs`):
+    // revisit it in the free-threading audit.
+    let item = |item: *mut ffi::PyObject| {
+        // SAFETY: `item` is live (above).
+        match unsafe { scalar_non_finite(item) } {
+            Some(found) => Ok(found),
+            // SAFETY: `item` is live (above).
+            None => may_be_non_finite(types, &unsafe { Bound::from_borrowed_ptr(py, item) }),
+        }
+    };
+    // SAFETY: reads the type of `obj`'s type.
+    if unsafe { ffi::Py_TYPE(obj.get_type_ptr().cast()) } == types.struct_meta.as_ptr().cast()
+        && let Some(offsets) = struct_slots(&obj.get_type())?
+    {
+        for &offset in offsets.iter() {
+            // SAFETY: `obj`'s type has the fields whose member descriptors published these
+            // offsets for object slots (see `member_offset`).
+            let slot = unsafe {
+                *obj.as_ptr()
+                    .cast::<u8>()
+                    .offset(offset)
+                    .cast::<*mut ffi::PyObject>()
+            };
+            // An unset field is left to `non_finite`.
+            if slot.is_null() || item(slot)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    if let Some(dict) = as_type::<PyDict>(obj) {
+        return with_critical_section(obj, || {
+            let (mut pos, mut key, mut value) = (0, std::ptr::null_mut(), std::ptr::null_mut());
+            // SAFETY: `dict` is a dict, held for the loop.
+            while unsafe {
+                ffi::PyDict_Next(dict.as_ptr(), &raw mut pos, &raw mut key, &raw mut value)
+            } != 0
+            {
+                if item(value)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        });
+    }
+    if let Some(list) = as_type::<PyList>(obj) {
+        return with_critical_section(obj, || {
+            let mut i = 0;
+            // SAFETY: `list` is a list, held for the loop; its length is read again for each
+            // item.
+            while i < unsafe { ffi::PyList_GET_SIZE(list.as_ptr()) } {
+                // SAFETY: as above, `i` is in range.
+                if item(unsafe { ffi::PyList_GET_ITEM(list.as_ptr(), i) })? {
+                    return Ok(true);
+                }
+                i += 1;
+            }
+            Ok(false)
+        });
+    }
+    if let Some(tuple) = as_type::<PyTuple>(obj) {
+        for i in 0..tuple.len() {
+            // SAFETY: `tuple` is a tuple and `i` is in range.
+            if item(unsafe { ffi::PyTuple_GET_ITEM(tuple.as_ptr(), i.cast_signed()) })? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    if let Some(float) = as_type::<PyFloat>(obj) {
+        return Ok(!float.value().is_finite());
+    }
+    if obj.is_instance_of::<PyString>()
+        || obj.is_instance_of::<PyInt>()
+        || obj.is(types.unset.bind(py))
+    {
+        return Ok(false);
+    }
+    Ok(non_finite(types, obj)?.is_some())
+}
+
+/// Whether `obj` is a NaN or an infinity, if it is exactly one of the usual scalars (`None`,
+/// `str`, `int`, `bool` or `float`); `None` for anything else.
+///
+/// # Safety
+/// `obj` must point to a live object.
+#[inline]
+unsafe fn scalar_non_finite(obj: *mut ffi::PyObject) -> Option<bool> {
+    // SAFETY: the caller's.
+    unsafe {
+        let ty = ffi::Py_TYPE(obj);
+        if obj == ffi::Py_None()
+            || ty == &raw mut ffi::PyUnicode_Type
+            || ty == &raw mut ffi::PyLong_Type
+            || ty == &raw mut ffi::PyBool_Type
+        {
+            return Some(false);
+        }
+        (ty == &raw mut ffi::PyFloat_Type).then(|| !ffi::PyFloat_AS_DOUBLE(obj).is_finite())
+    }
 }
 
 /// The first NaN or infinity in `obj`, and its path below `obj` (`.key[0]`). Dicts, lists and
