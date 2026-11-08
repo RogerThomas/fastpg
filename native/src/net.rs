@@ -6,7 +6,9 @@
 //! afterwards can wait forever for a response. Python connects the socket (to the hosts
 //! [`targets`] lists), and we wrap it in [`EofWatch`] (which signals when a read returns EOF)
 //! before handing it to `Postgres::connect_io`; the connection task then drops the driver on
-//! EOF, which fails all pending requests promptly.
+//! EOF, which fails all pending requests promptly. A FATAL `ErrorResponse` counts as EOF: the
+//! server closes the connection right after it, but that close can be lost, and the error
+//! itself only fails the request it answers.
 //!
 //! TLS (`tls.rs`) sits between the socket and the watch: `EofWatch<TlsStream<socket>>`, so
 //! the watch sees plaintext (a `close_notify` is a 0-byte read, a TLS error a fatal one).
@@ -174,6 +176,27 @@ fn affected_rows(body: &[u8]) -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether an `ErrorResponse` body ends the session: severity FATAL or PANIC (the `V` field,
+/// never translated; `S` from a server that sends no `V`).
+fn ends_session(body: &[u8]) -> bool {
+    let mut severity = None;
+    let mut fields = body;
+    while let [code, rest @ ..] = fields
+        && *code != 0
+    {
+        let Some(end) = rest.iter().position(|b| *b == 0) else {
+            break;
+        };
+        match code {
+            b'V' => severity = Some(&rest[..end]),
+            b'S' => severity = severity.or(Some(&rest[..end])),
+            _ => {}
+        }
+        fields = &rest[end + 1..];
+    }
+    matches!(severity, Some(b"FATAL" | b"PANIC"))
+}
+
 /// Follows the message framing of everything read from the server (always: it is cheap, a
 /// header per message, and so it is at a message boundary whenever a bulk write starts
 /// collecting), and reports to [`IoWatch::record`] the complete messages of the cycles that
@@ -195,7 +218,8 @@ struct Framer {
     began_collecting: bool,
     /// The current message is reported: its cycle began while collecting, and still is.
     reporting: bool,
-    /// The body of a reported `CommandComplete`, or of a `BackendKeyData`.
+    /// The body of a reported `CommandComplete`, of a `BackendKeyData` or of an
+    /// `ErrorResponse`.
     body: Vec<u8>,
     /// The stream didn't parse as messages: stop following it (xitca fails too).
     lost: bool,
@@ -224,7 +248,7 @@ impl Framer {
             }
             let take = self.remaining.min(data.len());
             let tag = self.header[0];
-            if (self.reporting && tag == b'C') || tag == b'K' {
+            if (self.reporting && tag == b'C') || tag == b'K' || tag == b'E' {
                 self.body.extend_from_slice(&data[..take]);
             }
             self.remaining -= take;
@@ -259,6 +283,14 @@ impl Framer {
         {
             let pid = i32::from_be_bytes([p0, p1, p2, p3]);
             let _ = watch.key.set((pid, i32::from_be_bytes([k0, k1, k2, k3])));
+        }
+        if tag == b'E' && ends_session(&self.body) {
+            // The server closes the connection right after a FATAL error. Don't wait for the
+            // close to arrive: it can be lost (macOS drops the RST of a backend that exits
+            // with queries unread), and the queries behind the one the error answers would
+            // then wait forever.
+            watch.eof.notify_one();
+            watch.progress.notify_waiters();
         }
         if tag == b'Z' {
             self.first = None;
@@ -734,6 +766,33 @@ mod tests {
         let mut framer = Framer::default();
         framer.feed(&message(b'K', &[0; 36]), &watch);
         assert_eq!(watch.backend_key(), None);
+    }
+
+    #[test]
+    fn a_fatal_error_ends_the_session_however_it_is_split() {
+        let fatal = message(b'E', b"SFATAL\0VFATAL\0C57P01\0Mterminating connection\0\0");
+        for piece in [1, 2, 3, 7, 4096] {
+            let watch = IoWatch::default();
+            let mut framer = Framer::default();
+            feed(&mut framer, &watch, &fatal, piece);
+            // The permit `eof` keeps: the connection task's next wait returns at once.
+            let ended = watch.eof.notified();
+            tokio::pin!(ended);
+            assert!(ended.as_mut().enable(), "piece {piece}");
+        }
+        // Ordinary errors don't; nor does a translated `S` when `V` says ERROR.
+        for body in [
+            &b"SERROR\0VERROR\0C22012\0\0"[..],
+            b"SFATALE\0VERROR\0\0",
+            b"SERROR\0\0",
+        ] {
+            let watch = IoWatch::default();
+            Framer::default().feed(&message(b'E', body), &watch);
+            let ended = watch.eof.notified();
+            tokio::pin!(ended);
+            assert!(!ended.as_mut().enable());
+        }
+        assert!(ends_session(b"SPANIC\0\0")); // a server that sends no `V`
     }
 
     #[test]

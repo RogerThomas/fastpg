@@ -14,6 +14,7 @@ import pytest
 from faults import FaultProxy
 
 import fastpg
+from fastpg import errors
 
 _LOST = "connection lost"
 _BIG = "SELECT n, repeat('x', 100) FROM generate_series(1, 20000) AS n"  # ~2.3 MB
@@ -75,6 +76,39 @@ async def test_cut_fails_every_pipelined_query(
         async with asyncio.timeout(5):
             results = await asyncio.gather(*pending, return_exceptions=True)
         assert all(isinstance(r, fastpg.ConnectionClosedError) for r in results), results
+
+
+async def test_fatal_error_fails_every_query_when_the_close_after_it_is_lost(
+    proxied_dsn: str,
+    fault_proxy: FaultProxy,
+    conn: fastpg.Connection,
+) -> None:
+    # The server ends a session with a FATAL error, which answers the query it was running,
+    # then closes the connection. macOS can drop that close (the RST of a backend that exits
+    # with queries unread): the queries behind must fail anyway, and close() return.
+    fault_proxy.to_client.keep_open = True
+    victim = await fastpg.connect(proxied_dsn)
+    pid = (await victim.select_one("SELECT pg_backend_pid()"))[0]
+    await conn.select_one("SELECT pg_advisory_lock(61109)")
+    try:
+        blocked = asyncio.create_task(victim.select_one("SELECT pg_advisory_lock(61109)"))
+        behind = asyncio.create_task(victim.select_one("SELECT 2"))
+        waiting = "SELECT count(*) FROM pg_stat_activity WHERE pid = $1 AND wait_event = 'advisory'"
+        async with asyncio.timeout(5):
+            while not (await conn.select_one(waiting, pid))[0]:
+                await asyncio.sleep(0.01)
+        closing = asyncio.create_task(victim.close())  # waits for the queries in flight
+        await conn.select_one("SELECT pg_terminate_backend($1)", pid)
+        async with asyncio.timeout(5):
+            with pytest.raises(errors.OperationalError, match="terminating connection"):
+                await blocked
+            with pytest.raises(fastpg.ConnectionClosedError):
+                await behind
+            await closing
+        assert victim.closed
+    finally:
+        victim.terminate()  # nothing left waiting if it failed
+        await conn.select_one("SELECT pg_advisory_unlock(61109)")
 
 
 async def test_close_after_close_says_closed_not_lost(proxied_dsn: str) -> None:
