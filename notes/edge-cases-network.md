@@ -220,8 +220,13 @@ Implemented:
   (`tls::split_dsn` takes it off the DSN with the TLS keys; `dsn_connect_timeout`), applied
   in Python (`asyncio.timeout_at` around each candidate's connect and the handshake).
 * **Unknown DSN keys are named**: `unsupported connection option "gssencmode"`; any other
-  xitca parse failure says `invalid connection string: malformed, or an invalid port or
-  target_session_attrs value`.
+  xitca parse failure says `invalid connection string: malformed, or an invalid port value`.
+* **Several hosts, as in libpq**: host N goes with port N (one port goes with every host;
+  other counts fail with `could not match 2 port numbers to 3 hosts`). Each address is
+  tried in order; an unreachable one, a startup timeout, and a session that
+  `target_session_attrs` (`read-write`, `read-only`, checked in Python with `SHOW
+  transaction_read_only`) doesn't want all move on to the next. An authentication error
+  does not (as in libpq).
 
 * **One connect attempt per waiting statement** (bac365b): `_route` no longer grows the
   pool for a statement it can't place, since the statement waits and its dispatch grows it.

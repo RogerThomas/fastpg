@@ -6,7 +6,7 @@
 uv add fastpg          # or: pip install fastpg
 ```
 
-fastpg needs Python 3.13 or newer, on Linux or macOS.
+fastpg needs Python 3.13 or newer, on Linux or macOS, and PostgreSQL 15 to 18.
 msgspec is installed with it.
 For pydantic models, run `uv add 'fastpg[pydantic]'` instead.
 

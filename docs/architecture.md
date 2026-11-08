@@ -43,7 +43,7 @@ thread hand-off.
   the cancel can't land on the next query.
 * **`RawCell` and `RowBuffer`** (`native/src/rows.rs`): `RawCell` takes any PostgreSQL value
   as its untouched binary bytes. Each result's cells are copied into one `RowBuffer` arena,
-  one `memcpy` per cell. `select_many` hands rows over every 512 rows, so decoding overlaps
+  one `memcpy` per cell. `select_many` hands rows over every 512 rows or 1 MiB, so decoding overlaps
   the transfer. A decoded result's buffer goes back to its connection, which keeps up to
   256 KiB of them for its next results.
 * **Struct construction** (`native/src/structs.rs`, `src/fastpg/_spec.py`): a decoder per

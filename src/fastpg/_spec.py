@@ -64,6 +64,23 @@ class NeedsValidationError(Exception):
     """A field can only be produced correctly by the library's own validation."""
 
 
+BIG_INT_EXT = 1
+"""MessagePack extension code of a JSON integer beyond 64 bits (`native/src/msgpack.rs`)."""
+
+
+def _msgpack_ext(code: int, data: memoryview) -> object:
+    """`ext_hook` of the msgpack route's decoders. A JSON integer too big for MessagePack
+    arrives as its decimal text and becomes an `int`, as through `msgspec.json`. msgspec
+    calls this only where any value is accepted (`Any`); a typed field refuses an ext."""
+    if code != BIG_INT_EXT:
+        return msgspec.msgpack.Ext(code, bytes(data))
+    try:
+        return int(bytes(data))
+    except ValueError as e:  # more digits than sys.get_int_max_str_digits()
+        msg = "Integer value out of range"
+        raise msgspec.ValidationError(msg) from e
+
+
 @dataclass(frozen=True, slots=True)
 class Plan[T]:
     """Everything needed to produce `T` from rows, by every strategy."""
@@ -291,8 +308,8 @@ class StructPlanner:
             spec=spec,
             direct_error=direct_error,
             fallback="msgpack",
-            msgpack_one=msgspec.msgpack.Decoder(struct).decode,
-            msgpack_many=msgspec.msgpack.Decoder(list[struct]).decode,
+            msgpack_one=msgspec.msgpack.Decoder(struct, ext_hook=_msgpack_ext).decode,
+            msgpack_many=msgspec.msgpack.Decoder(list[struct], ext_hook=_msgpack_ext).decode,
             msgpack_error=map_error,
             json_one=msgspec.json.Decoder(struct).decode,
             json_many=msgspec.json.Decoder(list[struct]).decode,

@@ -29,7 +29,6 @@ rmp = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 ryu = "1"
-serde_json = "1"
 sha2 = "0.11"
 # Sync primitives and `select!` only: fastpg runs no tokio runtime (see `event_loop.rs`).
 tokio = { version = "1.48", features = ["sync", "macros"] }
