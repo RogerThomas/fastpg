@@ -133,7 +133,14 @@ class _Queries:
         try:
             return decode(data)
         except error as e:
-            raise (null_value_error(e, into) or DecodeError(str(e))) from e
+            message = str(e)
+            if "got `ext`" in message:  # only JSON integers beyond 64 bits are sent as ext
+                message += (
+                    ": a JSON integer beyond 64 bits, which MessagePack can't hold; with"
+                    " strategy='msgpack' only a field typed Any takes it, strategy='json' reads"
+                    " it into any field"
+                )
+            raise (null_value_error(e, into) or DecodeError(message)) from e
 
     def _fetch_encoded(
         self,
