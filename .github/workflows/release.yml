@@ -7,12 +7,14 @@
 #
 # Builds the wheels and the sdist, each uploaded with its SHA-256 as soon as it's built; tests them,
 # downloaded, in jobs of their own (.github/scripts/test-wheel.sh: tests/smoke.py, then the test
-# suite against the installed wheel), each wheel on the Python it's for; and when a release was
-# created, once every build and test passed, publishes them all to PyPI with trusted publishing,
-# checking first that each SHA-256 still matches: what's published is exactly what was tested.
-# Pull requests that touch the build and manual runs build and test only. The documentation site
-# is deployed by docs.yml, on every push to main that changes it (the release's version bump
-# included).
+# suite against the installed wheel, its `timing` tests on Python 3.14 only), each wheel on the
+# Python it's for; and when a release was created, once every build and test passed, publishes
+# them all to PyPI with trusted publishing, checking first that each SHA-256 still matches: what's
+# published is exactly what was tested.
+# Manual runs build and test only, and so do pull requests that change the packaging (the
+# `packaging` job lists the files) or have the `full-ci` label; other pull requests skip the
+# builds. The documentation site is deployed by docs.yml, on every push to main that changes it
+# (the release's version bump included).
 #
 # Wheels for CPython 3.13, 3.14 and 3.15 and the free-threaded 3.14t and 3.15t (which fastpg runs
 # with the GIL back on; no 3.13t, where free threading was experimental: ADR 0011), on Linux
@@ -27,18 +29,8 @@ on:
     branches: [main]
   workflow_dispatch:
   pull_request:
-    paths:
-      - "native/**"
-      - "src/**"
-      - "tests/**"
-      - "docker/**"
-      - "docker-compose.yml"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".python-version"
-      - "rust-toolchain.toml"
-      - ".github/scripts/**"
-      - ".github/workflows/release.yml"
+    # labeled: adding the `full-ci` label starts a run that builds and tests everything.
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -55,6 +47,10 @@ env:
   CARGO_TERM_COLOR: always
   MATURIN_VERSION: v1.15.0
   UV_VERSION: 0.13.0
+  # The one Python each wheel test job runs the `timing` tests on (tests that wait in real time
+  # for timeouts, keepalives and stalls; most of the suite's time): .python-version's, with the
+  # GIL. Every other Python runs the smoke test and the rest of the suite.
+  FASTPG_TIMING_PYTHON: "3.14"
 
 jobs:
   release-please:
@@ -98,12 +94,43 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-release: true
 
+  # On a pull request: whether to build and test the wheels and the sdist. Only if it changes the
+  # packaging (the files below) or has the `full-ci` label. Not a paths filter, which can't be
+  # combined with a label. Skipped on pushes to main and manual runs, which build as before.
+  packaging:
+    name: Packaging changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.diff.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          FULL_CI_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: |
+          if [ "$FULL_CI_LABEL" = true ]; then
+            build=true
+          elif git diff --name-only "$BASE...HEAD" | grep -qE \
+            '^(native/(Cargo\.toml|Cargo\.lock|build\.rs)|pyproject\.toml|uv\.lock|rust-toolchain\.toml|\.github/workflows/release\.yml|\.github/scripts/.+)$'; then
+            build=true
+          else
+            build=false
+          fi
+          echo "build=$build" | tee -a "$GITHUB_OUTPUT"
+
   build-linux:
     name: Build ${{ matrix.platform.name }}
-    needs: release-please
+    needs: [release-please, packaging]
     if: >-
       ${{ !cancelled() && needs.release-please.result != 'failure' &&
-      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
+      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') &&
+      (github.event_name != 'pull_request' || needs.packaging.outputs.build == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     strategy:
@@ -238,7 +265,7 @@ jobs:
               --volume "$PWD:$PWD" --volume "$PWD/dist:$PWD/dist:ro" --workdir "$PWD" \
               --env UV_VERSION --env PYTHON="$python" \
               --env UV_PYTHON_PREFERENCE="$([ "$python" = 3.14 ] && echo system || echo only-managed)" \
-              --env FASTPG_DSN --env FASTPG_TEST_OWN_SERVERS=1 \
+              --env FASTPG_DSN --env FASTPG_TEST_OWN_SERVERS=1 --env FASTPG_TIMING_PYTHON \
               --env TESTCONTAINERS_CONNECTION_MODE=docker_host --env TESTCONTAINERS_HOST_OVERRIDE=localhost \
               "$ALPINE_PYTHON_314" sh -euxc '
                 apk add --no-cache build-base docker-cli
@@ -252,10 +279,11 @@ jobs:
 
   build-macos:
     name: Build ${{ matrix.platform.name }}
-    needs: release-please
+    needs: [release-please, packaging]
     if: >-
       ${{ !cancelled() && needs.release-please.result != 'failure' &&
-      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
+      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') &&
+      (github.event_name != 'pull_request' || needs.packaging.outputs.build == 'true') }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     strategy:
@@ -371,10 +399,11 @@ jobs:
 
   build-sdist:
     name: Build sdist
-    needs: release-please
+    needs: [release-please, packaging]
     if: >-
       ${{ !cancelled() && needs.release-please.result != 'failure' &&
-      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') }}
+      (github.event_name != 'push' || needs.release-please.outputs.release_created == 'true') &&
+      (github.event_name != 'pull_request' || needs.packaging.outputs.build == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

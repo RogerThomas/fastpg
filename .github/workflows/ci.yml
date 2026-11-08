@@ -9,6 +9,9 @@
 # pause, kill and restart a server container of their own. test-postgres runs it on the other
 # supported majors (15, 16, 17).
 #
+# On a pull request only the Python 3.14 tests run, on Linux x86_64 and macOS, on PostgreSQL 18.
+# Pushes to main, and pull requests with the `full-ci` label, run every test job.
+#
 # Branch protection need only require "CI passed", which fails unless every other job passed.
 name: CI
 
@@ -16,6 +19,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled: adding the `full-ci` label starts a run with every test job.
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -40,6 +45,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      full: ${{ steps.scope.outputs.full }}
+      test-matrix: ${{ steps.scope.outputs.test-matrix }}
       code: ${{ steps.diff.outputs.code }}
       deps: ${{ steps.diff.outputs.deps }}
     steps:
@@ -69,11 +76,42 @@ jobs:
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
           echo "deps=$deps" | tee -a "$GITHUB_OUTPUT"
+      # Every test job on pushes to main and on pull requests with the `full-ci` label;
+      # otherwise only the entries of the test job's matrix marked `pr`, test-macos, and no
+      # test-postgres.
+      - id: scope
+        env:
+          FULL_CI_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          # The test job's matrix. Every supported Python on Linux x86_64: 3.13 (without
+          # t-strings), 3.14, 3.15 and the free-threaded builds (which fastpg runs with the GIL
+          # back on: ADR 0011, tests/test_free_threading.py). What differs between them is how
+          # the Python code runs and how the extension builds against each CPython, not the
+          # architecture, so aarch64 (and macOS, test-macos) run one Python; release.yml tests
+          # every wheel natively.
+          TESTS: |
+            {"name": "Linux x86_64, Python 3.13", "runner": "ubuntu-24.04", "python": "3.13"}
+            {"name": "Linux x86_64, Python 3.14", "runner": "ubuntu-24.04", "python": "3.14", "pr": true}
+            {"name": "Linux x86_64, Python 3.15", "runner": "ubuntu-24.04", "python": "3.15"}
+            {"name": "Linux x86_64, Python 3.14t", "runner": "ubuntu-24.04", "python": "3.14t"}
+            {"name": "Linux x86_64, Python 3.15t", "runner": "ubuntu-24.04", "python": "3.15t"}
+            {"name": "Linux aarch64, Python 3.14", "runner": "ubuntu-24.04-arm", "python": "3.14"}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$FULL_CI_LABEL" = true ]; then
+            full=true
+          else
+            full=false
+          fi
+          echo "full=$full" | tee -a "$GITHUB_OUTPUT"
+          matrix=$(printf '%s' "$TESTS" | jq -cs --argjson full "$full" 'map(select($full or .pr) | del(.pr))')
+          echo "test-matrix=$matrix" | tee -a "$GITHUB_OUTPUT"
 
-  lint:
-    name: Lint
+  # Lint, type-check and the docs build, in one job: each step runs even if one before it
+  # failed, and the job fails if any did.
+  checks:
+    name: Checks
+    needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,36 +140,23 @@ jobs:
         with:
           path: ~/.cache/prek
           key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - run: task lint
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: task lint
       - if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/prek
           key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-
-  typecheck:
-    name: Type-check
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-        with:
-          version: ${{ env.TASK_VERSION }}
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-python: true
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install Python (.python-version)
-        run: uv python install
-      # No Rust: pyright reads the extension's interface from src/fastpg/_native.pyi.
-      - run: task typecheck
+      # No Rust needed: pyright reads the extension's interface from src/fastpg/_native.pyi.
+      - name: Type-check
+        if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
+        run: task typecheck
+      # scripts/build_docs.py imports fastpg for the agent docs' API reference: the extension is
+      # built.
+      - name: Docs
+        if: ${{ !cancelled() }}
+        run: task docs-test
 
   test:
     name: Test (${{ matrix.name }})
@@ -142,18 +167,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every supported Python on Linux x86_64: 3.13 (without t-strings), 3.14, 3.15 and the
-        # free-threaded builds (which fastpg runs with the GIL back on: ADR 0011,
-        # tests/test_free_threading.py). What differs between them is how the Python code runs
-        # and how the extension builds against each CPython, not the architecture, so aarch64
-        # (and macOS, test-macos) run one Python; release.yml tests every wheel natively.
-        include:
-          - { name: "Linux x86_64, Python 3.13", runner: ubuntu-24.04, python: "3.13" }
-          - { name: "Linux x86_64, Python 3.14", runner: ubuntu-24.04, python: "3.14" }
-          - { name: "Linux x86_64, Python 3.15", runner: ubuntu-24.04, python: "3.15" }
-          - { name: "Linux x86_64, Python 3.14t", runner: ubuntu-24.04, python: "3.14t" }
-          - { name: "Linux x86_64, Python 3.15t", runner: ubuntu-24.04, python: "3.15t" }
-          - { name: "Linux aarch64, Python 3.14", runner: ubuntu-24.04-arm, python: "3.14" }
+        # The changes job's `scope` step lists the entries.
+        include: ${{ fromJSON(needs.changes.outputs.test-matrix) }}
     env:
       UV_PYTHON: ${{ matrix.python }} # instead of .python-version's; uv downloads it if need be
       UV_PYTHON_PREFERENCE: only-managed # the latest patch release, not the runner's own Python
@@ -193,11 +208,12 @@ jobs:
       - run: task test -- -ra
 
   # The other supported PostgreSQL majors (the test job runs 18), on one Python
-  # (.python-version): the test containers run FASTPG_PG_IMAGE (tests/faults.py).
+  # (.python-version): the test containers run FASTPG_PG_IMAGE (tests/faults.py). Not on a
+  # pull request without the `full-ci` label.
   test-postgres:
     name: Test (PostgreSQL ${{ matrix.postgres }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -279,35 +295,6 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/postgres/server.log"
 
-  docs:
-    name: Docs
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-        with:
-          version: ${{ env.TASK_VERSION }}
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-python: true
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install Python (.python-version)
-        run: uv python install
-      # scripts/build_docs.py imports fastpg for the agent docs' API reference: the extension is
-      # built.
-      - name: Install Rust (rust-toolchain.toml)
-        run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: native -> target
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: task docs-test
-
   # Known vulnerabilities (RustSec), licences, duplicate versions and sources of the Rust
   # dependencies, as native/deny.toml sets out.
   deny:
@@ -327,30 +314,33 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [changes, lint, typecheck, test, test-postgres, test-macos, docs, deny]
+    needs: [changes, checks, test, test-postgres, test-macos, deny]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # Skipped is fine only where `changes` skipped it (documentation-only changes, or for
-      # cargo-deny no change to the Rust dependencies): a job skipped because one it needs
-      # failed shows up as that failure.
+      # Skipped is fine only where `changes` meant it: the test jobs for a documentation-only
+      # change, test-postgres on a pull request without the `full-ci` label, and cargo-deny
+      # when the Rust dependencies didn't change. A job skipped because one it needs failed
+      # shows up as that failure (and if `changes` fails, its outputs are empty, so no skip
+      # counts as meant).
       - name: Check every job passed (or was skipped because the change doesn't need it)
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          NEEDS: ${{ toJSON(needs) }}
           CODE: ${{ needs.changes.outputs.code }}
-          DENY: ${{ needs.deny.result }}
+          FULL: ${{ needs.changes.outputs.full }}
           DEPS: ${{ needs.changes.outputs.deps }}
         run: |
-          echo "Results: $RESULTS (code changed: $CODE, Rust dependencies changed: $DEPS)"
-          for result in $RESULTS; do
-            # cargo-deny's own "skipped" (there is one at most) counts as a pass.
-            if [ "$result" = skipped ] && [ "$DENY" = skipped ] && [ "$DEPS" = false ]; then
-              DENY=counted
-              continue
-            fi
-            case "$result" in
-              success) ;;
-              skipped) [ "$CODE" = false ] || { echo "::error::A required job was skipped"; exit 1; } ;;
-              *) echo "::error::A required job ended with: $result"; exit 1 ;;
+          echo "Code changed: $CODE, every test job: $FULL, Rust dependencies changed: $DEPS"
+          for job_result in $(printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'); do
+            job=${job_result%%=*}
+            result=${job_result#*=}
+            echo "$job: $result"
+            case "$job/$result" in
+              */success) continue ;;
+              test/skipped | test-macos/skipped) [ "$CODE" = false ] && continue ;;
+              test-postgres/skipped) { [ "$CODE" = false ] || [ "$FULL" = false ]; } && continue ;;
+              deny/skipped) [ "$DEPS" = false ] && continue ;;
             esac
+            echo "::error::$job ended with: $result"
+            exit 1
           done

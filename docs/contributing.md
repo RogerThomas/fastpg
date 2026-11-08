@@ -12,6 +12,13 @@ task docs     # build and serve these docs
 task --list   # everything else
 ```
 
+## Pull requests
+
+CI on a pull request runs the checks, and the tests on Python 3.14 on Linux and macOS.
+The other Pythons, Linux aarch64, PostgreSQL 15 to 17 and the release wheels run on `main`,
+or on a pull request with the `full-ci` label.
+The wheels are also built when a pull request changes the packaging.
+
 ## Benchmarks
 
 * The comparison with other drivers: see [Methodology](benchmarks.md#running-it).
