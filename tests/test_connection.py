@@ -27,6 +27,14 @@ async def test_select_one_shapes(conn: fastpg.Connection) -> None:
     assert await conn.select_many("SELECT generate_series(1, 3)") == [(1,), (2,), (3,)]
 
 
+async def test_repr_hides_the_password(dsn: str, conn: fastpg.Connection) -> None:
+    password = urlsplit(dsn).password
+    assert password
+    assert password not in repr(conn)
+    async with conn.transaction() as tx:
+        assert password not in repr(tx)
+
+
 async def test_no_rows_error_is_lookup_error(conn: fastpg.Connection) -> None:
     with pytest.raises(LookupError):
         await conn.select_one("SELECT 1 WHERE false")

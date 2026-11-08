@@ -5,6 +5,7 @@ import datetime as dt
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urlsplit
 
 import msgspec
 import pytest
@@ -86,6 +87,13 @@ async def test_shared_queries(dsn: str) -> None:
         with pytest.raises(errors.SQLSyntaxError):
             await pool.select_one("SELEC 1")
         assert await pool.select_one("SELECT 2") == (2,)
+
+
+async def test_repr_hides_the_password(dsn: str) -> None:
+    password = urlsplit(dsn).password
+    assert password
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        assert password not in repr(pool)
 
 
 @pytest.mark.parametrize("strategy", ["direct", "msgpack", "json"])
