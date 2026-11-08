@@ -2,6 +2,7 @@
 
 import datetime as dt
 import gc
+import random
 import uuid
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -153,6 +154,73 @@ JSON_VALUE_TARGETS = [
     (JSONValue, "json"),
     (ConstrainedJSONValue, "auto"),
 ]
+
+
+class RandomJSON:
+    """JSON texts made from the edge cases of each JSON token, for differential tests."""
+
+    INTS = (
+        "0", "-0", "1", "-1", "9223372036854775807", "-9223372036854775808",
+        "9223372036854775808", "-9223372036854775809", "18446744073709551615",
+        "18446744073709551616", "98765432109876543210", "-100000000000000000000000000000",
+    )  # fmt: skip
+    FLOATS = (
+        "0.0", "-0.0", "-0e0", "1.5", "-2.25", "1E2", "1e+2", "1e-2", "2.5E-3",
+        "0.1000000000000000055511151231257827", "123456789012345678901234567890.5",
+        "1.7976931348623157e308", "2.2250738585072014e-308", "5e-324", "1e-400", "-1e-400",
+    )  # fmt: skip
+    ESCAPES = (
+        '\\"', "\\\\", "\\/", "\\b", "\\f", "\\n", "\\r", "\\t", "\\u0001", "\\u001f",
+        "\\u007f", "\\u00e9", "\\u00E9", "\\u4e2d", "\\uffff", "\\ud83d\\ude00", "\\uD834\\uDD1E",
+    )  # fmt: skip
+    CHARS = ("a", "Z", " ", "é", "中", "😀", "ключ")
+    KEYS = ('"a"', '"b"', '"aa"', '"z"', '""', '"é"', '"\\u00e9"', '"😀"', '"\\n"')
+    SPACES = ("", "", "", " ", "\n", "\t", "\r\n  ")
+
+    def __init__(self, seed: int, *, nul: bool) -> None:
+        self.rng = random.Random(seed)  # noqa: S311 - reproducible data, not cryptography
+        # \u0000 is valid JSON, but jsonb refuses it.
+        self.escapes = (*self.ESCAPES, "\\u0000") if nul else self.ESCAPES
+
+    def ws(self) -> str:
+        return self.rng.choice(self.SPACES)
+
+    def string(self) -> str:
+        pieces = self.rng.choices((self.CHARS, self.escapes), k=self.rng.randint(0, 6))
+        return '"' + "".join(self.rng.choice(p) for p in pieces) + '"'
+
+    def float_text(self) -> str:
+        if self.rng.random() < 0.5:
+            return self.rng.choice(self.FLOATS)
+        exponent = self.rng.randint(-330, 300)
+        return f"{self.rng.uniform(-10, 10):.{self.rng.randint(1, 17)}f}e{exponent}"
+
+    def value(self, depth: int) -> str:
+        kind = self.rng.choice(("int", "float", "str", "lit", "array", "object"))
+        if depth >= 5 and kind in ("array", "object"):
+            kind = "str"
+        match kind:
+            case "int":
+                return self.rng.choice((*self.INTS, str(self.rng.randint(-(10**6), 10**6))))
+            case "float":
+                return self.float_text()
+            case "str":
+                return self.string()
+            case "lit":
+                return self.rng.choice(("true", "false", "null"))
+            case "array":
+                items = [self.value(depth + 1) for _ in range(self.rng.randint(0, 4))]
+                return "[" + self.ws() + ("," + self.ws()).join(items) + self.ws() + "]"
+            case _:  # keys from a small set, so objects often repeat one
+                members = [
+                    f"{self.rng.choice((*self.KEYS, self.string()))}{self.ws()}:{self.ws()}"
+                    f"{self.value(depth + 1)}"
+                    for _ in range(self.rng.randint(0, 5))
+                ]
+                return "{" + self.ws() + ("," + self.ws()).join(members) + self.ws() + "}"
+
+    def document(self) -> str:
+        return self.ws() + self.value(0) + self.ws()
 
 
 class ConstrainedJSONAsText(msgspec.Struct):
@@ -413,6 +481,44 @@ async def test_json_integer_beyond_64_bits_in_an_int_field(
     with pytest.raises(fastpg.DecodeError, match="beyond 64 bits") as exc:
         await conn.select_one(query, into=JSONDecoded, strategy="msgpack")
     assert isinstance(exc.value.__cause__, msgspec.ValidationError)
+
+
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_random_json_documents_read_the_same_through_every_strategy(
+    conn: fastpg.Connection,
+    json_type: str,
+) -> None:
+    generator = RandomJSON(20261108, nul=json_type == "json")
+    documents = [generator.document() for _ in range(400)]
+    source = "unnest($1::text[]) WITH ORDINALITY AS t(d, n) ORDER BY n"
+    query = f"SELECT d::{json_type} AS doc FROM {source}"  # noqa: S608 - fixed text
+    results: dict[str, list[str]] = {}
+    for strategy in ("direct", "msgpack", "json"):
+        rows = await conn.select_many(query, documents, into=JSONValue, strategy=strategy)
+        # repr tells apart what == doesn't: key order, 1 and 1.0, 0.0 and -0.0.
+        results[strategy] = [repr(row.doc) for row in rows]
+    assert len(results["direct"]) == len(documents)
+    for strategy in ("msgpack", "json"):
+        mismatches = [
+            (text, direct, other)
+            for text, direct, other in zip(
+                documents,
+                results["direct"],
+                results[strategy],
+                strict=True,
+            )
+            if direct != other
+        ]
+        assert mismatches == [], strategy
+
+
+@pytest.mark.parametrize("text", ['"\\ud800"', '"a\\udc00"', '["\\ud800", 1]'])
+async def test_json_with_a_lone_surrogate_escape(conn: fastpg.Connection, text: str) -> None:
+    # The json type keeps such text (jsonb refuses it); no strategy can decode it.
+    query = f"SELECT '{text}'::json AS doc"
+    for strategy in ("direct", "msgpack", "json"):
+        with pytest.raises(fastpg.DecodeError):
+            await conn.select_one(query, into=JSONValue, strategy=strategy)
 
 
 async def test_auto_falls_back_to_msgpack_for_constraints(conn: fastpg.Connection) -> None:
