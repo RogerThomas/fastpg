@@ -47,8 +47,8 @@ fn dsn_targets(py: Python<'_>, dsn: &str) -> PyResult<Vec<(&'static str, String,
     net::targets(dsn).map_err(|e| e.into_pyerr(py))
 }
 
-/// libpq's socket keys of `dsn` (`connect_timeout`, keepalives, `tcp_user_timeout`); checks
-/// the DSN.
+/// libpq's keys of `dsn` applied in Python (`connect_timeout`, keepalives,
+/// `tcp_user_timeout`, `target_session_attrs`); checks the DSN.
 #[pyfunction]
 fn dsn_socket_options(py: Python<'_>, dsn: &str) -> PyResult<tls::SocketOptions> {
     net::socket_options(dsn).map_err(|e| e.into_pyerr(py))

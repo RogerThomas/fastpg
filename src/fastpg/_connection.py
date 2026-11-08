@@ -964,51 +964,45 @@ async def _resolve(
     return [(family, address) for family, _, _, _, address in infos]
 
 
+class _NextAddressError(Exception):
+    """An address failed in a way libpq moves on from: unreachable, no session started within
+    ``connect_timeout``, or a session ``target_session_attrs`` doesn't want. Its message says
+    which address and how."""
+
+
+async def _candidates(
+    loop: asyncio.AbstractEventLoop,
+    kind: str,
+    host: str,
+    port: int,
+) -> list[tuple[socket.AddressFamily, _Address]]:
+    """The addresses of one DSN host and its port, in connection order."""
+    if kind == "unix":
+        path = Path(host)
+        if path.is_dir():  # libpq semantics: a directory means <dir>/.s.PGSQL.<port>
+            path /= f".s.PGSQL.{port}"
+        return [(socket.AF_UNIX, str(path))]
+    return await _resolve(loop, host, port)
+
+
 async def _open_socket(
     loop: asyncio.AbstractEventLoop,
-    dsn: str,
+    family: socket.AddressFamily,
+    address: _Address,
     options: SocketOptions,
-) -> tuple[socket.socket, str, _Address, float | None]:
-    """Connect the database socket from the loop (numeric hosts need no thread).
-
-    Returns the socket, the DSN host it reached (the TLS server name), its address, and the
-    deadline of the attempt: as in libpq, ``connect_timeout`` applies to each address tried,
-    from its TCP connect to the end of the startup. Each TCP socket gets ``options``'
-    keepalive and ``tcp_user_timeout`` settings before it connects.
-    """
-    timeout = options.connect_timeout
-    failures: list[str] = []
-    for kind, host, port in dsn_targets(dsn):
-        if kind == "unix":
-            path = Path(host)
-            if path.is_dir():  # libpq semantics: a directory means <dir>/.s.PGSQL.<port>
-                path /= f".s.PGSQL.{port}"
-            candidates: list[tuple[socket.AddressFamily, _Address]] = [
-                (socket.AF_UNIX, str(path)),
-            ]
-        else:
-            try:
-                candidates = await _resolve(loop, host, port)
-            except OSError as e:
-                failures.append(str(e))
-                continue
-        for family, address in candidates:
-            deadline = None if timeout is None else loop.time() + timeout
-            limit = asyncio.timeout_at(deadline)
-            try:
-                async with limit:
-                    sock = await _connect_candidate(loop, family, address, options)
-            except OSError as e:  # TimeoutError too
-                if limit.expired():
-                    expired = "timeout expired (connect_timeout)"
-                    failures.append(f"connect to {address!r} failed: {expired}")
-                else:
-                    failures.append(str(e))
-            else:
-                return sock, host, address, deadline
-    reason = "; ".join(failures) or "no host to connect to"
-    msg = f"could not connect to server: {reason}"
-    raise InterfaceError(msg)
+    deadline: float | None,
+) -> socket.socket:
+    """Connect the database socket from the loop, until `deadline`. A TCP socket gets
+    ``options``' keepalive and ``tcp_user_timeout`` settings before it connects."""
+    limit = asyncio.timeout_at(deadline)
+    try:
+        async with limit:
+            return await _connect_candidate(loop, family, address, options)
+    except OSError as e:  # TimeoutError too
+        if limit.expired():
+            msg = f"connect to {address!r} failed: timeout expired (connect_timeout)"
+            raise _NextAddressError(msg) from None
+        raise _NextAddressError(str(e)) from None
 
 
 async def _started(
@@ -1024,9 +1018,41 @@ async def _started(
     except TimeoutError:
         if not limit.expired():
             raise
-        expired = "timeout expired (connect_timeout)"
-        msg = f"could not connect to server: startup with {address!r} failed: {expired}"
-        raise InterfaceError(msg) from None
+        msg = f"startup with {address!r} failed: timeout expired (connect_timeout)"
+        raise _NextAddressError(msg) from None
+
+
+async def _check_session(
+    conn: "Connection",
+    attrs: str,
+    deadline: float | None,
+    address: _Address,
+) -> None:
+    """Keep `conn` if its session is what ``target_session_attrs`` asks for; else close it.
+
+    As libpq does: ``SHOW transaction_read_only``, within the attempt's deadline.
+    """
+    if attrs == "any":
+        return
+    limit = asyncio.timeout_at(deadline)
+    try:
+        async with limit:
+            read_only = (await conn.select_one("SHOW transaction_read_only"))[0] == "on"
+    except TimeoutError:
+        conn.terminate()
+        if not limit.expired():
+            raise
+        msg = f"startup with {address!r} failed: timeout expired (connect_timeout)"
+        raise _NextAddressError(msg) from None
+    except BaseException:
+        conn.terminate()
+        raise
+    if read_only == (attrs == "read-only"):
+        return
+    await conn.close()
+    session = "read-only" if read_only else "not read-only"
+    msg = f"connect to {address!r} failed: session is {session} (target_session_attrs={attrs})"
+    raise _NextAddressError(msg)
 
 
 def _detach_socket(loop: asyncio.AbstractEventLoop, sock: socket.socket) -> None:
@@ -1119,6 +1145,12 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     bounds each address tried, from its TCP connect to the end of the startup; when it
     expires, ``InterfaceError`` says so.
 
+    Several hosts (``host=a,b port=5432,5433``, or ``postgresql://a:5432,b:5433/db``) are
+    tried in order, as in libpq: host N with port N, or one port for every host. An address
+    that can't be reached or doesn't start a session within ``connect_timeout`` is passed
+    over for the next, as is a session that ``target_session_attrs`` (``read-write`` or
+    ``read-only``) doesn't want. When none is left, ``InterfaceError`` names each one tried.
+
     TCP keepalives are on, as in libpq (``keepalives=0`` turns them off), and libpq's
     ``keepalives_idle``, ``keepalives_interval``, ``keepalives_count`` (seconds, probes) and
     ``tcp_user_timeout`` (milliseconds, Linux only) tune them: absent or 0 keeps the OS
@@ -1131,6 +1163,47 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     """
     loop = asyncio.get_running_loop()
     options = dsn_socket_options(dsn)
+    failures: list[str] = []
+    for kind, host, port in dsn_targets(dsn):
+        try:
+            candidates = await _candidates(loop, kind, host, port)
+        except OSError as e:
+            failures.append(str(e))
+            continue
+        for family, address in candidates:
+            try:
+                return await _connect_to(
+                    loop,
+                    dsn,
+                    statement_cache_size,
+                    options,
+                    host,
+                    family,
+                    address,
+                )
+            except _NextAddressError as e:
+                failures.append(str(e))
+    reason = "; ".join(failures) or "no host to connect to"
+    msg = f"could not connect to server: {reason}"
+    raise InterfaceError(msg)
+
+
+async def _connect_to(
+    loop: asyncio.AbstractEventLoop,
+    dsn: str,
+    statement_cache_size: int,
+    options: SocketOptions,
+    host: str,
+    family: socket.AddressFamily,
+    address: _Address,
+) -> Connection:
+    """Open a connection to `address`, of the DSN's `host` (the TLS server name).
+
+    As in libpq, ``connect_timeout`` applies to each address tried, from its TCP connect to
+    the end of the startup. Raises `_NextAddressError` where libpq tries the next address.
+    """
+    timeout = options.connect_timeout
+    deadline = None if timeout is None else loop.time() + timeout
     native = NativeConnection(statement_cache_size)
     # Wakes the loop for the rare task woken from another thread (e.g. by a `__del__` there).
     fd = native.fileno()
@@ -1138,7 +1211,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     connected: asyncio.Future[None] = loop.create_future()
     closed: asyncio.Future[None] = loop.create_future()
     try:
-        sock, host, address, deadline = await _open_socket(loop, dsn, options)
+        sock = await _open_socket(loop, family, address, options, deadline)
         canceller = _Canceller(native, loop, sock.family, address, options)
         sfd = sock.fileno()
         # Registered first: attach() can fail at once (e.g. a TLS file is missing), and then
@@ -1161,4 +1234,6 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
         native.close()  # once attached, the socket is detached and closed by native
         loop.remove_reader(fd)
         raise
-    return Connection(native, loop, canceller, closed)
+    conn = Connection(native, loop, canceller, closed)
+    await _check_session(conn, options.target_session_attrs, deadline, address)
+    return conn
