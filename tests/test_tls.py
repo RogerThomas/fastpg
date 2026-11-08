@@ -260,6 +260,7 @@ async def test_disable_sends_plaintext(server: TLSServer) -> None:
     assert exc.value.sqlstate == "28000"
 
 
+@pytest.mark.min_server(17)  # direct TLS negotiation is new in PostgreSQL 17
 async def test_direct_negotiation(server: TLSServer) -> None:
     dsn = _with(server.verified_dsn, sslnegotiation="direct")
     async with await fastpg.connect(dsn) as conn:

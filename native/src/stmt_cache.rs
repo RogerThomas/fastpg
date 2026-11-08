@@ -120,8 +120,9 @@ impl StatementCache {
     }
 
     /// Insert a freshly prepared statement; if a concurrent task won the race, return theirs
-    /// (ours is dropped and deallocated on the server). A closed cache keeps nothing: the
-    /// statement is returned for its one use.
+    /// (ours is dropped and deallocated on the server). A closed cache keeps nothing, and no
+    /// cache keeps a statement that isn't [`cacheable`]: the statement is returned for its
+    /// one use, and deallocated on the server once that is done.
     pub fn insert(&self, sql: String, stmt: Arc<CachedStmt>) -> Arc<CachedStmt> {
         let evicted;
         let result;
@@ -130,6 +131,9 @@ impl StatementCache {
             let (map, clock, closed) = &mut *guard;
             if *closed {
                 stmt.session_ending.store(true, Ordering::Release);
+                return stmt;
+            }
+            if !cacheable(&sql) {
                 return stmt;
             }
             *clock += 1;
@@ -195,5 +199,106 @@ impl StatementCache {
             entry.stmt.session_ending.store(true, Ordering::Release);
         }
         drop(drained);
+    }
+}
+
+/// Whether a statement's result columns, as described when it was prepared, stay right for
+/// later runs. Not for `FETCH` and `EXECUTE`: theirs are the columns of a cursor or of an
+/// SQL-level prepared statement, which can be declared or prepared again with other columns.
+/// PostgreSQL never checks a prepared `FETCH` or `EXECUTE` against that (only statements
+/// that read tables are checked, against schema changes), so reusing one would decode the
+/// new rows as the old column types. Those are prepared again on every run instead, at the
+/// cost of a round trip.
+fn cacheable(sql: &str) -> bool {
+    let word = first_word(sql);
+    !(word.eq_ignore_ascii_case(b"fetch") || word.eq_ignore_ascii_case(b"execute"))
+}
+
+/// The statement's first word, after any whitespace, `;` and comments (`--` to the end of
+/// the line, and `/* */`, which nest in PostgreSQL).
+fn first_word(sql: &str) -> &[u8] {
+    let mut rest = sql.as_bytes();
+    loop {
+        rest = match rest {
+            [
+                b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c' | b';',
+                tail @ ..,
+            ] => tail,
+            [b'-', b'-', tail @ ..] => {
+                let end = tail.iter().position(|&b| b == b'\n' || b == b'\r');
+                &tail[end.unwrap_or(tail.len())..]
+            }
+            [b'/', b'*', tail @ ..] => after_block_comment(tail),
+            _ => break,
+        };
+    }
+    let end = rest.iter().position(|b| !b.is_ascii_alphabetic());
+    &rest[..end.unwrap_or(rest.len())]
+}
+
+/// What follows a `/* */` comment, given what follows its opening `/*`.
+fn after_block_comment(mut rest: &[u8]) -> &[u8] {
+    let mut depth = 1usize;
+    while depth > 0 {
+        rest = match rest {
+            [b'*', b'/', tail @ ..] => {
+                depth -= 1;
+                tail
+            }
+            [b'/', b'*', tail @ ..] => {
+                depth += 1;
+                tail
+            }
+            [_, tail @ ..] => tail,
+            [] => break,
+        };
+    }
+    rest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetch_and_execute_are_not_cacheable() {
+        for sql in [
+            "FETCH 1 FROM c",
+            "fetch all in c",
+            "Fetch\tNEXT FROM c",
+            "EXECUTE p",
+            "execute p(1, 2)",
+            "  \n\x0b\x0cFETCH 1 FROM c",
+            ";FETCH 1 FROM c",
+            "-- next row\nFETCH 1 FROM c",
+            "--\r\nexecute p",
+            "/* next */FETCH 1 FROM c",
+            "/* a /* nested */ comment */ FETCH 1 FROM c",
+            "/**/--\n/* */ execute p",
+        ] {
+            assert!(!cacheable(sql), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn other_statements_are_cacheable() {
+        for sql in [
+            "SELECT 1",
+            "select * from fetch",
+            "INSERT INTO t VALUES ($1)",
+            "EXPLAIN EXECUTE p",
+            "MOVE 1 IN c",
+            "fetched",
+            "executes",
+            "-- FETCH 1 FROM c\nSELECT 1",
+            "/* FETCH 1 FROM c */ SELECT 1",
+            "/* /* */ FETCH */ SELECT 1",
+            "",
+            "   ",
+            "-- only a comment",
+            "/* unterminated FETCH",
+        ] {
+            assert!(cacheable(sql), "{sql:?}");
+        }
     }
 }
