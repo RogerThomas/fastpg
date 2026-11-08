@@ -92,9 +92,9 @@ jobs:
             {"name": "Linux aarch64, Python 3.14", "runner": "ubuntu-24.04-arm", "when": "full"}
         run: |
           if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$FULL_CI_LABEL" = true ]; then
-            when=full
+            when="full"
           else
-            when=pr
+            when="pr"
           fi
           echo "Test matrix: $when"
           matrix=$(printf '%s' "$TESTS" | jq -cs --arg when "$when" 'map(select(.when == $when) | del(.when))')
