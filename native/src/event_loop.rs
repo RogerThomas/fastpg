@@ -184,10 +184,14 @@ impl Executor {
             // `get_mut`: a waker can outlive its slot (see `clear`).
             let taken = {
                 let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-                tasks.slots.get_mut(id).and_then(Option::as_mut).and_then(|slot| {
-                    slot.waker.queued.store(false, Ordering::Release);
-                    slot.task.take().map(|task| (task, slot.waker.clone()))
-                })
+                tasks
+                    .slots
+                    .get_mut(id)
+                    .and_then(Option::as_mut)
+                    .and_then(|slot| {
+                        slot.waker.queued.store(false, Ordering::Release);
+                        slot.task.take().map(|task| (task, slot.waker.clone()))
+                    })
             };
             let Some((mut task, waker)) = taken else {
                 continue;
