@@ -487,7 +487,8 @@ fn may_be_non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> 
     }
     // Each item is looked at in place if it's a scalar, else walked as a new reference. Every
     // `item` below is a live object, lent by the container being walked, which no Python code
-    // can change before it is looked at or taken.
+    // can change before it is looked at or taken. This relies on `gil_used = true` (`lib.rs`):
+    // revisit it in the free-threading audit.
     let item = |item: *mut ffi::PyObject| {
         // SAFETY: `item` is live (above).
         match unsafe { scalar_non_finite(item) } {
