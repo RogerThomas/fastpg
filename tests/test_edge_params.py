@@ -285,12 +285,23 @@ class Reading(msgspec.Struct):
     value: float
 
 
+class NotedReading(Reading):
+    note: str | None
+
+
+class Pair(msgspec.Struct, array_like=True):
+    value: float
+    note: str | None
+
+
 @pytest.mark.parametrize(
     ("value", "found"),
     [
         ([1.5, math.nan], r"nan at \$\[1\]"),
         ({"a": {"b": -math.inf}}, r"-inf at \$\.a\.b"),
         ({"readings": [Reading(math.inf)]}, r"inf at \$\.readings\[0\]\.value"),
+        ({"reading": NotedReading(math.nan, None)}, r"nan at \$\.reading\.value"),
+        ([Pair(-math.inf, None)], r"-inf at \$\[0\]\[0\]"),
     ],
 )
 async def test_non_finite_float_in_a_json_parameter_is_refused(
@@ -308,3 +319,15 @@ async def test_non_finite_float_in_a_json_parameter_is_refused(
 async def test_null_in_a_json_parameter_is_kept(conn: fastpg.Connection) -> None:
     value = {"none": None, "text": "null", "list": [None, 1.5]}
     assert await conn.select_one("SELECT $1::jsonb", value) == (value,)
+
+
+class Sparse(msgspec.Struct):
+    value: float
+    note: str | None = None
+    extra: int | msgspec.UnsetType = msgspec.UNSET
+
+
+async def test_null_in_a_struct_json_parameter_is_kept(conn: fastpg.Connection) -> None:
+    # The unset field is left out of the JSON, and the None is a real null.
+    stored = {"sparse": {"value": 1.5, "note": None}}
+    assert await conn.select_one("SELECT $1::jsonb", {"sparse": Sparse(1.5)}) == (stored,)

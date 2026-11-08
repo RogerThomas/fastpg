@@ -284,3 +284,43 @@ def test_insert_many(benchmark: BenchmarkFixture, runner: Runner, scratch: str) 
 def test_copy_in(benchmark: BenchmarkFixture, runner: Runner, scratch: str) -> None:
     conn = runner.conn
     _measure(benchmark, runner, lambda: conn.copy_in(scratch, WRITE_ROWS))
+
+
+# --- Writing jsonb --------------------------------------------------------------------------
+
+
+class Reading(msgspec.Struct):
+    sensor: str
+    value: float
+    note: str | None
+
+
+# Each value has a float and a None: JSON with a `null` in it is checked for NaN and infinities.
+JSONB_ROWS = {
+    "struct": [(i, Reading(f"sensor-{i}", i / 10, None)) for i in range(1_000)],
+    "dict": [(i, {"sensor": f"sensor-{i}", "value": i / 10, "note": None}) for i in range(1_000)],
+}
+
+
+@pytest.fixture
+def jsonb_scratch(runner: Runner) -> str:
+    """An empty temporary table with a jsonb column (dropped with the connection)."""
+    runner.run(
+        runner.conn.execute_script(
+            "CREATE TEMP TABLE IF NOT EXISTS jsonb_scratch (id integer, doc jsonb);"
+            "TRUNCATE jsonb_scratch",
+        ),
+    )
+    return "jsonb_scratch"
+
+
+@pytest.mark.parametrize("doc", ["struct", "dict"])
+def test_copy_in_jsonb(
+    benchmark: BenchmarkFixture,
+    runner: Runner,
+    jsonb_scratch: str,
+    doc: str,
+) -> None:
+    conn = runner.conn
+    rows = JSONB_ROWS[doc]
+    _measure(benchmark, runner, lambda: conn.copy_in(jsonb_scratch, rows))
