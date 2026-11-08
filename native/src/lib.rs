@@ -18,6 +18,7 @@ mod auth;
 mod bulk;
 mod cancel;
 mod connection;
+mod copy_check;
 mod decode;
 mod errors;
 mod event_loop;
