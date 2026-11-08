@@ -2,8 +2,10 @@
 
 import asyncio
 import datetime as dt
+import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any
 
 import msgspec
@@ -62,6 +64,25 @@ async def _settle(pool: fastpg.Pool) -> None:
 async def _pid_of_sleeper(pool: fastpg.Pool, seconds: float) -> int:
     (pid, _) = await pool.select_one("SELECT pg_backend_pid(), pg_sleep($1)", seconds)
     return pid
+
+
+_GATED = "SELECT pg_backend_pid(), pg_advisory_xact_lock_shared($1)"
+
+
+@asynccontextmanager
+async def _gate(conn: fastpg.Connection) -> AsyncGenerator[int]:
+    """Hold an advisory lock on ``conn`` for the block; yields its key. A statement that
+    takes it (`_gated_pid`) stays in flight until the block ends, however slow the runner."""
+    key = secrets.randbits(62)
+    await conn.execute("SELECT pg_advisory_lock($1)", key)
+    try:
+        yield key
+    finally:
+        await conn.execute("SELECT pg_advisory_unlock($1)", key)
+
+
+async def _gated_pid(pool: fastpg.Pool, key: int, query: str = _GATED) -> int:
+    return (await pool.select_one(query, key))[0]
 
 
 # --- shared mode ----------------------------------------------------------------------------
@@ -132,48 +153,66 @@ async def test_routes_to_an_idle_connection(dsn: str) -> None:
         assert fast_pid != await slow
 
 
-async def test_reuses_the_most_recently_idle_connection(dsn: str) -> None:
+async def test_reuses_the_most_recently_idle_connection(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(dsn, min_size=2, max_size=2) as pool:
-        first_pid, last_pid = await asyncio.gather(
-            _pid_of_sleeper(pool, 0.05),
-            _pid_of_sleeper(pool, 0.15),
-        )
+        async with _gate(conn) as key:
+            last = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent: its connection is busy until the gate opens
+            first_pid = (await pool.select_one("SELECT pg_backend_pid()"))[0]
+        last_pid = await last
         assert first_pid != last_pid
         # The connection that went idle last serves the next statement.
         assert await pool.select_one("SELECT pg_backend_pid()") == (last_pid,)
         assert pool.stats().idle == 2
 
 
-async def test_pipelines_onto_least_stalled_connection_at_max_size(dsn: str) -> None:
+async def test_pipelines_onto_least_stalled_connection_at_max_size(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=2,
         max_size=2,
         max_inflight_per_conn=4,
     ) as pool:
-        slow = asyncio.create_task(_pid_of_sleeper(pool, 0.4))
-        await asyncio.sleep(0.05)
-        medium = asyncio.create_task(_pid_of_sleeper(pool, 0.1))
-        await asyncio.sleep(0.02)
-        # Both connections are busy; the one behind the younger statement is preferred.
-        (pid,) = await pool.select_one("SELECT pg_backend_pid()")
-        assert pid == await medium
-        assert pid != await slow
+        async with _gate(conn) as key:
+            older = asyncio.create_task(_gated_pid(pool, key))
+            # At least 10 ms in flight, longer than a statement not seen before is expected
+            # to take. (A slow runner only makes it older.)
+            await asyncio.sleep(0.01)
+            younger = asyncio.create_task(_gated_pid(pool, key))
+            query = asyncio.create_task(pool.select_one("SELECT pg_backend_pid()"))
+            await asyncio.sleep(0)  # all sent
+            assert pool.stats().in_flight == 3
+        # Both connections were busy; the one behind the younger statement was preferred.
+        assert (await query)[0] == await younger != await older
 
 
-async def test_avoids_connection_behind_known_slow_statement(dsn: str) -> None:
-    slow = "SELECT pg_backend_pid(), pg_sleep(0.2)"
+async def test_avoids_connection_behind_known_slow_statement(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
+    unknown = "SELECT pg_backend_pid(), pg_advisory_xact_lock_shared($1), 'not seen before'"
     async with await fastpg.create_pool(dsn, min_size=2, max_size=2) as pool:
-        await pool.select_one(slow)  # the pool learns that this statement takes ~200 ms
-        unknown = asyncio.create_task(pool.select_one("SELECT pg_backend_pid(), pg_sleep(0.1)"))
-        await asyncio.sleep(0.03)
-        known = asyncio.create_task(pool.select_one(slow))
-        await asyncio.sleep(0.005)
-        # Both connections are busy: one for 35 ms with a statement of unknown cost, the
-        # other just started one expected to take 200 ms. The first is the better bet.
-        (pid,) = await pool.select_one("SELECT pg_backend_pid()")
-        assert pid == (await unknown)[0]
-        assert pid != (await known)[0]
+        async with _gate(conn) as key:
+            learning = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0.2)
+        await learning  # the pool learns that _GATED takes at least 200 ms
+        async with _gate(conn) as key:
+            # Sent back to back, in one turn of the loop: the first has been in flight for
+            # microseconds when the third is routed.
+            new = asyncio.create_task(_gated_pid(pool, key, unknown))
+            known = asyncio.create_task(_gated_pid(pool, key))
+            query = asyncio.create_task(pool.select_one("SELECT pg_backend_pid()"))
+            await asyncio.sleep(0)
+            assert pool.stats().in_flight == 3
+        # Both connections were busy: one with a statement of unknown cost, the other with one
+        # expected to take 200 ms. The first was the better bet.
+        assert (await query)[0] == await new != await known
 
 
 @pytest.mark.timing
@@ -204,24 +243,23 @@ async def test_age_counts_from_the_oldest_statement_still_in_flight(dsn: str) ->
 
 
 @pytest.mark.parametrize("cap", [1, 3])
-async def test_cap_and_fifo_waiting(dsn: str, cap: int) -> None:
+async def test_cap_and_fifo_waiting(dsn: str, conn: fastpg.Connection, cap: int) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=1,
         max_size=1,
         max_inflight_per_conn=cap,
     ) as pool:
-        sleepers = [
-            asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1)")) for _ in range(cap)
-        ]
-        await asyncio.sleep(0.02)
-        assert pool.stats().in_flight == cap
-        started: list[int] = []
-        waiters = [asyncio.create_task(_record(pool, i, started)) for i in range(6)]
-        await asyncio.sleep(0.02)
-        stats = pool.stats()
-        assert (stats.in_flight, stats.waiting) == (cap, 6)
-        await asyncio.gather(*sleepers, *waiters)
+        async with _gate(conn) as key:
+            gated = [asyncio.create_task(_gated_pid(pool, key)) for _ in range(cap)]
+            await asyncio.sleep(0)  # sent
+            assert pool.stats().in_flight == cap
+            started: list[int] = []
+            waiters = [asyncio.create_task(_record(pool, i, started)) for i in range(6)]
+            await asyncio.sleep(0)  # queued
+            stats = pool.stats()
+            assert (stats.in_flight, stats.waiting) == (cap, 6)
+        await asyncio.gather(*gated, *waiters)
         assert pool.stats().waiting == 0
         # Slots are handed out first come, first served. (Statements pipelined together on
         # one connection may complete in any order, so only cap=1 shows the order directly.)
@@ -261,15 +299,19 @@ async def test_cap_one_is_one_statement_per_connection(dsn: str) -> None:
         assert len(set(pids)) == 3
 
 
-async def test_cancelled_shared_query_keeps_its_slot_until_the_server_is_done(dsn: str) -> None:
+async def test_cancelled_shared_query_keeps_its_slot_until_the_server_is_done(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
-        task = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.3)"))
-        await asyncio.sleep(0.05)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        # Still running server-side, so the connection is still busy...
-        assert pool.stats().in_flight == 1
+        async with _gate(conn) as key:
+            task = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            # Still running server-side, so the connection is still busy...
+            assert pool.stats().in_flight == 1
         async with asyncio.timeout(2):
             async with pool.acquire():  # ...and only idle once the server finished it
                 assert pool.stats().in_flight == 0
@@ -296,28 +338,35 @@ async def test_cancelled_shared_query_keeps_its_connection_busy(dsn: str) -> Non
         assert (stats.size, stats.idle, stats.in_flight) == (2, 2, 0)
 
 
-async def test_cancelled_waiting_query_leaves_no_trace(dsn: str) -> None:
+async def test_cancelled_waiting_query_leaves_no_trace(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=1,
         max_size=1,
         max_inflight_per_conn=1,
     ) as pool:
-        sleeper = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1)"))
-        await asyncio.sleep(0.02)
-        waiter = asyncio.create_task(pool.select_one("SELECT 1"))
-        await asyncio.sleep(0.01)
-        assert pool.stats().waiting == 1
-        waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiter
-        assert pool.stats().waiting == 0
-        await sleeper
+        async with _gate(conn) as key:
+            gated = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent
+            waiter = asyncio.create_task(pool.select_one("SELECT 1"))
+            await asyncio.sleep(0)  # queued
+            assert pool.stats().waiting == 1
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            assert pool.stats().waiting == 0
+        await gated
         assert await pool.select_one("SELECT 2") == (2,)
 
 
 @pytest.mark.usefixtures("sequence")
-async def test_waiting_statements_run_in_arrival_order(dsn: str) -> None:
+async def test_waiting_statements_run_in_arrival_order(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     next_value = "SELECT nextval('pool_seq')"
     async with await fastpg.create_pool(
         dsn,
@@ -326,15 +375,16 @@ async def test_waiting_statements_run_in_arrival_order(dsn: str) -> None:
         max_inflight_per_conn=3,
     ) as pool:
         assert await pool.select_one(next_value) == (1,)  # prepared: none overtakes another
-        sleepers = [asyncio.create_task(pool.select_one("SELECT pg_sleep(0.05)")) for _ in range(3)]
-        await asyncio.sleep(0.02)
-        waiters = [asyncio.create_task(pool.select_one(next_value)) for _ in range(9)]
-        await asyncio.sleep(0.01)
-        assert pool.stats().waiting == 9
+        async with _gate(conn) as key:
+            gated = [asyncio.create_task(_gated_pid(pool, key)) for _ in range(3)]
+            await asyncio.sleep(0)  # sent
+            waiters = [asyncio.create_task(pool.select_one(next_value)) for _ in range(9)]
+            await asyncio.sleep(0)  # queued
+            assert pool.stats().waiting == 9
         # Each freed slot goes to the first waiter, and its statement is sent at once: the
         # server runs them in arrival order, though three are pipelined at a time.
         assert await asyncio.gather(*waiters) == [(i,) for i in range(2, 11)]
-        await asyncio.gather(*sleepers)
+        await asyncio.gather(*gated)
 
 
 async def test_waiting_statement_is_sent_by_the_statement_that_frees_its_slot(
@@ -359,29 +409,33 @@ async def test_waiting_statement_is_sent_by_the_statement_that_frees_its_slot(
         assert now - ran_at >= dt.timedelta(seconds=0.15)
 
 
-async def test_waiting_statements_errors_reach_their_callers(dsn: str) -> None:
+async def test_waiting_statements_errors_reach_their_callers(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=1,
         max_size=1,
         max_inflight_per_conn=1,
     ) as pool:
-        sleeper = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.05)"))
-        await asyncio.sleep(0.02)
-        direct = pool.select_one("SELECT 1 AS id", into=Positive, strategy="direct")
-        waiters: list[Awaitable[object]] = [
-            asyncio.create_task(direct),
-            asyncio.create_task(pool.select_one("SELEC 1")),
-            asyncio.create_task(pool.select_one("SELECT 0 AS id", into=Positive)),
-            asyncio.create_task(pool.select_one("SELECT 2 AS id", into=Positive)),
-            asyncio.create_task(pool.execute("SELECT generate_series(1, 3)")),
-            asyncio.create_task(pool.execute_script("SELECT 1; SELECT 2")),
-            asyncio.create_task(pool.select_many("SELECT 3 AS id, 'c' AS v", into=Item)),
-        ]
-        await asyncio.sleep(0.01)
-        assert pool.stats().waiting == len(waiters)
+        async with _gate(conn) as key:
+            gated = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent
+            direct = pool.select_one("SELECT 1 AS id", into=Positive, strategy="direct")
+            waiters: list[Awaitable[object]] = [
+                asyncio.create_task(direct),
+                asyncio.create_task(pool.select_one("SELEC 1")),
+                asyncio.create_task(pool.select_one("SELECT 0 AS id", into=Positive)),
+                asyncio.create_task(pool.select_one("SELECT 2 AS id", into=Positive)),
+                asyncio.create_task(pool.execute("SELECT generate_series(1, 3)")),
+                asyncio.create_task(pool.execute_script("SELECT 1; SELECT 2")),
+                asyncio.create_task(pool.select_many("SELECT 3 AS id, 'c' AS v", into=Item)),
+            ]
+            await asyncio.sleep(0)  # queued
+            assert pool.stats().waiting == len(waiters)
         results = await asyncio.gather(*waiters, return_exceptions=True)
-        await sleeper  # the statement whose completion sent the first waiters is unaffected
+        await gated  # the statement whose completion sent the first waiters is unaffected
         assert isinstance(results[0], fastpg.UnsupportedTypeError)  # failed before it was sent
         assert isinstance(results[1], errors.SQLSyntaxError)  # failed on the server
         assert isinstance(results[2], fastpg.DecodeError)  # failed decoding
@@ -437,21 +491,25 @@ async def _acquired_pid(pool: fastpg.Pool) -> int:
         return pid
 
 
-async def test_acquire_drains_a_busy_connection_at_max_size(dsn: str) -> None:
+async def test_acquire_drains_a_busy_connection_at_max_size(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=1,
         max_size=1,
         max_inflight_per_conn=8,
     ) as pool:
-        first = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1)"))
-        await asyncio.sleep(0.02)
-        acquired = asyncio.create_task(_acquired_pid(pool))
-        await asyncio.sleep(0.01)
-        # Draining: new shared statements wait instead of keeping the connection busy.
-        later = asyncio.create_task(pool.select_one("SELECT 1"))
-        await asyncio.sleep(0.01)
-        assert pool.stats().waiting == 1
+        async with _gate(conn) as key:
+            first = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent
+            acquired = asyncio.create_task(_acquired_pid(pool))
+            await asyncio.sleep(0)  # waiting for the connection
+            # Draining: new shared statements wait instead of keeping the connection busy.
+            later = asyncio.create_task(pool.select_one("SELECT 1"))
+            await asyncio.sleep(0)
+            assert pool.stats().waiting == 1
         await first
         await acquired
         assert await later == (1,)
@@ -459,22 +517,27 @@ async def test_acquire_drains_a_busy_connection_at_max_size(dsn: str) -> None:
         assert pool.stats().idle == 1
 
 
-async def test_acquire_takes_the_busy_connection_that_frees_first(dsn: str) -> None:
+async def test_acquire_takes_the_busy_connection_that_frees_first(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=2,
         max_size=2,
         max_inflight_per_conn=8,
     ) as pool:
-        long = asyncio.create_task(_pid_of_sleeper(pool, 0.4))
-        short = asyncio.create_task(_pid_of_sleeper(pool, 0.1))
-        await asyncio.sleep(0.02)
-        acquired = asyncio.create_task(_acquired_pid(pool))
-        await asyncio.sleep(0.02)
-        stats = pool.stats()
-        assert (stats.idle, stats.waiting_acquire) == (0, 1)
-        assert await acquired == await short
-        assert not long.done()
+        async with _gate(conn) as long_key:
+            long = asyncio.create_task(_gated_pid(pool, long_key))
+            async with _gate(conn) as short_key:
+                short = asyncio.create_task(_gated_pid(pool, short_key))
+                await asyncio.sleep(0)  # both sent
+                acquired = asyncio.create_task(_acquired_pid(pool))
+                await asyncio.sleep(0)
+                stats = pool.stats()
+                assert (stats.idle, stats.waiting_acquire) == (0, 1)
+            assert await acquired == await short
+            assert not long.done()
         await long
         await _settle(pool)
         stats = pool.stats()
@@ -910,17 +973,21 @@ async def test_invalid_sizes(dsn: str, min_size: int, max_size: int, cap: int) -
         )
 
 
-async def test_close_is_graceful(dsn: str) -> None:
+async def test_close_is_graceful(dsn: str, conn: fastpg.Connection) -> None:
     pool = await fastpg.create_pool(dsn, min_size=1, max_size=1, max_inflight_per_conn=1)
-    in_flight = asyncio.create_task(pool.select_one("SELECT pg_sleep(0.1), 1"))
-    await asyncio.sleep(0.02)
-    waiting = asyncio.create_task(pool.select_one("SELECT 2"))
-    await asyncio.sleep(0.01)
-    await pool.close()
-    assert pool.closed
+    async with _gate(conn) as key:
+        query = "SELECT pg_advisory_xact_lock_shared($1), 1"
+        in_flight = asyncio.create_task(pool.select_one(query, key))
+        await asyncio.sleep(0)  # sent
+        waiting = asyncio.create_task(pool.select_one("SELECT 2"))
+        await asyncio.sleep(0)  # queued
+        closing = asyncio.create_task(pool.close())
+        with pytest.raises(fastpg.ConnectionClosedError):
+            await waiting
+        assert pool.closed
+        assert not closing.done()  # waiting for the statement in flight
+    await closing
     assert (await in_flight)[1] == 1
-    with pytest.raises(fastpg.ConnectionClosedError):
-        await waiting
     with pytest.raises(fastpg.ConnectionClosedError):
         await pool.select_one("SELECT 1")
     with pytest.raises(fastpg.ConnectionClosedError):
@@ -975,15 +1042,21 @@ async def test_max_lifetime_recycles_idle_connections(dsn: str) -> None:
                 await asyncio.sleep(0.05)
 
 
-async def test_max_lifetime_retires_a_busy_connection_once_idle(dsn: str) -> None:
+async def test_max_lifetime_retires_a_busy_connection_once_idle(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1, max_lifetime=0.2) as pool:
-        sleeper = asyncio.create_task(_pid_of_sleeper(pool, 0.5))
-        await asyncio.sleep(0.35)  # expired while busy: it takes no new statements
-        later = asyncio.create_task(pool.select_one("SELECT pg_backend_pid()"))
-        await asyncio.sleep(0.01)
-        stats = pool.stats()
-        assert (stats.idle, stats.in_flight, stats.waiting) == (0, 1, 1)
-        old_pid = await sleeper
+        async with _gate(conn) as key:
+            gated = asyncio.create_task(_gated_pid(pool, key))
+            # Expired while busy (the pool's upkeep runs every 50 ms here): it takes no new
+            # statements.
+            await asyncio.sleep(0.35)
+            later = asyncio.create_task(pool.select_one("SELECT pg_backend_pid()"))
+            await asyncio.sleep(0)  # queued
+            stats = pool.stats()
+            assert (stats.idle, stats.in_flight, stats.waiting) == (0, 1, 1)
+        old_pid = await gated
         assert await later != (old_pid,)
         await _settle(pool)
         stats = pool.stats()

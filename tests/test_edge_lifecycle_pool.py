@@ -119,10 +119,19 @@ async def _checkouts(pool: fastpg.Pool, stop: asyncio.Event, load: Load) -> None
             load.pids.add(pid)
 
 
-async def _kill_backends(conn: fastpg.Connection, name: str, times: int) -> int:
+async def _working(load: Load) -> None:
+    """Wait until the pool serves 20 more statements."""
+    ok = load.ok
+    async with asyncio.timeout(10):
+        while load.ok < ok + 20:
+            await asyncio.sleep(0.01)
+
+
+async def _kill_backends(conn: fastpg.Connection, name: str, times: int, load: Load) -> int:
+    """Kill the pool's sessions ``times`` times, each once the pool works again."""
     killed = 0
     for _ in range(times):
-        await asyncio.sleep(0.1)
+        await _working(load)
         (count,) = await conn.select_one(
             "SELECT count(pg_terminate_backend(pid))::int FROM pg_stat_activity"
             " WHERE application_name = $1",
@@ -195,8 +204,8 @@ async def test_connections_dying_at_max_size_under_load(
         load = Load()
         workers = [asyncio.create_task(_stream(pool, stop, load)) for _ in range(30)]
         workers += [asyncio.create_task(_checkouts(pool, stop, load)) for _ in range(3)]
-        killed = await _kill_backends(conn, name, 5)
-        await asyncio.sleep(0.2)
+        killed = await _kill_backends(conn, name, 5, load)
+        await _working(load)  # and it recovers from the last kill
         stop.set()
         async with asyncio.timeout(10):  # nothing hangs on a dead connection
             await asyncio.gather(*workers)
@@ -204,12 +213,16 @@ async def test_connections_dying_at_max_size_under_load(
         # Only the statements on a killed session fail, with a connection-level error.
         for failure in load.failures:
             assert isinstance(failure, fastpg.ConnectionClosedError | errors.OperationalError)
-        assert load.ok > 100
         stats = await _settled(pool)
         assert stats.size <= 3
         assert (stats.acquired, stats.in_flight) == (0, 0)
-        assert await pool.select_one("SELECT 1") == (1,)
-        assert await _backends(conn, name) == pool.stats().size
+        async with asyncio.timeout(5):
+            assert await pool.select_one("SELECT 1") == (1,)
+            # No session left behind (a closed one leaves pg_stat_activity once it has exited).
+            while await _backends(conn, name) != pool.stats().size:
+                await asyncio.sleep(0.05)
+        async with asyncio.timeout(10):  # nor does closing the pool
+            await pool.close()
     assert loop_errors.messages() == []
 
 
@@ -228,11 +241,12 @@ async def test_retirement_while_busy(dsn: str, conn: fastpg.Connection) -> None:
         load = Load()
         workers = [asyncio.create_task(_stream(pool, stop, load)) for _ in range(20)]
         workers += [asyncio.create_task(_checkouts(pool, stop, load)) for _ in range(2)]
-        await asyncio.sleep(1.5)
+        async with asyncio.timeout(10):
+            while len(load.pids) <= 4:  # connections are replaced as they age
+                await asyncio.sleep(0.05)
         stop.set()
         await asyncio.gather(*workers)
         assert load.failures == []  # retiring never fails a statement
-        assert len(load.pids) > 4  # connections were replaced as they aged
         # Idle again: back down to min_size, with no session left behind.
         deadline = time.monotonic() + 5
         while pool.stats().size > 1 and time.monotonic() < deadline:
@@ -251,14 +265,12 @@ async def test_retirement_replaces_before_closing(dsn: str) -> None:
     async with pool:
         pids: set[int] = set()
         sizes: list[int] = []
-        deadline = time.monotonic() + 1.5
-        while time.monotonic() < deadline:
-            for _ in range(20):
-                sizes.append(pool.stats().size)
-                await asyncio.sleep(0.002)
-            (pid,) = await pool.select_one("SELECT pg_backend_pid()")
-            pids.add(pid)
-        assert len(pids) > 3  # connections were replaced as they aged
+        async with asyncio.timeout(10):
+            while len(pids) <= 3:  # connections are replaced as they age
+                for _ in range(20):
+                    sizes.append(pool.stats().size)
+                    await asyncio.sleep(0.002)
+                pids.add((await pool.select_one("SELECT pg_backend_pid()"))[0])
         assert min(sizes) >= 1
 
 
@@ -269,11 +281,9 @@ async def test_retirement_at_max_size_closes_first(dsn: str) -> None:
     pool = await fastpg.create_pool(dsn, min_size=2, max_size=2, max_lifetime=0.1)
     async with pool:
         pids: set[int] = set()
-        deadline = time.monotonic() + 1
-        while time.monotonic() < deadline:
-            (pid,) = await pool.select_one("SELECT pg_backend_pid()")
-            pids.add(pid)
-            stats = pool.stats()
-            assert stats.size + stats.opening <= 2
-            await asyncio.sleep(0.02)
-        assert len(pids) > 2
+        async with asyncio.timeout(10):
+            while len(pids) <= 2:  # connections are replaced as they age
+                pids.add((await pool.select_one("SELECT pg_backend_pid()"))[0])
+                stats = pool.stats()
+                assert stats.size + stats.opening <= 2
+                await asyncio.sleep(0.02)
