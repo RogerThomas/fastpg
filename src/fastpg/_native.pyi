@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable, Sequence
-from typing import Any, final
+from typing import Any, Literal, final
 
 __version__: str
 
@@ -16,7 +16,8 @@ def dsn_targets(dsn: str) -> list[tuple[str, str, int]]:
     """The hosts of `dsn` as `("tcp" | "unix", host or path, port)`, in connection order."""
 
 def dsn_socket_options(dsn: str) -> SocketOptions:
-    """libpq's socket keys of `dsn` (connect_timeout, keepalives...); checks the whole DSN."""
+    """libpq's keys of `dsn` applied in Python (connect_timeout, keepalives,
+    target_session_attrs...); checks the whole DSN."""
 
 @final
 class SocketOptions:
@@ -40,6 +41,9 @@ class SocketOptions:
     @property
     def tcp_user_timeout(self) -> int | None:
         """Milliseconds sent data may stay unacknowledged (Linux)."""
+    @property
+    def target_session_attrs(self) -> Literal["any", "read-write", "read-only"]:
+        """The sessions to keep; the others are closed and the next address is tried."""
 
 @final
 class StructSpec:

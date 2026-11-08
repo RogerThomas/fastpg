@@ -45,6 +45,15 @@ def _drop(writer: asyncio.StreamWriter, *, rst: bool) -> None:
     writer.transport.abort()
 
 
+async def _read_only_startup(reader: asyncio.StreamReader) -> bytes:
+    """The client's startup message, with ``default_transaction_read_only`` turned on."""
+    size = struct.unpack("!i", await reader.readexactly(4))[0]
+    body = await reader.readexactly(size - 4)
+    # The parameters end with an empty name: add one before it.
+    body = body[:-1] + b"options\0-c default_transaction_read_only=on\0\0"
+    return struct.pack("!i", len(body) + 4) + body
+
+
 @dataclass(slots=True, eq=False)
 class Faults:
     """What a `FaultProxy` does to one direction (to the server or to the client) of every
@@ -124,6 +133,9 @@ class FaultProxy:
     to_client: Faults = field(default_factory=Faults)
     refuse: bool = False
     """Reset new connections at once, as a server that refuses them would."""
+    read_only: bool = False
+    """Start new sessions read-only, as on a standby: the startup message (unencrypted:
+    ``sslmode=disable``) gets ``options=-c default_transaction_read_only=on``."""
     accepted: int = 0
     """Connections accepted so far."""
     round_trips: int = 0
@@ -222,6 +234,8 @@ class FaultProxy:
         except OSError:
             writer.transport.abort()
             return
+        if self.read_only:
+            upstream_writer.write(await _read_only_startup(reader))
         for side in (writer, upstream_writer):
             sock = side.get_extra_info("socket")
             if sock.family != socket.AF_UNIX:
