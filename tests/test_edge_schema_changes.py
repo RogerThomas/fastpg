@@ -75,7 +75,11 @@ async def _pairs(conn: fastpg.Connection) -> str:
     return "SELECT * FROM pairs"
 
 
-async def _select(conn: fastpg.Connection, query: str, target: Target) -> list[object]:
+async def _select(
+    conn: fastpg.Connection | fastpg.Transaction,
+    query: str,
+    target: Target,
+) -> list[object]:
     """Run `query` once for `target` (which prepares and caches it)."""
     into, strategy = target
     return await conn.select_many(query, into=into, strategy=strategy)
@@ -261,3 +265,50 @@ async def test_stale_statement_in_a_transaction_reports_the_schema_change(
     with pytest.raises(fastpg.NotSupportedError, match="cached plan must not change result type"):
         await _add_column_and_select_in_a_transaction(conn)
     assert await conn.select_many("SELECT * FROM changing") == [(1,)]
+
+
+async def test_cursor_redeclared_in_a_transaction(conn: fastpg.Connection, target: Target) -> None:
+    query = "FETCH 1 FROM c"
+    async with conn.transaction() as tx:
+        await tx.execute_script("DECLARE c CURSOR FOR SELECT 1 AS a, 'b'::text AS b")
+        [row] = await _select(tx, query, target)
+        assert _fields(row) == {"a": 1, "b": "b"}
+        await tx.execute_script("CLOSE c; DECLARE c CURSOR FOR SELECT 'c'::text AS b, 2 AS a")
+        # The server never flags a prepared FETCH whose cursor changed: it is described anew.
+        [row] = await _select(tx, query, target)
+        assert _fields(row) == {"a": 2, "b": "c"}
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["FETCH 1 FROM c", "  /* next */ fetch 1 from c", "-- next\nFetch 1 From c"],
+)
+async def test_held_cursor_redeclared_with_another_type(
+    conn: fastpg.Connection,
+    query: str,
+) -> None:
+    await conn.execute_script("DECLARE c CURSOR WITH HOLD FOR SELECT 7::int4")
+    assert await conn.select_many(query) == [(7,)]
+    await conn.execute_script("CLOSE c; DECLARE c CURSOR WITH HOLD FOR SELECT 1.5::float4")
+    # As wide as an int4: read with the first cursor's types, it came back as 1069547520.
+    assert await conn.select_many(query) == [(1.5,)]
+    # Neither FETCH was kept: no statement is left prepared on the server for them.
+    prepared = (await conn.select_one("SELECT count(*) FROM pg_prepared_statements"))[0]
+    assert prepared == conn.cached_statements
+
+
+async def test_cursor_redeclared_on_an_acquired_connection(dsn: str) -> None:
+    # One connection: the second checkout gets the one the first FETCH ran on.
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        for declared, row in [("SELECT 7::int4", (7,)), ("SELECT 1.5::float4", (1.5,))]:
+            async with pool.acquire() as conn, conn.transaction() as tx:
+                await tx.execute_script(f"DECLARE c CURSOR FOR {declared}")
+                assert await tx.select_many("FETCH 1 FROM c") == [row]
+
+
+async def test_sql_prepared_statement_redefined(conn: fastpg.Connection) -> None:
+    await conn.execute_script("PREPARE p AS SELECT 7::int4")
+    assert await conn.select_many("EXECUTE p") == [(7,)]
+    await conn.execute_script("DEALLOCATE p; PREPARE p AS SELECT 1.5::float4")
+    # As with FETCH, the server never flags an EXECUTE whose statement was redefined.
+    assert await conn.select_many("EXECUTE p") == [(1.5,)]

@@ -8,6 +8,7 @@
 
 import asyncio
 import contextlib
+import os
 import socket
 import struct
 import time
@@ -18,6 +19,11 @@ from urllib.parse import urlsplit, urlunsplit
 from testcontainers.core.container import DockerContainer
 
 import fastpg
+
+# The server image every test container runs (conftest.py's and `disposable_server`'s). CI runs
+# the suite on other PostgreSQL majors by setting FASTPG_PG_IMAGE. Keep the default in step with
+# docker-compose.yml's.
+PG_IMAGE = os.environ.get("FASTPG_PG_IMAGE", "postgres:18.6-trixie")
 
 
 def with_params(dsn: str, **params: str) -> str:
@@ -43,6 +49,15 @@ def _drop(writer: asyncio.StreamWriter, *, rst: bool) -> None:
         with contextlib.suppress(OSError):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
     writer.transport.abort()
+
+
+async def _read_only_startup(reader: asyncio.StreamReader) -> bytes:
+    """The client's startup message, with ``default_transaction_read_only`` turned on."""
+    size = struct.unpack("!i", await reader.readexactly(4))[0]
+    body = await reader.readexactly(size - 4)
+    # The parameters end with an empty name: add one before it.
+    body = body[:-1] + b"options\0-c default_transaction_read_only=on\0\0"
+    return struct.pack("!i", len(body) + 4) + body
 
 
 @dataclass(slots=True, eq=False)
@@ -124,6 +139,9 @@ class FaultProxy:
     to_client: Faults = field(default_factory=Faults)
     refuse: bool = False
     """Reset new connections at once, as a server that refuses them would."""
+    read_only: bool = False
+    """Start new sessions read-only, as on a standby: the startup message (unencrypted:
+    ``sslmode=disable``) gets ``options=-c default_transaction_read_only=on``."""
     accepted: int = 0
     """Connections accepted so far."""
     round_trips: int = 0
@@ -222,6 +240,8 @@ class FaultProxy:
         except OSError:
             writer.transport.abort()
             return
+        if self.read_only:
+            upstream_writer.write(await _read_only_startup(reader))
         for side in (writer, upstream_writer):
             sock = side.get_extra_info("socket")
             if sock.family != socket.AF_UNIX:
@@ -370,7 +390,7 @@ def disposable_server(password: str, name: str) -> Generator[DisposableServer]:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     container = (
-        DockerContainer("postgres:18.6-trixie")
+        DockerContainer(PG_IMAGE)
         .with_name(name)
         .with_env("POSTGRES_USER", "fastpg")
         .with_env("POSTGRES_PASSWORD", password)

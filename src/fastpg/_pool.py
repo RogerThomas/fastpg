@@ -237,7 +237,7 @@ class Pool:
     # Named-parameter queries too: the pool routes and learns on the ``$n`` SQL text.
     _named: ClassVar[NamedBinder] = NamedBinder(1024)
 
-    dsn: str
+    dsn: str = field(repr=False)  # holds the password
     min_size: int = field(kw_only=True)
     max_size: int = field(kw_only=True)
     max_inflight_per_conn: int = field(kw_only=True)
