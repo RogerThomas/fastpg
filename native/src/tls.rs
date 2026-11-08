@@ -12,8 +12,8 @@
 //! `net.rs` wraps the result in `EofWatch` as before, so a TLS `close_notify`, a TCP EOF
 //! without one, a TLS error and a socket error all end the connection the same way.
 //!
-//! The DSN's TLS keys (and libpq's `connect_timeout`, keepalive and `tcp_user_timeout` keys)
-//! are taken out here (xitca rejects keys and `sslmode` values it does not know); the rest of
+//! The DSN's TLS keys (and libpq's `connect_timeout`, keepalive, `tcp_user_timeout` and
+//! `target_session_attrs` keys) are taken out here (xitca rejects keys and `sslmode` values it does not know); the rest of
 //! the DSN goes to xitca unchanged.
 
 use std::borrow::Cow;
@@ -338,7 +338,6 @@ const XITCA_KEYS: &[&str] = &[
     "application_name",
     "host",
     "port",
-    "target_session_attrs",
 ];
 
 /// TLS keys and socket keys found in a DSN (last one wins, as in xitca's parser).
@@ -350,6 +349,7 @@ struct Raw {
     keepalives_interval: Option<String>,
     keepalives_count: Option<String>,
     tcp_user_timeout: Option<String>,
+    target_session_attrs: Option<String>,
     sslmode: Option<String>,
     sslnegotiation: Option<String>,
     sslrootcert: Option<String>,
@@ -372,6 +372,7 @@ impl Raw {
             "keepalives_interval" => &mut self.keepalives_interval,
             "keepalives_count" => &mut self.keepalives_count,
             "tcp_user_timeout" => &mut self.tcp_user_timeout,
+            "target_session_attrs" => &mut self.target_session_attrs,
             "sslmode" => &mut self.sslmode,
             "sslnegotiation" => &mut self.sslnegotiation,
             "sslrootcert" => &mut self.sslrootcert,
@@ -469,9 +470,10 @@ pub struct DsnOptions {
     pub socket: SocketOptions,
 }
 
-/// libpq's socket keys, applied in Python: `connect_timeout` per address tried, the others to
-/// each TCP socket before it connects (never to a unix socket). `None` means no timeout for
-/// `connect_timeout`, and the OS default for the others.
+/// libpq's keys applied in Python: `connect_timeout` per address tried, the socket keys to
+/// each TCP socket before it connects (never to a unix socket), and `target_session_attrs`
+/// to each session started. `None` means no timeout for `connect_timeout`, and the OS default
+/// for the socket keys.
 #[pyclass(frozen, get_all, module = "fastpg._native")]
 pub struct SocketOptions {
     /// Seconds.
@@ -486,6 +488,9 @@ pub struct SocketOptions {
     pub keepalives_count: Option<u32>,
     /// Milliseconds sent data may stay unacknowledged (`TCP_USER_TIMEOUT`, Linux only).
     pub tcp_user_timeout: Option<u32>,
+    /// `any` (the default), `read-write` or `read-only`: the sessions to keep (the others
+    /// are closed, and the next address is tried).
+    pub target_session_attrs: &'static str,
 }
 
 fn invalid_integer(key: &str, value: &str) -> QueryError {
@@ -553,6 +558,16 @@ pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
             "tcp_user_timeout",
             raw.tcp_user_timeout.take().as_deref(),
         )?,
+        target_session_attrs: match raw.target_session_attrs.take().as_deref() {
+            None | Some("any") => "any",
+            Some("read-write") => "read-write",
+            Some("read-only") => "read-only",
+            Some(other) => {
+                return Err(interface(format!(
+                    "invalid target_session_attrs value: {other:?}"
+                )));
+            }
+        },
     };
     let tls = raw.into_options()?;
     Ok((rest, DsnOptions { tls, socket }))
@@ -1222,6 +1237,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn target_session_attrs_is_split_off() {
+        let (rest, opts) =
+            split_all("postgresql://db/x?target_session_attrs=read-write&application_name=a");
+        assert_eq!(rest, "postgresql://db/x?application_name=a");
+        assert_eq!(opts.socket.target_session_attrs, "read-write");
+        let (rest, opts) = split_all("host=db target_session_attrs=read-only user=u");
+        assert_eq!(rest, "host=db user=u");
+        assert_eq!(opts.socket.target_session_attrs, "read-only");
+        let attrs = |dsn| split_all(dsn).1.socket.target_session_attrs;
+        assert_eq!(attrs("host=db"), "any", "libpq's default");
+        assert_eq!(attrs("host=db target_session_attrs=any"), "any");
+        assert_eq!(
+            error("host=db target_session_attrs=primary"),
+            "invalid target_session_attrs value: \"primary\""
+        );
     }
 
     fn error(dsn: &str) -> String {

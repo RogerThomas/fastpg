@@ -111,6 +111,7 @@ timeout = 30
 addopts = ["--strict-markers"]
 markers = [
     "timing: asserts how long something takes; `task test` runs these after the rest, alone",
+    "min_server(major): needs PostgreSQL `major` or later; skipped on an older server",
 ]
 
 # Python coverage (`task coverage`, with pytest-cov). Each process writes a data file of its own:

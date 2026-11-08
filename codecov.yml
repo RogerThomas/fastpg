@@ -50,3 +50,5 @@ ignore:
   - scripts/
   - examples/
   - faster/
+  # Only built with the alloc-stats feature (benchmarks), which coverage doesn't enable.
+  - native/src/alloc_stats.rs

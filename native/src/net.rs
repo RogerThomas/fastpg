@@ -473,33 +473,43 @@ pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
     // carry no detail at all ("WIP error type ...").
     let cfg = Config::try_from(rest.as_ref()).map_err(|_| {
         QueryError::Interface(
-            "invalid connection string: malformed, or an invalid port or \
-             target_session_attrs value"
-                .to_owned(),
+            "invalid connection string: malformed, or an invalid port value".to_owned(),
         )
     })?;
     Ok((cfg, options))
 }
 
-/// libpq's socket keys of `dsn` (after checking the whole DSN).
+/// libpq's keys of `dsn` applied in Python (after checking the whole DSN).
 pub fn socket_options(dsn: &str) -> Result<SocketOptions, QueryError> {
     Ok(config(dsn)?.1.socket)
 }
 
 /// The hosts of `dsn` as `("tcp" | "unix", host or directory/path, port)`, in connection
-/// order, for Python to connect the socket to.
+/// order, for Python to connect the socket to. As in libpq, host N goes with port N; a single
+/// port goes with every host, and no port means 5432.
 pub fn targets(dsn: &str) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
     let (cfg, _) = config(dsn)?;
+    let (hosts, ports) = (cfg.get_hosts(), cfg.get_ports());
+    if ports.len() > 1 && ports.len() != hosts.len() {
+        return Err(QueryError::Interface(format!(
+            "could not match {} port numbers to {} hosts",
+            ports.len(),
+            hosts.len()
+        )));
+    }
     let mut out = Vec::new();
-    for host in cfg.get_hosts() {
+    for (i, host) in hosts.iter().enumerate() {
         let target = parse_host(&format!("{host:?}"))
             .ok_or_else(|| QueryError::Interface(format!("unsupported host {host:?}")))?;
-        for &port in cfg.get_ports() {
-            out.push(match &target {
-                Target::Tcp(name) => ("tcp", name.clone(), port),
-                Target::Unix(path) => ("unix", path.to_string_lossy().into_owned(), port),
-            });
-        }
+        let port = match ports {
+            [] => 5432,
+            [port] => *port,
+            _ => ports[i],
+        };
+        out.push(match target {
+            Target::Tcp(name) => ("tcp", name, port),
+            Target::Unix(path) => ("unix", path.to_string_lossy().into_owned(), port),
+        });
     }
     Ok(out)
 }
@@ -859,5 +869,47 @@ mod tests {
         assert!(
             matches!(parsed, Some(Target::Unix(p)) if p == std::path::Path::new("/run/postgresql"))
         );
+    }
+
+    #[test]
+    fn hosts_go_with_their_ports_as_in_libpq() {
+        let tcp = |host: &str, port| ("tcp", host.to_owned(), port);
+        let pairs = |dsn| targets(dsn).unwrap_or_else(|_| panic!("{dsn}"));
+        let paired = vec![tcp("h1", 1111), tcp("h2", 2222)];
+        assert_eq!(pairs("postgresql://u@h1:1111,h2:2222/db"), paired);
+        assert_eq!(pairs("host=h1,h2 port=1111,2222 user=u"), paired);
+        assert_eq!(
+            pairs("postgresql://u@/db?host=h1,h2&port=1111,2222"),
+            paired
+        );
+        // One port goes with every host; none means 5432 (as does an empty one).
+        let one = vec![tcp("h1", 1111), tcp("h2", 1111)];
+        assert_eq!(pairs("host=h1,h2 port=1111 user=u"), one);
+        let default = vec![tcp("h1", 5432), tcp("h2", 5432)];
+        assert_eq!(pairs("host=h1,h2 user=u"), default);
+        assert_eq!(pairs("postgresql://u@h1,h2/db"), default);
+        assert_eq!(
+            pairs("host=h1,h2 port=,1111"),
+            vec![tcp("h1", 5432), tcp("h2", 1111)]
+        );
+        assert_eq!(
+            pairs("host=/run/pg,h2 port=1111,2222"),
+            vec![("unix", "/run/pg".to_owned(), 1111), tcp("h2", 2222)]
+        );
+        for (dsn, message) in [
+            (
+                "host=h1,h2,h3 port=1,2",
+                "could not match 2 port numbers to 3 hosts",
+            ),
+            (
+                "host=h1 port=1,2",
+                "could not match 2 port numbers to 1 hosts",
+            ),
+        ] {
+            match targets(dsn) {
+                Err(QueryError::Interface(m)) => assert_eq!(m, message),
+                _ => panic!("expected an InterfaceError for {dsn:?}"),
+            }
+        }
     }
 }
