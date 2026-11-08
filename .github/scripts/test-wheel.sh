@@ -9,6 +9,9 @@
 # With FASTPG_TEST_OWN_SERVERS=1 (where Docker is available), the suite ignores those servers and
 # runs in parallel on throwaway ones of its own, a set per worker, as `task test` does; the smoke
 # test still uses FASTPG_DSN.
+# With FASTPG_TIMING_PYTHON set (e.g. 3.14), only that Python runs the `timing` tests (the ones
+# that wait in real time for timeouts, keepalives and stalls); the others run the rest of the
+# suite. Unset, every Python runs them all.
 # e.g. `sh .github/scripts/test-wheel.sh dist 3.14 3.14t` tests the one cp314 wheel in dist on
 # Python 3.14, then the one cp314t (free-threaded) wheel on 3.14t; uv finds or downloads each.
 set -eux
@@ -35,14 +38,22 @@ for python; do
         uv run --isolated --no-project --with "$wheel" -- python tests/smoke.py
         uv sync --locked --no-install-project # the dev dependencies, without building fastpg
         uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$wheel"
+        timing=true
+        if [ -n "${FASTPG_TIMING_PYTHON:-}" ] && [ "$python" != "$FASTPG_TIMING_PYTHON" ]; then
+            timing=false
+        fi
         if [ "${FASTPG_TEST_OWN_SERVERS:-}" = 1 ]; then
             # As `task test`: in parallel, then the `timing` tests alone.
             env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
                 uv run --no-sync pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-            env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
-                uv run --no-sync pytest -ra -m timing
-        else
+            if [ "$timing" = true ]; then
+                env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
+                    uv run --no-sync pytest -ra -m timing
+            fi
+        elif [ "$timing" = true ]; then
             uv run --no-sync pytest -ra
+        else
+            uv run --no-sync pytest -ra -m "not timing"
         fi
     )
 done
