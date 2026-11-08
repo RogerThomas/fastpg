@@ -32,6 +32,7 @@ env:
 jobs:
   # A pull request that changes only documentation (docs/, Markdown files at the top level,
   # mkdocs.yml) skips the type-check and the test jobs: lint and the docs build still run.
+  # cargo-deny runs only when the Rust dependencies, its config or this workflow change.
   # Not a workflow-level paths filter: "CI passed" is required, so it must always report.
   changes:
     name: Changes
@@ -39,6 +40,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      deps: ${{ steps.diff.outputs.deps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,12 +52,22 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             code=true
-          elif git diff --name-only "$BASE...HEAD" | grep -qvE '^(docs/|[^/]+\.md$|mkdocs\.yml$)'; then
-            code=true
+            deps=true
           else
-            code=false
+            if git diff --name-only "$BASE...HEAD" | grep -qvE '^(docs/|[^/]+\.md$|mkdocs\.yml$)'; then
+              code=true
+            else
+              code=false
+            fi
+            if git diff --name-only "$BASE...HEAD" |
+              grep -qE '^(native/(Cargo\.toml|Cargo\.lock|deny\.toml)|\.github/workflows/ci\.yml)$'; then
+              deps=true
+            else
+              deps=false
+            fi
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+          echo "deps=$deps" | tee -a "$GITHUB_OUTPUT"
 
   lint:
     name: Lint
@@ -255,22 +267,46 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: task docs-test
 
+  # Known vulnerabilities (RustSec), licences, duplicate versions and sources of the Rust
+  # dependencies, as native/deny.toml sets out.
+  deny:
+    name: Dependencies (cargo-deny)
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: native/Cargo.toml
+
   ci-passed:
     name: CI passed
     if: always()
-    needs: [changes, lint, typecheck, test, test-macos, docs]
+    needs: [changes, lint, typecheck, test, test-macos, docs, deny]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # Skipped is fine only where `changes` skipped it (documentation-only changes): a job
-      # skipped because one it needs failed shows up as that failure.
-      - name: Check every job passed (or was skipped for a docs-only change)
+      # Skipped is fine only where `changes` skipped it (documentation-only changes, or for
+      # cargo-deny no change to the Rust dependencies): a job skipped because one it needs
+      # failed shows up as that failure.
+      - name: Check every job passed (or was skipped because the change doesn't need it)
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           CODE: ${{ needs.changes.outputs.code }}
+          DENY: ${{ needs.deny.result }}
+          DEPS: ${{ needs.changes.outputs.deps }}
         run: |
-          echo "Results: $RESULTS (code changed: $CODE)"
+          echo "Results: $RESULTS (code changed: $CODE, Rust dependencies changed: $DEPS)"
           for result in $RESULTS; do
+            # cargo-deny's own "skipped" (there is one at most) counts as a pass.
+            if [ "$result" = skipped ] && [ "$DENY" = skipped ] && [ "$DEPS" = false ]; then
+              DENY=counted
+              continue
+            fi
             case "$result" in
               success) ;;
               skipped) [ "$CODE" = false ] || { echo "::error::A required job was skipped"; exit 1; } ;;
