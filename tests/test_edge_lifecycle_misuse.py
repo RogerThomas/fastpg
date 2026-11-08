@@ -6,6 +6,7 @@ Each must fail with a clear error, at once, and leave the connection usable.
 import asyncio
 import gc
 import warnings
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import msgspec
@@ -109,6 +110,101 @@ async def test_multiple_statements_in_a_prepared_query(conn: fastpg.Connection) 
         await conn.execute("SELECT 1; SELECT 2")
     await conn.execute_script("SELECT 1; SELECT 2")  # the simple protocol takes several
     await _assert_usable(conn)
+
+
+_COPY_REFUSED = (
+    r"not supported by select_\*\(\), execute\(\) or execute_script\(\): use copy_in\(\)"
+)
+
+
+@pytest.fixture
+async def copy_table(dsn: str) -> AsyncIterator[None]:
+    async with await fastpg.connect(dsn) as conn:
+        await conn.execute_script(
+            "DROP TABLE IF EXISTS misuse_copy; CREATE TABLE misuse_copy (a int)",
+        )
+        yield
+        await conn.execute_script("DROP TABLE misuse_copy")
+
+
+def _query_methods(
+    conn: fastpg.Connection | fastpg.Transaction,
+) -> list[Callable[[str], Awaitable[object]]]:
+    return [
+        conn.select_one,
+        conn.select_one_or_none,
+        conn.select_many,
+        lambda query: conn.select_many(query, into=dict),
+        conn.execute,
+        conn.execute_script,
+    ]
+
+
+@pytest.mark.usefixtures("copy_table")
+@pytest.mark.parametrize("query", ["COPY misuse_copy FROM STDIN", "COPY (SELECT 1) TO STDOUT"])
+async def test_copy_from_or_to_the_client_is_refused(
+    conn: fastpg.Connection,
+    query: str,
+) -> None:
+    for method in _query_methods(conn):
+        with pytest.raises(fastpg.InterfaceError, match=_COPY_REFUSED):
+            async with asyncio.timeout(2):
+                await method(query)
+        async with asyncio.timeout(2):
+            await _assert_usable(conn)
+    with pytest.raises(fastpg.InterfaceError, match=_COPY_REFUSED):
+        await conn.execute_script(
+            "SELECT 1; /* a comment */ copy misuse_copy from stdin; SELECT 2",
+        )
+    async with asyncio.timeout(2):
+        await _assert_usable(conn)
+
+
+@pytest.mark.usefixtures("copy_table")
+async def test_a_refused_copy_leaves_a_transaction_alone(
+    conn: fastpg.Connection,
+) -> None:
+    async with conn.transaction() as tx:
+        await tx.execute("INSERT INTO misuse_copy VALUES (1)")
+        for method in _query_methods(tx):
+            with pytest.raises(fastpg.InterfaceError, match=_COPY_REFUSED):
+                async with asyncio.timeout(2):
+                    await method("COPY misuse_copy FROM STDIN")
+        async with asyncio.timeout(2):
+            assert await tx.select_one("SELECT count(*) FROM misuse_copy") == (1,)
+    assert await conn.select_one("SELECT count(*) FROM misuse_copy") == (1,)
+
+
+@pytest.mark.usefixtures("copy_table")
+async def test_a_refused_copy_leaves_the_pools_other_queries_alone(
+    dsn: str,
+) -> None:
+    # One connection: the other callers' statements are pipelined on it with the COPY.
+    async with await fastpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=1,
+        max_inflight_per_conn=8,
+    ) as pool:
+        calls = [
+            pool.select_one("SELECT $1::int", 1),
+            pool.execute_script("COPY misuse_copy FROM STDIN"),
+            pool.select_one("SELECT $1::int", 2),
+            pool.execute("COPY misuse_copy FROM STDIN"),
+            pool.select_one("SELECT $1::int", 3),
+            pool.select_many("COPY (SELECT 1) TO STDOUT"),
+            pool.select_one("SELECT $1::int", 4),
+        ]
+        async with asyncio.timeout(2):
+            results = await asyncio.gather(*calls, return_exceptions=True)
+        assert results[0::2] == [(1,), (2,), (3,), (4,)]
+        for refused in results[1::2]:
+            assert isinstance(refused, fastpg.InterfaceError)
+            assert "use copy_in()" in str(refused)
+        async with asyncio.timeout(2):
+            assert await pool.select_one("SELECT 5") == (5,)
+        stats = pool.stats()
+        assert (stats.size, stats.in_flight) == (1, 0)
 
 
 async def test_wrong_parameter_counts_and_nul_bytes(conn: fastpg.Connection) -> None:
