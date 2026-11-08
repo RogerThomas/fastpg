@@ -16,26 +16,48 @@ pub const REFUSED: &str = "COPY ... FROM STDIN and COPY ... TO STDOUT are not su
                            select_*(), execute() or execute_script(): use copy_in() to load rows";
 
 /// Whether any of the `;`-separated statements in `sql` is a COPY from or to the client:
-/// it starts with `COPY` and has the word `STDIN` or `STDOUT` outside quotes and comments.
+/// it starts with `COPY` and has `FROM STDIN` or `TO STDOUT` outside parentheses (so not
+/// in a column list or a query), quotes and comments.
 pub fn copies_with_client(sql: &str) -> bool {
     let bytes = sql.as_bytes();
     let mut i = 0;
     // Words seen in the current statement, and whether its first one was COPY.
     let mut words = 0usize;
     let mut copy = false;
+    // Parenthesis depth, and the word just read outside parentheses (empty once anything
+    // but whitespace or a comment follows it).
+    let mut depth = 0usize;
+    let mut last: &[u8] = b"";
     while i < bytes.len() {
+        let mut word: &[u8] = b"";
         match bytes[i..] {
-            [b';', ..] => {
-                (words, copy) = (0, false);
+            [b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c', ..] => {
                 i += 1;
+                continue;
             }
             [b'-', b'-', ..] => {
                 i += bytes[i..]
                     .iter()
                     .position(|&b| b == b'\n' || b == b'\r')
                     .unwrap_or(bytes.len() - i);
+                continue;
             }
-            [b'/', b'*', ..] => i = after_block_comment(bytes, i + 2),
+            [b'/', b'*', ..] => {
+                i = after_block_comment(bytes, i + 2);
+                continue;
+            }
+            [b';', ..] => {
+                (words, copy, depth) = (0, false, 0);
+                i += 1;
+            }
+            [b'(', ..] => {
+                depth += 1;
+                i += 1;
+            }
+            [b')', ..] => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
             [b'\'', ..] => {
                 // An E'...' string (the `E` was just read as a word) also escapes with `\`.
                 let escapes = i > 0 && bytes[i - 1].eq_ignore_ascii_case(&b'e') && {
@@ -50,12 +72,10 @@ pub fn copies_with_client(sql: &str) -> bool {
                     .iter()
                     .position(|&b| !is_word_byte(b))
                     .map_or(bytes.len(), |n| i + n);
-                let word = &bytes[i..end];
+                word = &bytes[i..end];
                 if words == 0 {
                     copy = word.eq_ignore_ascii_case(b"copy");
-                } else if copy
-                    && (word.eq_ignore_ascii_case(b"stdin") || word.eq_ignore_ascii_case(b"stdout"))
-                {
+                } else if copy && depth == 0 && to_or_from_client(last, word) {
                     return true;
                 }
                 words += 1;
@@ -63,8 +83,15 @@ pub fn copies_with_client(sql: &str) -> bool {
             }
             _ => i += 1,
         }
+        last = if depth == 0 { word } else { b"" };
     }
     false
+}
+
+/// `FROM STDIN` or `TO STDOUT`.
+fn to_or_from_client(previous: &[u8], word: &[u8]) -> bool {
+    (previous.eq_ignore_ascii_case(b"from") && word.eq_ignore_ascii_case(b"stdin"))
+        || (previous.eq_ignore_ascii_case(b"to") && word.eq_ignore_ascii_case(b"stdout"))
 }
 
 fn is_word_start(b: u8) -> bool {
@@ -149,6 +176,9 @@ mod tests {
             "COPY t FROM STDIN;",
             "COPY \"t\" FROM STDIN",
             "COPY (SELECT 'it''s', E'a\\'b', $$x$$, $q$y$q$) TO STDOUT",
+            "COPY t (a, b) FROM STDIN",
+            "COPY t FROM /* a comment */ STDIN",
+            "COPY t FROM -- a comment\n STDIN",
         ] {
             assert!(copies_with_client(sql), "{sql}");
         }
@@ -175,6 +205,10 @@ mod tests {
             "SELECT 'unterminated",
             "SELECT $$unterminated",
             "SELECT 1 /* unterminated",
+            "COPY (SELECT stdin FROM t) TO '/tmp/x'",
+            "COPY t (stdout) FROM '/tmp/f'",
+            "COPY (SELECT 1 FROM stdin) TO '/tmp/x'",
+            "COPY t FROM 'x' (FORMAT csv); SELECT stdin FROM t",
         ] {
             assert!(!copies_with_client(sql), "{sql}");
         }
