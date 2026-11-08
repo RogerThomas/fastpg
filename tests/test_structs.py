@@ -135,6 +135,26 @@ class JSONDecoded(msgspec.Struct):
     meta: Any
 
 
+class JSONValue(msgspec.Struct):
+    doc: Any
+
+
+class ConstrainedJSONValue(msgspec.Struct):
+    """Constrained, so strategy "auto" reads it through msgpack."""
+
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: Any
+
+
+# Every way a json/jsonb value reaches a field typed Any: they must all give the same value.
+JSON_VALUE_TARGETS = [
+    (JSONValue, "direct"),
+    (JSONValue, "msgpack"),
+    (JSONValue, "json"),
+    (ConstrainedJSONValue, "auto"),
+]
+
+
 class ConstrainedJSONAsText(msgspec.Struct):
     doc: Annotated[str, msgspec.Meta(max_length=8)]
 
@@ -321,6 +341,78 @@ async def test_dict_and_any_fields_get_decoded_json(
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
     got = await conn.select_one(query, into=JSONDecoded, strategy=strategy)
     assert got == JSONDecoded({"k": 1}, [1, "a"])
+
+
+@pytest.mark.parametrize(("into", "strategy"), JSON_VALUE_TARGETS)
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_json_integers_beyond_64_bits_keep_every_digit(
+    conn: fastpg.Connection,
+    json_type: str,
+    into: type[JSONValue | ConstrainedJSONValue],
+    strategy: fastpg.Strategy,
+) -> None:
+    numbers = [2**64, 98765432109876543210, -(2**63) - 1, -(10**30), 2**64 - 1, -(2**63)]
+    query = f"SELECT 1 AS id, '{numbers}'::{json_type} AS doc"
+    got = await conn.select_one(query, into=into, strategy=strategy)
+    assert got.doc == numbers
+    assert all(type(n) is int for n in got.doc)
+
+
+@pytest.mark.parametrize(("into", "strategy"), JSON_VALUE_TARGETS)
+@pytest.mark.parametrize(
+    ("json_type", "keys", "inner_keys"),
+    [
+        ("json", ["b", "aa", "c"], ["y", "x"]),  # as written
+        ("jsonb", ["b", "c", "aa"], ["x", "y"]),  # the server's order: shorter keys first
+    ],
+)
+async def test_json_object_keys_keep_the_servers_order(
+    conn: fastpg.Connection,
+    json_type: str,
+    keys: list[str],
+    inner_keys: list[str],
+    into: type[JSONValue | ConstrainedJSONValue],
+    strategy: fastpg.Strategy,
+) -> None:
+    query = (
+        f"""SELECT 1 AS id, '{{"b": 1, "aa": 2, "c": {{"y": 3, "x": 4}}}}'::{json_type} AS doc"""
+    )
+    got = await conn.select_one(query, into=into, strategy=strategy)
+    assert got.doc == {"b": 1, "aa": 2, "c": {"y": 3, "x": 4}}
+    assert list(got.doc) == keys
+    assert list(got.doc["c"]) == inner_keys
+
+
+@pytest.mark.parametrize(("into", "strategy"), JSON_VALUE_TARGETS)
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_deeply_nested_json(
+    conn: fastpg.Connection,
+    json_type: str,
+    into: type[JSONValue | ConstrainedJSONValue],
+    strategy: fastpg.Strategy,
+) -> None:
+    depth = 1000
+    query = f"SELECT 1 AS id, '{'[' * depth}{{}}{']' * depth}'::{json_type} AS doc"
+    got = await conn.select_one(query, into=into, strategy=strategy)
+    expected: object = {}
+    for _ in range(depth):
+        expected = [expected]
+    assert got.doc == expected
+
+
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_json_integer_beyond_64_bits_in_an_int_field(
+    conn: fastpg.Connection,
+    json_type: str,
+) -> None:
+    query = f"""SELECT '{{"k": 98765432109876543210}}'::{json_type} AS doc, NULL AS meta"""
+    for strategy in ("direct", "json"):
+        got = await conn.select_one(query, into=JSONDecoded, strategy=strategy)
+        assert got == JSONDecoded({"k": 98765432109876543210}, None)
+    # MessagePack integers stop at 64 bits: a typed field can't take it through msgpack.
+    with pytest.raises(fastpg.DecodeError, match="beyond 64 bits") as exc:
+        await conn.select_one(query, into=JSONDecoded, strategy="msgpack")
+    assert isinstance(exc.value.__cause__, msgspec.ValidationError)
 
 
 async def test_auto_falls_back_to_msgpack_for_constraints(conn: fastpg.Connection) -> None:
