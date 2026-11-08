@@ -173,16 +173,32 @@ class ConstrainedDecimalNested(msgspec.Struct):
     doc: list[DecimalAmount]
 
 
-class ConstrainedDecimalValue(msgspec.Struct):
+class ConstrainedDecimalAnnotated(msgspec.Struct):
     id: Annotated[int, msgspec.Meta(ge=0)]
-    doc: Annotated[Decimal, msgspec.Meta(description="a JSON number")] | None
+    doc: (
+        Annotated[
+            list[Annotated[Decimal, msgspec.Meta(description="a JSON number")]],
+            msgspec.Meta(description="JSON numbers"),
+        ]
+        | None
+    )
+
+
+class ConstrainedMoney(msgspec.Struct):
+    """Constrained, with Decimals only as plain fields (numeric columns, exact through
+    msgpack), so strategy "auto" reads it through msgpack."""
+
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    amount: Decimal
+    refund: Annotated[Decimal, msgspec.Meta(description="money")] | None
+    doc: dict[str, int]
 
 
 type DecimalsInJSON = (
     ConstrainedDecimalDict
     | ConstrainedDecimalList
     | ConstrainedDecimalNested
-    | ConstrainedDecimalValue
+    | ConstrainedDecimalAnnotated
 )
 
 LONG_DECIMAL = "0.1000000000000000055511151231257827"
@@ -198,8 +214,9 @@ DECIMALS_IN_JSON = [
     (ConstrainedDecimalNested, f'[{{"value": 1.10}}, {{"value": {LONG_DECIMAL}}}]', [
         DecimalAmount(Decimal("1.10")), DecimalAmount(Decimal(LONG_DECIMAL)),
     ]),
-    (ConstrainedDecimalValue, "1.10", Decimal("1.10")),
-    (ConstrainedDecimalValue, LONG_DECIMAL, Decimal(LONG_DECIMAL)),
+    (ConstrainedDecimalAnnotated, f"[1.10, {LONG_DECIMAL}]", [
+        Decimal("1.10"), Decimal(LONG_DECIMAL),
+    ]),
 ]  # fmt: skip
 
 # Every way a json/jsonb value reaches a field typed Any: they must all give the same value.
@@ -564,6 +581,15 @@ async def test_auto_reads_json_without_decimals_through_msgpack(
     query = f"""SELECT 1 AS id, '{{"k": 98765432109876543210}}'::{json_type} AS doc"""
     with pytest.raises(fastpg.DecodeError, match="beyond 64 bits"):
         await conn.select_one(query, into=ConstrainedJSONDecoded)
+
+
+async def test_auto_reads_plain_decimal_fields_through_msgpack(conn: fastpg.Connection) -> None:
+    query = "SELECT 1 AS id, 1.10 AS amount, NULL::numeric AS refund, $1::jsonb AS doc"
+    got = await conn.select_one(query, '{"k": 1}', into=ConstrainedMoney)
+    assert repr(got) == repr(ConstrainedMoney(1, Decimal("1.10"), None, {"k": 1}))
+    # MessagePack integers stop at 64 bits, so this error shows the route "auto" took.
+    with pytest.raises(fastpg.DecodeError, match="beyond 64 bits"):
+        await conn.select_one(query, '{"k": 98765432109876543210}', into=ConstrainedMoney)
 
 
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
