@@ -23,6 +23,7 @@ use xitca_postgres::{Client, Driver, Execute, Statement};
 
 use crate::bulk::{self, Bulk, RowReader};
 use crate::cancel::{self, Cancel, Cancels, InFlight};
+use crate::copy_check;
 use crate::decode;
 use crate::errors::{QueryError, py_err};
 use crate::event_loop;
@@ -767,6 +768,9 @@ impl Connection {
     /// Run one or more `;`-separated statements via the simple query protocol (no params).
     fn execute_script(&self, py: Python<'_>, future: Py<PyAny>, query: String) -> PyResult<()> {
         let client = self.require_client(py)?;
+        if copy_check::copies_with_client(&query) {
+            return Err(py_err(py, "InterfaceError", copy_check::REFUSED));
+        }
         let shared = self.shared.clone();
         let req = request(future, Target::None);
         self.shared.spawn(async move {
@@ -927,6 +931,10 @@ impl Connection {
         let client = self.require_client(py)?;
         let sql = sql.to_str()?;
         let cached = self.shared.cache.get(sql);
+        // Only SQL not prepared yet is scanned: a refused statement is never prepared.
+        if cached.is_none() && copy_check::copies_with_client(sql) {
+            return Err(py_err(py, "InterfaceError", copy_check::REFUSED));
+        }
         // A prepared statement's parameter types decide what lists become (see `convert`).
         let types = cached.as_ref().map(|stmt| stmt.statement().params());
         let params = params::from_py_tuple(params, types)?;
