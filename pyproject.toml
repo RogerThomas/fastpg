@@ -42,6 +42,8 @@ classifiers = [
 Homepage = "https://github.com/RogerThomas/fastpg"
 Repository = "https://github.com/RogerThomas/fastpg"
 Issues = "https://github.com/RogerThomas/fastpg/issues"
+Documentation = "https://rogerthomas.github.io/fastpg/"
+Changelog = "https://github.com/RogerThomas/fastpg/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # into=<pydantic.BaseModel> support (strategies "direct" and "json").

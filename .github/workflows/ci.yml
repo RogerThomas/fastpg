@@ -38,6 +38,7 @@ env:
 jobs:
   # A pull request that changes only documentation (docs/, Markdown files at the top level,
   # mkdocs.yml) skips the type-check and the test jobs: lint and the docs build still run.
+  # cargo-deny runs only when the Rust dependencies, its config or this workflow change.
   # Not a workflow-level paths filter: "CI passed" is required, so it must always report.
   changes:
     name: Changes
@@ -47,6 +48,7 @@ jobs:
       full: ${{ steps.scope.outputs.full }}
       test-matrix: ${{ steps.scope.outputs.test-matrix }}
       code: ${{ steps.diff.outputs.code }}
+      deps: ${{ steps.diff.outputs.deps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,12 +60,22 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             code=true
-          elif git diff --name-only "$BASE...HEAD" | grep -qvE '^(docs/|[^/]+\.md$|mkdocs\.yml$)'; then
-            code=true
+            deps=true
           else
-            code=false
+            if git diff --name-only "$BASE...HEAD" | grep -qvE '^(docs/|[^/]+\.md$|mkdocs\.yml$)'; then
+              code=true
+            else
+              code=false
+            fi
+            if git diff --name-only "$BASE...HEAD" |
+              grep -qE '^(native/(Cargo\.toml|Cargo\.lock|deny\.toml)|\.github/workflows/ci\.yml)$'; then
+              deps=true
+            else
+              deps=false
+            fi
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+          echo "deps=$deps" | tee -a "$GITHUB_OUTPUT"
       # Every test job on pushes to main and on pull requests with the `full-ci` label;
       # otherwise only the entries of the test job's matrix marked `pr`, test-macos, and no
       # test-postgres.
@@ -283,24 +295,42 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/postgres/server.log"
 
+  # Known vulnerabilities (RustSec), licences, duplicate versions and sources of the Rust
+  # dependencies, as native/deny.toml sets out.
+  deny:
+    name: Dependencies (cargo-deny)
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: native/Cargo.toml
+
   ci-passed:
     name: CI passed
     if: always()
-    needs: [changes, checks, test, test-postgres, test-macos]
+    needs: [changes, checks, test, test-postgres, test-macos, deny]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # Skipped is fine only where `changes` meant it: the test jobs for a documentation-only
-      # change, and test-postgres on a pull request without the `full-ci` label. A job skipped
-      # because one it needs failed shows up as that failure (and if `changes` fails, its
-      # outputs are empty, so no skip counts as meant).
+      # change, test-postgres on a pull request without the `full-ci` label, and cargo-deny
+      # when the Rust dependencies didn't change. A job skipped because one it needs failed
+      # shows up as that failure (and if `changes` fails, its outputs are empty, so no skip
+      # counts as meant).
       - name: Check every job passed (or was skipped because the change doesn't need it)
         env:
           NEEDS: ${{ toJSON(needs) }}
           CODE: ${{ needs.changes.outputs.code }}
           FULL: ${{ needs.changes.outputs.full }}
+          DEPS: ${{ needs.changes.outputs.deps }}
         run: |
-          echo "Code changed: $CODE, every test job: $FULL"
+          echo "Code changed: $CODE, every test job: $FULL, Rust dependencies changed: $DEPS"
           for job_result in $(printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'); do
             job=${job_result%%=*}
             result=${job_result#*=}
@@ -309,6 +339,7 @@ jobs:
               */success) continue ;;
               test/skipped | test-macos/skipped) [ "$CODE" = false ] && continue ;;
               test-postgres/skipped) { [ "$CODE" = false ] || [ "$FULL" = false ]; } && continue ;;
+              deny/skipped) [ "$DEPS" = false ] && continue ;;
             esac
             echo "::error::$job ended with: $result"
             exit 1

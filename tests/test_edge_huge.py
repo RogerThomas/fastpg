@@ -2,9 +2,11 @@
 
 import sysconfig
 import tracemalloc
+from typing import Any, NamedTuple
 
 import msgspec
 import pytest
+from pydantic import BaseModel
 
 import fastpg
 
@@ -17,6 +19,57 @@ class TwoTexts(msgspec.Struct):
 class Row(msgspec.Struct):
     id: int
     label: str
+
+
+class Sized(msgspec.Struct):
+    id: int
+    v: str | None
+
+
+class SizedTuple(NamedTuple):
+    id: int
+    v: str | None
+
+
+class SizedModel(BaseModel):
+    id: int
+    v: str | None
+
+
+class SizedGroup(msgspec.Struct):
+    id: int
+    v: list[str | None]
+
+
+# A streamed fetch ends a chunk at 512 rows or once its rows take 1 MiB, counting each
+# value's bytes and 8 bytes per column (here an int4 and a text: 4 + len(v) + 16).
+MIB = 1024 * 1024
+SIZES: list[int | None] = [
+    1,
+    None,
+    0,
+    5,
+    MIB - 20 - 3 * 25 - 24 - 5 - 1,  # one byte short of the limit, with the rows before it
+    3,  # crosses it
+    MIB - 20,
+    MIB - 21,
+    MIB - 19,  # each exactly at, just under, just over the limit alone
+    None,
+    3 * MIB,  # one row larger than the limit
+    *([7] * 700),  # tiny rows across the 512-row limit
+    None,
+    MIB + 1,
+    2,
+    None,
+]
+SIZED_QUERY = """
+SELECT i::int AS id, repeat(chr(97 + (i % 26)::int), s) AS v
+FROM unnest($1::int[]) WITH ORDINALITY AS t(s, i) ORDER BY i
+"""
+
+
+def _sized_rows() -> list[tuple[int, str | None]]:
+    return [(i, None if s is None else chr(97 + i % 26) * s) for i, s in enumerate(SIZES, start=1)]
 
 
 @pytest.fixture(name="wide_struct", scope="module")
@@ -100,3 +153,42 @@ async def test_million_rows_peak_memory_stays_near_the_result_size(
     # on, so the result list's earlier buffers can still count at the peak there.
     margin = 1.25 if sysconfig.get_config_var("Py_GIL_DISABLED") else 1.1
     assert peak < result * margin
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize(
+    ("into", "strategy"),
+    [
+        (None, "auto"),
+        (dict, "auto"),
+        (SizedTuple, "auto"),
+        (Sized, "direct"),
+        (Sized, "msgpack"),
+        (Sized, "json"),
+        (SizedModel, "direct"),
+        (SizedModel, "json"),
+    ],
+)
+async def test_rows_across_chunk_limits_arrive_whole_and_in_order(
+    conn: fastpg.Connection,
+    into: type[Any] | None,
+    strategy: fastpg.Strategy,
+) -> None:
+    pairs = _sized_rows()
+    if into is None:
+        rows = await conn.select_many(SIZED_QUERY, SIZES)
+        expected: list[Any] = pairs
+    else:
+        rows = await conn.select_many(SIZED_QUERY, SIZES, into=into, strategy=strategy)
+        expected = [into(id=i, v=v) for i, v in pairs]
+    assert rows == expected
+
+
+@pytest.mark.timeout(120)
+async def test_rows_across_chunk_limits_through_a_pool_and_grouping(dsn: str) -> None:
+    expected = _sized_rows()
+    async with await fastpg.create_pool(dsn) as pool:
+        assert await pool.select_many(SIZED_QUERY, SIZES) == expected
+        query = f"SELECT 1 AS id, v FROM ({SIZED_QUERY}) AS r"  # noqa: S608
+        groups = await pool.select_and_group(query, SIZES, into=SizedGroup)
+    assert groups == [SizedGroup(1, [v for _, v in expected])]

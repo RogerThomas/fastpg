@@ -6,8 +6,9 @@
 //! ends with [`Shared::pump`], which polls the woken tasks, turns completions into Python
 //! objects and resolves the futures.
 //!
-//! Large `select_many` results are streamed: every [`CHUNK_ROWS`] rows the task queues the
-//! rows received so far, so chunk N is decoded while chunk N+1 is still on the wire.
+//! Large `select_many` results are streamed: every [`CHUNK_ROWS`] rows (or [`CHUNK_BYTES`])
+//! the task queues the rows received so far, so chunk N is decoded while chunk N+1 is still
+//! on the wire.
 
 use std::future::IntoFuture;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -40,8 +41,15 @@ use crate::structs::{StructBuilder, StructSpec, collect_list, scalar_columns, tu
 /// row, larger ones up to 18% more (`notes/perf-decode.md`).
 const CHUNK_ROWS: usize = 512;
 
+/// A streamed chunk also ends once its rows take this many bytes, so a result of large
+/// values is decoded (and its raw bytes freed) a few at a time instead of held whole
+/// next to the Python objects built from it. 512 rows of a few hundred bytes stay well
+/// under it, so ordinary results are chunked by [`CHUNK_ROWS`] as before.
+const CHUNK_BYTES: usize = 1024 * 1024;
+
 /// Most bytes of row buffers a connection keeps for reuse (see [`Shared::row_buffer`]): a
-/// 512-row chunk of rows of a few hundred bytes, or hundreds of point-lookup rows.
+/// 512-row chunk of rows of a few hundred bytes, or hundreds of point-lookup rows. A chunk
+/// of large values (up to [`CHUNK_BYTES`]) is freed instead: an idle connection would hold it.
 const SPARE_ROW_BYTES: usize = 256 * 1024;
 
 /// Bumped in a child process right after `os.fork()` (see [`after_fork_in_child`]): the
@@ -1088,7 +1096,10 @@ async fn run_once(
                 if shape == Shape::All || seen == 1 {
                     rows.push_row(&row)?;
                 }
-                if stream_chunks && shape == Shape::All && rows.nrows() == CHUNK_ROWS {
+                if stream_chunks
+                    && shape == Shape::All
+                    && (rows.nrows() == CHUNK_ROWS || rows.len_bytes() >= CHUNK_BYTES)
+                {
                     let chunk = std::mem::replace(&mut rows, shared.row_buffer(ncols));
                     *delivered = true;
                     shared.post(

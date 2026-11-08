@@ -66,6 +66,11 @@ impl RowBuffer {
         self.data.capacity() + self.cells.capacity() * std::mem::size_of::<(u32, u32)>()
     }
 
+    /// Bytes the buffered rows take: their data and cell index.
+    pub fn len_bytes(&self) -> usize {
+        self.data.len() + self.cells.len() * std::mem::size_of::<(u32, u32)>()
+    }
+
     pub fn nrows(&self) -> usize {
         self.nrows
     }

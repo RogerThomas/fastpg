@@ -1,0 +1,31 @@
+# cargo-deny (https://embarkstudios.github.io/cargo-deny/): the CI job "Dependencies (cargo-deny)"
+# runs `cargo deny check` against native/Cargo.toml with this file.
+
+[graph]
+all-features = true
+
+[advisories]
+# Every RustSec advisory (vulnerable, unmaintained, unsound or yanked) fails the check.
+ignore = []
+
+[licenses]
+# The licences the dependency tree uses, and no others.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
