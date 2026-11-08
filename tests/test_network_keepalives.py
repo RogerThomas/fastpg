@@ -125,5 +125,5 @@ async def test_invalid_values_raise_for_a_unix_socket(unix_dsn: str) -> None:
 
 async def test_a_value_the_os_rejects_fails_the_connect(dsn: str) -> None:
     """As in libpq, a setting the OS refuses fails the attempt, naming the option."""
-    with pytest.raises(fastpg.InterfaceError, match=r"setsockopt\(TCP_KEEP\w+\) failed"):
+    with pytest.raises(fastpg.ConnectError, match=r"setsockopt\(TCP_KEEP\w+\) failed"):
         await fastpg.connect(with_params(dsn, keepalives_idle="2147483647"))

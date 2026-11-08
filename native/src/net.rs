@@ -31,6 +31,7 @@ use std::task::{Context, Poll};
 
 use tokio::sync::Notify;
 use xitca_io::io::{AsyncIo, Interest, Ready};
+use xitca_postgres::error::DriverIoErrorMulti;
 use xitca_postgres::{Client, Config, Driver, Postgres};
 
 use crate::auth;
@@ -561,6 +562,18 @@ async fn login<Io: AsyncIo + Send + 'static>(
     startup(io, cfg, encrypted).await
 }
 
+/// A failed startup: the socket failing, or the server closing it, means the connection
+/// couldn't be established (`ConnectError`). A server error (e.g. a wrong password) is kept.
+fn startup_error(e: xitca_postgres::Error) -> QueryError {
+    if e.downcast_ref::<io::Error>().is_some() || e.downcast_ref::<DriverIoErrorMulti>().is_some() {
+        return QueryError::Connect(e.to_string());
+    }
+    if e.is_driver_down() {
+        return QueryError::Connect(format!("connection lost: {e}"));
+    }
+    QueryError::Pg(e)
+}
+
 async fn startup<Io: AsyncIo + Send + 'static>(
     io: Io,
     cfg: Config,
@@ -576,7 +589,10 @@ async fn startup<Io: AsyncIo + Send + 'static>(
         framer: Framer::default(),
         writes: Writes::default(),
     };
-    let (client, driver) = Postgres::new(cfg).connect_io(watched).await?;
+    let (client, driver) = Postgres::new(cfg)
+        .connect_io(watched)
+        .await
+        .map_err(startup_error)?;
     // The startup wrote each message in full: the next byte written starts a message.
     eof.started.store(true, Ordering::Release);
     Ok((client, driver, eof))

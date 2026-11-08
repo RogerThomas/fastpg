@@ -954,13 +954,13 @@ async def test_pipelined_queries_fail_cleanly_when_their_connection_dies(
 
 async def test_unreachable_server_fails_waiters(dsn: str) -> None:
     bad = "postgresql://fastpg:fastpg@127.0.0.1:1/fastpg"
-    with pytest.raises(fastpg.InterfaceError):
+    with pytest.raises(fastpg.ConnectError):
         await fastpg.create_pool(bad)
     async with await fastpg.create_pool(bad, min_size=0) as pool:
         async with asyncio.timeout(5):
-            with pytest.raises(fastpg.InterfaceError):
+            with pytest.raises(fastpg.ConnectError):
                 await pool.select_one("SELECT 1")
-            with pytest.raises(fastpg.InterfaceError):
+            with pytest.raises(fastpg.ConnectError):
                 async with pool.acquire():
                     pass
     async with await fastpg.create_pool(dsn, min_size=0) as pool:

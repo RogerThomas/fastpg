@@ -71,7 +71,7 @@ async def test_pool_recovers_from_a_restart(edge: DisposableServer) -> None:
             await conn.select_one("SELECT 1")
         seen = await _until_it_answers(pool, 20)
         # Meanwhile only connect failures (the server not back yet), never a hang.
-        assert all(isinstance(e, fastpg.InterfaceError | errors.OperationalError) for e in seen)
+        assert all(isinstance(e, fastpg.OperationalError) for e in seen)
         await _settle(pool)
         stats = pool.stats()
         assert 1 <= stats.size <= 4
@@ -93,10 +93,10 @@ async def test_pool_while_the_server_is_down_then_back(edge: DisposableServer) -
         # while Docker's port forwarder still accepts) unanswered until connect_timeout.
         for _ in range(3):
             start = time.monotonic()
-            with pytest.raises(fastpg.InterfaceError):
+            with pytest.raises(fastpg.ConnectError):
                 await pool.select_one("SELECT 1")
             assert time.monotonic() - start < 3
-        with pytest.raises(fastpg.InterfaceError):
+        with pytest.raises(fastpg.ConnectError):
             async with pool.acquire():
                 pass
         await edge.start()
