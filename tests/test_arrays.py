@@ -250,7 +250,9 @@ async def test_any_field_takes_an_array(conn: fastpg.Connection) -> None:
     ("expression", "message"),
     [
         ("'{{1, 2}, {3, 4}}'::int[]", r"multi-dimensional arrays are not supported"),
-        ("'{{}}'::int[]", r"^"),  # an empty 2-D literal is just empty: '{}'
+        # An empty 2-D array is just empty: '{}'. (Not the literal '{{}}': before PostgreSQL 17
+        # the server rejects it.)
+        ("ARRAY[ARRAY[]::int[]]", r"^"),
         ("'[0:1]={1, 2}'::int[]", r"arrays indexed from other than 1 are not supported"),
     ],
 )
@@ -262,7 +264,7 @@ async def test_other_shapes_are_a_clear_error(
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"SELECT {expression} AS value"
-    if expression == "'{{}}'::int[]":
+    if expression == "ARRAY[ARRAY[]::int[]]":
         row = await conn.select_one(query, into=Numbers, strategy=strategy)
         assert row.value == []
         return

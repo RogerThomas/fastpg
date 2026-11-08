@@ -8,6 +8,7 @@
 
 import asyncio
 import contextlib
+import os
 import socket
 import struct
 import time
@@ -18,6 +19,11 @@ from urllib.parse import urlsplit, urlunsplit
 from testcontainers.core.container import DockerContainer
 
 import fastpg
+
+# The server image every test container runs (conftest.py's and `disposable_server`'s). CI runs
+# the suite on other PostgreSQL majors by setting FASTPG_PG_IMAGE. Keep the default in step with
+# docker-compose.yml's.
+PG_IMAGE = os.environ.get("FASTPG_PG_IMAGE", "postgres:18.6-trixie")
 
 
 def with_params(dsn: str, **params: str) -> str:
@@ -370,7 +376,7 @@ def disposable_server(password: str, name: str) -> Generator[DisposableServer]:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     container = (
-        DockerContainer("postgres:18.6-trixie")
+        DockerContainer(PG_IMAGE)
         .with_name(name)
         .with_env("POSTGRES_USER", "fastpg")
         .with_env("POSTGRES_PASSWORD", password)
