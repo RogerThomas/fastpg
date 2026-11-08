@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.4](https://github.com/RogerThomas/fastpg/compare/v0.1.3...v0.1.4) (2026-11-08)
+
+
+### Bug Fixes
+
+* COPY through a query method is a clear error and keeps the connection ([#47](https://github.com/RogerThomas/fastpg/issues/47)) ([f136dce](https://github.com/RogerThomas/fastpg/commit/f136dce1153e9f3e879c8b54959a66d49a1a78fe))
+* **deps:** update rustls-webpki, webpki-roots and ctutils for RustSec advisories ([#40](https://github.com/RogerThomas/fastpg/issues/40)) ([1f1b514](https://github.com/RogerThomas/fastpg/commit/1f1b514e2cdf937032e16f22d5af279fc5c9015c))
+* FETCH from a redeclared cursor decodes its new column types ([#41](https://github.com/RogerThomas/fastpg/issues/41)) ([711201b](https://github.com/RogerThomas/fastpg/commit/711201b584902f90bb47e8806bdf9d894981aecc))
+* JSON values read through msgpack match the other strategies exactly ([#44](https://github.com/RogerThomas/fastpg/issues/44)) ([2249d12](https://github.com/RogerThomas/fastpg/commit/2249d12cf352203adee5860ca233acded1d79408))
+* multiple hosts pair with their ports and fall through on target_session_attrs, like libpq ([#43](https://github.com/RogerThomas/fastpg/issues/43)) ([b1d955a](https://github.com/RogerThomas/fastpg/commit/b1d955a78d872b72d9c33f6e81cfb31c945d2693))
+* **pool:** don't show the password in repr(pool) ([#38](https://github.com/RogerThomas/fastpg/issues/38)) ([8872750](https://github.com/RogerThomas/fastpg/commit/88727502bfee895acee0be2af55e0e6433d4281b))
+
+
+### Performance Improvements
+
+* end a fetch chunk at 1 MiB as well as at 512 rows ([#46](https://github.com/RogerThomas/fastpg/issues/46)) ([65c6ea7](https://github.com/RogerThomas/fastpg/commit/65c6ea771e5c40c404321c45ad839fbdb65289a8))
+* find a free task slot in constant time ([#45](https://github.com/RogerThomas/fastpg/issues/45)) ([241eae0](https://github.com/RogerThomas/fastpg/commit/241eae05b214840ee8b2d24365bd3311f5e5c648))
+* jsonb parameters with None are nearly as fast as before [#27](https://github.com/RogerThomas/fastpg/issues/27) ([#48](https://github.com/RogerThomas/fastpg/issues/48)) ([e09ef36](https://github.com/RogerThomas/fastpg/commit/e09ef36d7b99862c3c3551c6d54afb5cb1f9f138))
+
 ## [0.1.3](https://github.com/RogerThomas/fastpg/compare/v0.1.2...v0.1.3) (2026-10-30)
 
 
