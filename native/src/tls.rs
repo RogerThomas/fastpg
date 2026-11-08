@@ -12,9 +12,10 @@
 //! `net.rs` wraps the result in `EofWatch` as before, so a TLS `close_notify`, a TCP EOF
 //! without one, a TLS error and a socket error all end the connection the same way.
 //!
-//! The DSN's TLS keys (and libpq's `connect_timeout`, keepalive, `tcp_user_timeout` and
-//! `target_session_attrs` keys) are taken out here (xitca rejects keys and `sslmode` values it does not know); the rest of
-//! the DSN goes to xitca unchanged.
+//! The DSN's TLS keys (and libpq's `connect_timeout`, keepalive, `tcp_user_timeout`,
+//! `target_session_attrs` and `passfile` keys) are taken out here (xitca rejects keys and
+//! `sslmode` values it does not know), with libpq's environment variables for the ones the DSN
+//! leaves out; the rest of the DSN goes to xitca unchanged.
 
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
@@ -45,6 +46,7 @@ use xitca_io::io::{AsyncIo, Interest, Ready};
 use xitca_postgres::Config;
 
 use crate::errors::QueryError;
+use crate::pgenv::Env;
 
 /// ALPN protocol name PostgreSQL 17+ expects (required for `sslnegotiation=direct`).
 const ALPN: &[u8] = b"postgresql";
@@ -358,6 +360,9 @@ struct Raw {
     sslcert: Option<String>,
     sslkey: Option<String>,
     sslpassword: Option<String>,
+    passfile: Option<String>,
+    /// Whether the DSN gives a port (a key for xitca, so not kept here).
+    port_set: bool,
     /// The first key neither fastpg nor xitca knows (xitca's own error for it says nothing).
     unknown: Option<String>,
 }
@@ -381,7 +386,9 @@ impl Raw {
             "sslcert" => &mut self.sslcert,
             "sslkey" => &mut self.sslkey,
             "sslpassword" => &mut self.sslpassword,
+            "passfile" => &mut self.passfile,
             _ => {
+                self.port_set |= key == "port";
                 if self.unknown.is_none() && !XITCA_KEYS.contains(&key) {
                     self.unknown = Some(key.to_owned());
                 }
@@ -390,6 +397,27 @@ impl Raw {
         };
         *slot = Some(value);
         true
+    }
+
+    /// libpq's environment variable for each key the DSN leaves out ("Environment Variables"
+    /// in the libpq docs). The keepalive keys, `tcp_user_timeout` and `sslpassword` have none.
+    fn fill_from(&mut self, env: Env) {
+        for (slot, var) in [
+            (&mut self.connect_timeout, "PGCONNECT_TIMEOUT"),
+            (&mut self.target_session_attrs, "PGTARGETSESSIONATTRS"),
+            (&mut self.sslmode, "PGSSLMODE"),
+            (&mut self.sslnegotiation, "PGSSLNEGOTIATION"),
+            (&mut self.sslrootcert, "PGSSLROOTCERT"),
+            (&mut self.sslsni, "PGSSLSNI"),
+            (&mut self.channel_binding, "PGCHANNELBINDING"),
+            (&mut self.sslcert, "PGSSLCERT"),
+            (&mut self.sslkey, "PGSSLKEY"),
+            (&mut self.passfile, "PGPASSFILE"),
+        ] {
+            if slot.is_none() {
+                *slot = env(var);
+            }
+        }
     }
 
     fn into_options(self) -> Result<TlsOptions, QueryError> {
@@ -468,6 +496,11 @@ impl Raw {
 pub struct DsnOptions {
     pub tls: TlsOptions,
     pub socket: SocketOptions,
+    /// `passfile` (or `PGPASSFILE`): the password file to use instead of `~/.pgpass`.
+    pub passfile: Option<PathBuf>,
+    /// Whether the DSN gives a port, so that `PGPORT` doesn't apply. As in libpq, a URL with
+    /// several hosts gives one (empty, so 5432) even when none of them has a port.
+    pub port_set: bool,
 }
 
 /// libpq's keys applied in Python: `connect_timeout` per address tried, the socket keys to
@@ -530,9 +563,10 @@ fn connect_timeout(value: Option<&str>) -> Result<Option<u32>, QueryError> {
 }
 
 /// Split the TLS keys and socket keys off `dsn`: the DSN for xitca (unchanged if it had
-/// none) and their settings. Both forms are handled, URL (`postgresql://...?sslmode=require`)
-/// and key/value (`host=db sslmode=require`), each split the way xitca's own parser reads it.
-pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
+/// none) and their settings, from `env` for the keys the DSN leaves out. Both forms are
+/// handled, URL (`postgresql://...?sslmode=require`) and key/value (`host=db sslmode=require`),
+/// each split the way xitca's own parser reads it.
+pub fn split_dsn<'a>(dsn: &'a str, env: Env) -> Result<(Cow<'a, str>, DsnOptions), QueryError> {
     let mut raw = Raw::default();
     let rest = match ["postgresql://", "postgres://"]
         .iter()
@@ -541,6 +575,9 @@ pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
         Some(prefix) => strip_url(dsn, prefix.len(), &mut raw),
         None => strip_key_values(dsn, &mut raw),
     };
+    raw.fill_from(env);
+    let passfile = raw.passfile.take().map(PathBuf::from);
+    let port_set = raw.port_set;
     let socket = SocketOptions {
         connect_timeout: connect_timeout(raw.connect_timeout.take().as_deref())?,
         // libpq: any integer but 0 turns them on.
@@ -570,13 +607,23 @@ pub fn split_dsn(dsn: &str) -> Result<(Cow<'_, str>, DsnOptions), QueryError> {
         },
     };
     let tls = raw.into_options()?;
-    Ok((rest, DsnOptions { tls, socket }))
+    Ok((
+        rest,
+        DsnOptions {
+            tls,
+            socket,
+            passfile,
+            port_set,
+        },
+    ))
 }
 
 fn strip_url<'a>(dsn: &'a str, body: usize, raw: &mut Raw) -> Cow<'a, str> {
     // As in xitca: the credentials end at the first '@', the parameters start at the next '?'.
     let rest = &dsn[body..];
     let host_at = rest.find('@').map_or(0, |i| i + 1);
+    let hosts = &rest[host_at..];
+    raw.port_set = url_sets_port(&hosts[..hosts.find(['/', '?']).unwrap_or(hosts.len())]);
     let Some(query) = rest[host_at..].find('?').map(|i| body + host_at + i) else {
         return Cow::Borrowed(dsn);
     };
@@ -601,6 +648,19 @@ fn strip_url<'a>(dsn: &'a str, body: usize, raw: &mut Raw) -> Cow<'a, str> {
         out.push_str(&kept.join("&"));
     }
     Cow::Owned(out)
+}
+
+/// Whether a URL's host list (`h1:5433,[::1]`) gives a port. As in libpq's URL parser, which
+/// keeps one port entry per host: a single host gives one only if it has a port, several
+/// hosts always do (the empty entries mean 5432).
+fn url_sets_port(hosts: &str) -> bool {
+    hosts.contains(',')
+        || match hosts.strip_prefix('[') {
+            Some(v6) => v6
+                .find(']')
+                .is_some_and(|end| v6[end + 1..].starts_with(':')),
+            None => hosts.contains(':'),
+        }
 }
 
 fn strip_key_values<'a>(dsn: &'a str, raw: &mut Raw) -> Cow<'a, str> {
@@ -1164,7 +1224,17 @@ mod tests {
     use super::*;
 
     fn split_all(dsn: &str) -> (String, DsnOptions) {
-        let (rest, opts) = split_dsn(dsn).unwrap_or_else(|e| match e {
+        split_with(dsn, &[])
+    }
+
+    /// `dsn` split with the environment variables `vars`.
+    fn split_with(dsn: &str, vars: &[(&str, &str)]) -> (String, DsnOptions) {
+        let env = |name: &str| {
+            vars.iter()
+                .find(|(var, _)| *var == name)
+                .map(|(_, value)| (*value).to_owned())
+        };
+        let (rest, opts) = split_dsn(dsn, &env).unwrap_or_else(|e| match e {
             QueryError::Interface(m) => panic!("{m}"),
             _ => panic!("unexpected error"),
         });
@@ -1257,8 +1327,71 @@ mod tests {
         );
     }
 
+    #[test]
+    fn environment_variables_fill_in_the_keys_the_dsn_leaves_out() {
+        let vars = [
+            ("PGSSLMODE", "require"),
+            ("PGSSLNEGOTIATION", "direct"),
+            ("PGSSLSNI", "0"),
+            ("PGCHANNELBINDING", "require"),
+            ("PGSSLCERT", "/env/client.crt"),
+            ("PGSSLKEY", "/env/client.key"),
+            ("PGSSLROOTCERT", "/env/root.crt"),
+            ("PGCONNECT_TIMEOUT", "7"),
+            ("PGTARGETSESSIONATTRS", "read-only"),
+            ("PGPASSFILE", "/env/pgpass"),
+        ];
+        let (rest, opts) = split_with("host=db user=u", &vars);
+        assert_eq!(rest, "host=db user=u");
+        let tls = &opts.tls;
+        assert_eq!(tls.mode, SslMode::Require);
+        assert!(tls.direct);
+        assert!(!tls.sni);
+        assert_eq!(tls.channel_binding, ChannelBinding::Require);
+        assert_eq!(
+            tls.client_cert,
+            Some(("/env/client.crt".into(), "/env/client.key".into()))
+        );
+        assert_eq!(tls.root_cert, Some(RootCert::File("/env/root.crt".into())));
+        assert_eq!(opts.socket.connect_timeout, Some(7));
+        assert_eq!(opts.socket.target_session_attrs, "read-only");
+        assert_eq!(opts.passfile, Some("/env/pgpass".into()));
+        // The DSN wins.
+        let (_, opts) = split_with(
+            "postgresql://db/x?sslmode=verify-full&connect_timeout=3&passfile=/dsn/pgpass",
+            &vars,
+        );
+        assert_eq!(opts.tls.mode, SslMode::VerifyFull);
+        assert_eq!(opts.socket.connect_timeout, Some(3));
+        assert_eq!(opts.passfile, Some("/dsn/pgpass".into()));
+        // An invalid value is reported as in the DSN.
+        let env = |name: &str| (name == "PGSSLMODE").then(|| "bogus".to_owned());
+        assert!(
+            matches!(split_dsn("host=db", &env), Err(QueryError::Interface(m)) if m == "invalid sslmode value: \"bogus\"")
+        );
+    }
+
+    #[test]
+    fn whether_the_dsn_gives_a_port() {
+        for (dsn, set) in [
+            ("", false),
+            ("host=db user=u", false),
+            ("host=db port=5433", true),
+            ("postgresql://db/x", false),
+            ("postgresql://u:p@db/x?sslmode=disable", false),
+            ("postgresql://db:5433/x", true),
+            ("postgresql:///x?host=db&port=5433", true),
+            ("postgresql://[::1]/x", false),
+            ("postgresql://[::1]:5433/x", true),
+            // As in libpq: several hosts give a port list, of empty entries here.
+            ("postgresql://db1,db2/x", true),
+        ] {
+            assert_eq!(split_all(dsn).1.port_set, set, "{dsn}");
+        }
+    }
+
     fn error(dsn: &str) -> String {
-        match split_dsn(dsn) {
+        match split_dsn(dsn, &|_| None) {
             Err(QueryError::Interface(m)) => m,
             _ => panic!("expected an InterfaceError for {dsn:?}"),
         }
