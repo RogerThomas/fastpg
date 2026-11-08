@@ -16,11 +16,11 @@ from collections.abc import AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
-from faults import DisposableServer, FaultProxy, disposable_server, with_params
+from faults import PG_IMAGE, DisposableServer, FaultProxy, disposable_server, with_params
 from testcontainers.core.container import DockerContainer
 
 import fastpg
@@ -55,7 +55,7 @@ class LoopErrors:
 def _postgres_container(password: str) -> DockerContainer:
     """The compose services' image and user, data on tmpfs, on a host port Docker picks."""
     return (
-        DockerContainer("postgres:18.6-trixie")
+        DockerContainer(PG_IMAGE)
         .with_env("POSTGRES_USER", "fastpg")
         .with_env("POSTGRES_PASSWORD", password)
         .with_env("POSTGRES_DB", "fastpg")
@@ -156,6 +156,28 @@ def dsn(docker_dir: Path, container_password: str) -> Iterator[str]:
         return
     with _running(_plain_container(docker_dir, container_password), container_password) as started:
         yield started
+
+
+async def _server_version_num(dsn: str) -> int:
+    async with await fastpg.connect(dsn) as conn:
+        return int((await conn.select_one("SHOW server_version_num"))[0])
+
+
+@pytest.fixture(scope="session")
+def server_version_num(dsn: str) -> int:
+    """The test server's version as a number: 150019 for 15.19."""
+    return asyncio.run(_server_version_num(dsn))
+
+
+@pytest.fixture(autouse=True)
+def _min_server(request: pytest.FixtureRequest) -> None:
+    """Skips a test marked ``min_server(N)`` on a server older than PostgreSQL N."""
+    marker: pytest.Mark | None = request.keywords.get("min_server")
+    if marker is None:
+        return
+    major = cast("int", marker.args[0])
+    if request.getfixturevalue("server_version_num") < major * 10000:
+        pytest.skip(f"needs PostgreSQL {major} or later")
 
 
 @pytest.fixture(scope="session")
