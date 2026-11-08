@@ -54,11 +54,13 @@ type Strategy = Literal["auto", "direct", "msgpack", "json"]
   column types once per statement. Not available when the type needs validation
   (constraints, validators, enums, literals, ...).
 * ``"msgpack"`` (msgspec only): Rust encodes rows as MessagePack; a cached
-  ``msgspec.msgpack.Decoder`` builds and fully validates them.
+  ``msgspec.msgpack.Decoder`` builds and fully validates them. MessagePack has no decimal
+  type, so a ``Decimal`` inside a ``json``/``jsonb`` value loses digits (``1.10`` gives
+  ``Decimal('1.1')``); ``"auto"`` uses ``"json"`` for such Structs instead.
 * ``"json"``: Rust encodes rows as JSON; ``msgspec.json.Decoder`` or pydantic-core's
   ``validate_json`` builds and fully validates them.
-* ``"auto"`` (default): ``"direct"`` when possible, otherwise ``"msgpack"`` (msgspec) or
-  ``"json"`` (pydantic).
+* ``"auto"`` (default): ``"direct"`` when possible, otherwise ``"msgpack"`` (msgspec, or
+  ``"json"`` when a field type holds a ``Decimal``) or ``"json"`` (pydantic).
 
 ``into=dict`` and ``into=`` a ``NamedTuple`` are always built directly; ``"msgpack"`` and
 ``"json"`` raise ``UnsupportedTypeError`` for them.

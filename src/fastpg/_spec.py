@@ -15,7 +15,9 @@ column with a cached `msgspec.json.Decoder(<annotation>)` (a `list[X]` also from
 column, its elements built as a field of type `X` would be), or something only msgspec
 validation produces correctly (`Meta` constraints, enums, literals, non-optional unions,
 tz-constrained datetimes). Such Structs can't be built directly; strategy "auto" routes them
-through msgpack instead. Pydantic models are analysed in `fastpg._pydantic`.
+through msgpack instead, or through JSON when a field type holds a `Decimal` anywhere
+(MessagePack has no decimal type, so a JSON number would become a float). Pydantic models
+are analysed in `fastpg._pydantic`.
 
 `NamedTuple` fields are classified like Struct fields. `dict` rows have no fields: every
 column is a key. Both are only built directly: the msgpack/json routes encode rows as maps,
@@ -176,6 +178,42 @@ class StructPlanner:
         msg = f"{type(t).__name__} needs msgspec validation"
         raise NeedsValidationError(msg)
 
+    @staticmethod
+    def _has_decimal(t: mi.Type) -> bool:
+        """Whether `Decimal` appears anywhere in a field type (in unions, containers, nested
+        Structs, ...). MessagePack has no decimal type: a JSON number read into one through
+        msgpack becomes a float first and loses digits (`1.10` gives `Decimal('1.1')`)."""
+        stack: list[mi.Type] = [t]
+        seen: set[int] = set()  # nested Struct types; recursive ones refer to themselves
+        while stack:
+            match stack.pop():
+                case mi.DecimalType():
+                    return True
+                case mi.Metadata(type=inner):
+                    stack.append(inner)
+                case (
+                    mi.ListType(item_type=inner)
+                    | mi.SetType(item_type=inner)
+                    | mi.FrozenSetType(item_type=inner)
+                    | mi.VarTupleType(item_type=inner)
+                ):
+                    stack.append(inner)
+                case mi.UnionType(types=inner) | mi.TupleType(item_types=inner):
+                    stack.extend(inner)
+                case mi.DictType(key_type=key, value_type=value):
+                    stack.extend((key, value))
+                case (
+                    mi.StructType(fields=fields)
+                    | mi.TypedDictType(fields=fields)
+                    | mi.DataclassType(fields=fields)
+                    | mi.NamedTupleType(fields=fields)
+                ) as nested if id(nested) not in seen:
+                    seen.add(id(nested))
+                    stack.extend(f.type for f in fields)
+                case _:
+                    pass
+        return False
+
     @classmethod
     def _list_item(cls, t: mi.Type) -> tuple[int, bool] | None:
         """`(kind, nullable)` of the items of a `list[X]` (or `list[X] | None`) field type
@@ -304,10 +342,12 @@ class StructPlanner:
         map_error = None
         if info.array_like:
             map_error = f"{struct.__qualname__} is array_like; rows are encoded as maps"
+        # A Decimal anywhere in the fields: msgpack would turn JSON numbers into floats.
+        has_decimal = any(cls._has_decimal(f.type) for f in info.fields)
         return Plan(
             spec=spec,
             direct_error=direct_error,
-            fallback="msgpack",
+            fallback="json" if has_decimal else "msgpack",
             msgpack_one=msgspec.msgpack.Decoder(struct, ext_hook=_msgpack_ext).decode,
             msgpack_many=msgspec.msgpack.Decoder(list[struct], ext_hook=_msgpack_ext).decode,
             msgpack_error=map_error,

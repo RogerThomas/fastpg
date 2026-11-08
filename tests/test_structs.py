@@ -147,6 +147,61 @@ class ConstrainedJSONValue(msgspec.Struct):
     doc: Any
 
 
+class ConstrainedJSONDecoded(msgspec.Struct):
+    """Constrained, with no Decimal anywhere, so strategy "auto" reads it through msgpack."""
+
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: dict[str, int]
+
+
+class DecimalAmount(msgspec.Struct):
+    value: Decimal
+
+
+class ConstrainedDecimalDict(msgspec.Struct):
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: dict[str, Decimal]
+
+
+class ConstrainedDecimalList(msgspec.Struct):
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: list[Decimal | None]
+
+
+class ConstrainedDecimalNested(msgspec.Struct):
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: list[DecimalAmount]
+
+
+class ConstrainedDecimalValue(msgspec.Struct):
+    id: Annotated[int, msgspec.Meta(ge=0)]
+    doc: Annotated[Decimal, msgspec.Meta(description="a JSON number")] | None
+
+
+type DecimalsInJSON = (
+    ConstrainedDecimalDict
+    | ConstrainedDecimalList
+    | ConstrainedDecimalNested
+    | ConstrainedDecimalValue
+)
+
+LONG_DECIMAL = "0.1000000000000000055511151231257827"
+
+# Decimals inside a json/jsonb value, and what they must read as (repr: 1.10 == 1.1).
+DECIMALS_IN_JSON = [
+    (ConstrainedDecimalDict, f'{{"a": 1.10, "b": {LONG_DECIMAL}}}', {
+        "a": Decimal("1.10"), "b": Decimal(LONG_DECIMAL),
+    }),
+    (ConstrainedDecimalList, f"[1.10, null, {LONG_DECIMAL}]", [
+        Decimal("1.10"), None, Decimal(LONG_DECIMAL),
+    ]),
+    (ConstrainedDecimalNested, f'[{{"value": 1.10}}, {{"value": {LONG_DECIMAL}}}]', [
+        DecimalAmount(Decimal("1.10")), DecimalAmount(Decimal(LONG_DECIMAL)),
+    ]),
+    (ConstrainedDecimalValue, "1.10", Decimal("1.10")),
+    (ConstrainedDecimalValue, LONG_DECIMAL, Decimal(LONG_DECIMAL)),
+]  # fmt: skip
+
 # Every way a json/jsonb value reaches a field typed Any: they must all give the same value.
 JSON_VALUE_TARGETS = [
     (JSONValue, "direct"),
@@ -481,6 +536,34 @@ async def test_json_integer_beyond_64_bits_in_an_int_field(
     with pytest.raises(fastpg.DecodeError, match="beyond 64 bits") as exc:
         await conn.select_one(query, into=JSONDecoded, strategy="msgpack")
     assert isinstance(exc.value.__cause__, msgspec.ValidationError)
+
+
+@pytest.mark.parametrize(("into", "text", "expected"), DECIMALS_IN_JSON)
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_auto_keeps_decimal_digits_inside_json(
+    conn: fastpg.Connection,
+    json_type: str,
+    into: type[DecimalsInJSON],
+    text: str,
+    expected: object,
+) -> None:
+    # MessagePack has no decimal type: "auto" reads these through JSON, not msgpack.
+    query = f"SELECT 1 AS id, '{text}'::{json_type} AS doc"
+    auto = await conn.select_one(query, into=into)
+    json = await conn.select_one(query, into=into, strategy="json")
+    assert repr(json.doc) == repr(expected)
+    assert repr(auto) == repr(json)
+
+
+@pytest.mark.parametrize("json_type", ["json", "jsonb"])
+async def test_auto_reads_json_without_decimals_through_msgpack(
+    conn: fastpg.Connection,
+    json_type: str,
+) -> None:
+    # MessagePack integers stop at 64 bits, so this error shows the route "auto" took.
+    query = f"""SELECT 1 AS id, '{{"k": 98765432109876543210}}'::{json_type} AS doc"""
+    with pytest.raises(fastpg.DecodeError, match="beyond 64 bits"):
+        await conn.select_one(query, into=ConstrainedJSONDecoded)
 
 
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
