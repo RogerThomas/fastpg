@@ -23,7 +23,6 @@ pub fn encode_rows(
     single: bool,
     non_finite: bool,
 ) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(64 + rows.nrows() * names.len() * 24);
     // Column names are escaped once, as `"name":` prefixes.
     let keys: Vec<Vec<u8>> = names
         .iter()
@@ -34,6 +33,9 @@ pub fn encode_rows(
             k
         })
         .collect();
+    // Every row repeats the keys; values take about twice their binary size.
+    let key_bytes: usize = keys.iter().map(|k| k.len() + 1).sum();
+    let mut out = Vec::with_capacity(64 + rows.nrows() * (key_bytes + 2) + 2 * rows.len_bytes());
     let mut scratch = String::new();
     if !single {
         out.push(b'[');
@@ -190,18 +192,8 @@ fn encode_value(
         }
         Codec::Bytea => write_base64(out, raw),
         Codec::Uuid => {
-            let n = u128::from_be_bytes(fixed(raw)?);
-            let h = format!("{n:032x}");
             out.push(b'"');
-            for (i, part) in [&h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]]
-                .iter()
-                .enumerate()
-            {
-                if i > 0 {
-                    out.push(b'-');
-                }
-                out.extend_from_slice(part.as_bytes());
-            }
+            out.extend_from_slice(&pgtime::uuid_text(u128::from_be_bytes(fixed(raw)?)));
             out.push(b'"');
         }
         Codec::Date => {

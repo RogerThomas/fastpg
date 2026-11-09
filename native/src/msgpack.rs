@@ -7,7 +7,7 @@
 
 use rmp::encode as mp;
 
-use crate::decode::{ArrayItems, Codec, char_text, numeric_to_string, read_i64};
+use crate::decode::{ArrayItems, Codec, char_text, read_i64, write_numeric};
 use crate::pgtime::{self, PG_EPOCH_UNIX_SECS, USECS_PER_SEC};
 use crate::rows::RowBuffer;
 
@@ -20,7 +20,9 @@ pub fn encode_rows(
     as_text: &[bool],
     single: bool,
 ) -> Result<Vec<u8>, String> {
-    let mut out = Vec::with_capacity(64 + rows.nrows() * names.len() * 16);
+    // Every row repeats the column names; values take about as many bytes as in binary.
+    let key_bytes: usize = names.iter().map(|n| n.len() + 2).sum();
+    let mut out = Vec::with_capacity(64 + rows.nrows() * (key_bytes + 4) + rows.len_bytes());
     if !single {
         let _ = mp::write_array_len(&mut out, rows.nrows() as u32);
     }
@@ -85,17 +87,9 @@ fn encode_value(
             let _ = mp::write_bin(out, raw);
         }
         Codec::Uuid => {
-            let n = u128::from_be_bytes(fixed(raw)?);
-            let h = format!("{n:032x}");
-            scratch.push_str(&format!(
-                "{}-{}-{}-{}-{}",
-                &h[0..8],
-                &h[8..12],
-                &h[12..16],
-                &h[16..20],
-                &h[20..32]
-            ));
-            let _ = mp::write_str(out, scratch);
+            let text = pgtime::uuid_text(u128::from_be_bytes(fixed(raw)?));
+            let _ = mp::write_str_len(out, 36);
+            out.extend_from_slice(&text);
         }
         Codec::Date => {
             pgtime::fmt_date(
@@ -129,7 +123,8 @@ fn encode_value(
             out.extend_from_slice(&secs.to_be_bytes());
         }
         Codec::Numeric => {
-            let _ = mp::write_str(out, &numeric_to_string(raw)?);
+            write_numeric(raw, scratch)?;
+            let _ = mp::write_str(out, scratch);
         }
         Codec::Json | Codec::Jsonb => {
             let text = match (codec, raw.split_first()) {
