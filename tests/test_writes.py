@@ -276,11 +276,18 @@ class Blob:
     data: bytes
 
 
-class Payload(enum.Enum):
-    RAW = b"x"
+def json_case_id(value: object) -> str:
+    # A memoryview's repr holds its address, which differs between xdist workers.
+    return case_id(value) if isinstance(value, memoryview) else repr(value)
 
 
+# Bytes have no JSON form: msgspec writes them as base64 text, on every path alike.
 JSON_VALUES = [
+    b"x",
+    bytearray(b"x"),
+    memoryview(b"x"),
+    {"a": [1, b"x"]},
+    Blob(b"x"),
     True,
     1,
     2**70,
@@ -301,7 +308,7 @@ JSON_VALUES = [
 
 
 @pytest.mark.parametrize("pg_type", ["json", "jsonb"])
-@pytest.mark.parametrize("value", JSON_VALUES, ids=repr)
+@pytest.mark.parametrize("value", JSON_VALUES, ids=json_case_id)
 async def test_json_values_are_stored_alike_by_parameters_and_bulk_writes(
     conn: fastpg.Connection,
     make_table: TableMaker,
@@ -322,7 +329,7 @@ async def test_json_values_are_stored_alike_by_parameters_and_bulk_writes(
     assert stored == [expected] * 3
 
 
-@pytest.mark.parametrize("value", JSON_VALUES, ids=repr)
+@pytest.mark.parametrize("value", JSON_VALUES, ids=json_case_id)
 async def test_json_values_in_select_and_named_params(
     conn: fastpg.Connection,
     value: object,
@@ -339,30 +346,10 @@ async def test_json_values_in_select_and_named_params(
         (math.nan, r"nan at \$ has no JSON form \(it would be stored as null\)"),
         ((1.5, -math.inf), r"-inf at \$\[1\] has no JSON form"),
         (Reading(math.inf), r"inf at \$\.value has no JSON form"),
-        (b"x", r"bytes at \$ has no JSON form: base64-encode it yourself"),
-        (bytearray(b"x"), r"bytearray at \$ has no JSON form: base64-encode it yourself"),
-        (memoryview(b"x"), r"memoryview at \$ has no JSON form: base64-encode it yourself"),
-        ({"a": [1, b"x"]}, r"bytes at \$\.a\[1\] has no JSON form"),
-        ({b"k": 1}, r"bytes at \$\[b'k'\] has no JSON form"),
-        ((1, b"x"), r"bytes at \$\[1\] has no JSON form"),
-        (Blob(b"x"), r"bytes at \$\.data has no JSON form"),
-        (Payload.RAW, r"bytes at \$ has no JSON form"),
     ],
-    ids=[
-        "nan",
-        "inf-in-tuple",
-        "inf-in-dataclass",
-        "bytes",
-        "bytearray",
-        "memoryview",
-        "bytes-in-dict",
-        "bytes-dict-key",
-        "bytes-in-tuple",
-        "bytes-in-dataclass",
-        "bytes-enum",
-    ],
+    ids=["nan", "inf-in-tuple", "inf-in-dataclass"],
 )
-async def test_json_value_without_a_json_form_is_refused_by_parameters_and_bulk_writes(
+async def test_non_finite_json_value_is_refused_by_parameters_and_bulk_writes(
     conn: fastpg.Connection,
     make_table: TableMaker,
     tier: str,

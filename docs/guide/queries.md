@@ -108,10 +108,11 @@ print(rows)  # [(52, 70), (53, 71)]
 | `date`, `time` | `date`, `time` | `date`, `time` |
 | `timestamp` | `datetime` without a time zone | the same |
 | `timestamptz` | `datetime` in UTC | a `datetime` with a time zone |
-| `json`, `jsonb` | parsed JSON | a JSON `str`, or any value msgspec can encode (not `bytes`) |
+| `json`, `jsonb` | parsed JSON | a JSON `str`, or any value msgspec can encode |
 | arrays of the types above (`int[]`, `text[]`, ...) | `list` | a `list` or `tuple` |
 
 A Python `enum.Enum` is sent as its `.value`.
+In a `json` or `jsonb` value, `bytes` are stored as base64 text and read back as a `str`.
 A value that doesn't fit its column raises `ParameterError` before anything is sent.
 
 Lists and arrays: see [Arrays and grouping](lists.md).

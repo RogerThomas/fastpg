@@ -152,11 +152,11 @@ pub(crate) fn types(py: Python<'_>) -> PyResult<&PyTypes> {
 type StructSlots = Option<Rc<[ffi::Py_ssize_t]>>;
 
 /// How many Struct types each thread remembers in `STRUCT_SLOTS`. Structs of other types are
-/// searched by `refused`.
+/// searched by `non_finite`.
 const STRUCT_SLOTS_CAP: usize = 64;
 
 thread_local! {
-    /// Struct types seen by `may_be_refused`, with their `StructSlots`. Each type is kept
+    /// Struct types seen by `may_be_non_finite`, with their `StructSlots`. Each type is kept
     /// alive by a reference that is never released, so its pointer can't be reused.
     static STRUCT_SLOTS: RefCell<Vec<(*mut ffi::PyTypeObject, StructSlots)>> =
         const { RefCell::new(Vec::new()) };
@@ -508,51 +508,33 @@ pub fn json_value(obj: &Bound<'_, PyAny>) -> Option<PyResult<Vec<u8>>> {
 
 /// `obj` serialised as JSON by the shared `msgspec.json.Encoder`.
 ///
-/// msgspec writes NaN and the infinities as `null`, which JSON has instead, and bytes as
-/// base64 text; they are refused rather than stored as something else. The quick
-/// `may_be_refused` looks for them first.
+/// msgspec writes NaN and the infinities as `null`, which JSON has instead; they are refused
+/// rather than stored as something else. Only JSON with a `null` in it is searched for them,
+/// first by the quick `may_be_non_finite`.
 pub fn json_encode(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let py = obj.py();
     let types = types(py)?;
     let encoded = types.json_encode.bind(py).call1((obj,))?;
     let json = encoded.cast::<PyBytes>()?.as_bytes();
-    if may_be_refused(types, obj)?
-        && let Some((found, path)) = refused(types, obj)?
+    if memchr::memchr_iter(b'n', json).any(|i| json[i..].starts_with(b"null"))
+        && may_be_non_finite(types, obj)?
+        && let Some((value, path)) = non_finite(types, obj)?
     {
-        return Err(PyValueError::new_err(match found {
-            NoJsonForm::NonFinite(value) => {
-                format!("{value} at ${path} has no JSON form (it would be stored as null)")
-            }
-            NoJsonForm::Bytes(name) => {
-                format!("{name} at ${path} has no JSON form: base64-encode it yourself")
-            }
-        }));
+        return Err(PyValueError::new_err(format!(
+            "{value} at ${path} has no JSON form (it would be stored as null)"
+        )));
     }
     Ok(json.to_vec())
 }
 
-/// A value msgspec encodes as something else, found by `refused`.
-enum NoJsonForm {
-    /// NaN or an infinity (its repr), encoded as `null`.
-    NonFinite(String),
-    /// bytes, bytearray or memoryview (the type's name), encoded as base64 text.
-    Bytes(String),
-}
-
-fn is_bytes(obj: &Bound<'_, PyAny>) -> bool {
-    obj.is_instance_of::<PyBytes>()
-        || obj.is_instance_of::<PyByteArray>()
-        || obj.is_instance_of::<PyMemoryView>()
-}
-
-/// Whether `obj` may hold a NaN, an infinity or bytes: a quicker first pass than `refused`,
-/// which is never wrong when it says no. It builds no paths, reads a Struct's fields from its
-/// slots instead of converting the whole Struct with `to_builtins`, and looks at the usual
-/// scalars without taking a reference to them.
-fn may_be_refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+/// Whether `obj` may hold a NaN or an infinity: a quicker first pass than `non_finite`, which
+/// is never wrong when it says no. It builds no paths, reads a Struct's fields from its slots
+/// instead of converting the whole Struct with `to_builtins`, and looks at the usual scalars
+/// without taking a reference to them.
+fn may_be_non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     let py = obj.py();
     // SAFETY: `obj` is live.
-    if let Some(found) = unsafe { scalar_refused(obj.as_ptr()) } {
+    if let Some(found) = unsafe { scalar_non_finite(obj.as_ptr()) } {
         return Ok(found);
     }
     // Each item is looked at in place if it's a scalar, else walked as a new reference. Every
@@ -561,10 +543,10 @@ fn may_be_refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     // revisit it in the free-threading audit.
     let item = |item: *mut ffi::PyObject| {
         // SAFETY: `item` is live (above).
-        match unsafe { scalar_refused(item) } {
+        match unsafe { scalar_non_finite(item) } {
             Some(found) => Ok(found),
             // SAFETY: `item` is live (above).
-            None => may_be_refused(types, &unsafe { Bound::from_borrowed_ptr(py, item) }),
+            None => may_be_non_finite(types, &unsafe { Bound::from_borrowed_ptr(py, item) }),
         }
     };
     // SAFETY: reads the type of `obj`'s type.
@@ -580,7 +562,7 @@ fn may_be_refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
                     .offset(offset)
                     .cast::<*mut ffi::PyObject>()
             };
-            // An unset field is left to `refused`.
+            // An unset field is left to `non_finite`.
             if slot.is_null() || item(slot)? {
                 return Ok(true);
             }
@@ -595,7 +577,7 @@ fn may_be_refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
                 ffi::PyDict_Next(dict.as_ptr(), &raw mut pos, &raw mut key, &raw mut value)
             } != 0
             {
-                if item(key)? || item(value)? {
+                if item(value)? {
                     return Ok(true);
                 }
             }
@@ -629,32 +611,22 @@ fn may_be_refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     if let Some(float) = as_type::<PyFloat>(obj) {
         return Ok(!float.value().is_finite());
     }
-    if is_bytes(obj) {
-        return Ok(true);
-    }
-    // Other values msgspec encodes as a single string or number.
-    let ty = obj.get_type();
     if obj.is_instance_of::<PyString>()
         || obj.is_instance_of::<PyInt>()
         || obj.is(types.unset.bind(py))
-        || ty.is(types.uuid_cls.bind(py))
-        || ty.is(types.decimal_cls.bind(py))
-        || obj.is_instance_of::<PyDate>()
-        || obj.is_instance_of::<PyTime>()
-        || obj.is_instance_of::<PyDelta>()
     {
         return Ok(false);
     }
-    Ok(refused(types, obj)?.is_some())
+    Ok(non_finite(types, obj)?.is_some())
 }
 
-/// Whether `obj` is a NaN, an infinity or bytes, if it is exactly one of the usual scalars
-/// (`None`, `str`, `int`, `bool`, `float`, `bytes` or `bytearray`); `None` for anything else.
+/// Whether `obj` is a NaN or an infinity, if it is exactly one of the usual scalars (`None`,
+/// `str`, `int`, `bool` or `float`); `None` for anything else.
 ///
 /// # Safety
 /// `obj` must point to a live object.
 #[inline]
-unsafe fn scalar_refused(obj: *mut ffi::PyObject) -> Option<bool> {
+unsafe fn scalar_non_finite(obj: *mut ffi::PyObject) -> Option<bool> {
     // SAFETY: the caller's.
     unsafe {
         let ty = ffi::Py_TYPE(obj);
@@ -665,36 +637,23 @@ unsafe fn scalar_refused(obj: *mut ffi::PyObject) -> Option<bool> {
         {
             return Some(false);
         }
-        if ty == &raw mut ffi::PyBytes_Type || ty == &raw mut ffi::PyByteArray_Type {
-            return Some(true);
-        }
         (ty == &raw mut ffi::PyFloat_Type).then(|| !ffi::PyFloat_AS_DOUBLE(obj).is_finite())
     }
 }
 
-/// The first NaN, infinity or bytes in `obj`, and its path below `obj` (`.key[0]`). Dicts
-/// (their keys too), lists and tuples are walked as they are; other objects (Structs,
-/// dataclasses, enums, ...) as the builtins msgspec encodes them as.
-fn refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<Option<(NoJsonForm, String)>> {
-    let py = obj.py();
+/// The first NaN or infinity in `obj`, and its path below `obj` (`.key[0]`). Dicts, lists and
+/// tuples are walked as they are; other objects (Structs, dataclasses, ...) as the builtins
+/// msgspec encodes them as.
+fn non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<Option<(String, String)>> {
     if let Some(float) = as_type::<PyFloat>(obj) {
         if float.value().is_finite() {
             return Ok(None);
         }
-        let value = float.repr()?.to_string();
-        return Ok(Some((NoJsonForm::NonFinite(value), String::new())));
-    }
-    if is_bytes(obj) {
-        let name = obj.get_type().name()?.to_string();
-        return Ok(Some((NoJsonForm::Bytes(name), String::new())));
+        return Ok(Some((float.repr()?.to_string(), String::new())));
     }
     if let Some(dict) = as_type::<PyDict>(obj) {
         for (key, value) in dict.iter() {
-            let found = match refused(types, &key)? {
-                None => refused(types, &value)?,
-                found => found,
-            };
-            if let Some((found, path)) = found {
+            if let Some((found, path)) = non_finite(types, &value)? {
                 let key = match as_type::<PyString>(&key) {
                     Some(key) => format!(".{}", key.to_str()?),
                     None => format!("[{key}]"),
@@ -711,21 +670,15 @@ fn refused(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<Option<(NoJsonFo
             return Ok(None);
         }
         _ => {
-            // Bytes are kept as they are, to be found. Anything else comes back as one of the
-            // builtins handled above, so this ends.
-            let kwargs = PyDict::new(py);
-            let bytes_types = (
-                py.get_type::<PyBytes>(),
-                py.get_type::<PyByteArray>(),
-                py.get_type::<PyMemoryView>(),
-            );
-            kwargs.set_item(intern!(py, "builtin_types"), bytes_types)?;
-            let builtins = types.to_builtins.bind(py).call((obj,), Some(&kwargs))?;
-            return refused(types, &builtins);
+            let builtins = types.to_builtins.bind(obj.py()).call1((obj,))?;
+            if builtins.is_instance_of::<PyDict>() || builtins.is_instance_of::<PyList>() {
+                return non_finite(types, &builtins);
+            }
+            return Ok(None);
         }
     };
     for (i, item) in items.iter().enumerate() {
-        if let Some((found, path)) = refused(types, item)? {
+        if let Some((found, path)) = non_finite(types, item)? {
             return Ok(Some((found, format!("[{i}]{path}"))));
         }
     }
