@@ -13,6 +13,7 @@ nav:
   - Home: index.md
   - Getting started: guide/getting-started.md
   - Guides:
+      - Connecting: guide/connecting.md
       - Queries: guide/queries.md
       - Structs: guide/structs.md
       - Arrays and grouping: guide/lists.md

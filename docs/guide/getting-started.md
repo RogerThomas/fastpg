@@ -60,13 +60,7 @@ Without `into=`, you get a tuple.
 ## Settings from the environment
 
 Settings not in the connection string come from the `PG*` environment variables, then `~/.pgpass` for the password, as with psql.
-
-The variables are `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPASSFILE`,
-`PGOPTIONS`, `PGAPPNAME`, `PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGSSLMODE`,
-`PGSSLNEGOTIATION`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLSNI` and `PGCHANNELBINDING`.
-
-With no host, fastpg connects to the local server's Unix socket in `/var/run/postgresql`, `/run/postgresql` or `/tmp`.
-With no user, it uses your login name.
+[Connecting](connecting.md) lists every setting and its default.
 
 ## One connection or a pool?
 

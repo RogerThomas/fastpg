@@ -12,14 +12,7 @@ async with await fastpg.connect(dsn) as tls_conn:
     print(await tls_conn.select_one(query))  # (True, 'TLSv1.3')
 ```
 
-| key | values |
-|---|---|
-| `sslmode` | `disable`, `prefer` (default), `require`, `verify-ca`, `verify-full` |
-| `sslrootcert` | a CA certificate file, or `system` |
-| `sslcert`, `sslkey` | a client certificate and its key |
-| `sslnegotiation` | `postgres` (default) or `direct` |
-| `sslsni` | `1` (default) or `0` |
-| `channel_binding` | `disable`, `prefer` (default) or `require` |
+[Connecting](connecting.md#settings) lists the keys and their defaults.
 
 * `prefer` and `require` encrypt the connection, but only check the server's certificate if
   you pass `sslrootcert`.
