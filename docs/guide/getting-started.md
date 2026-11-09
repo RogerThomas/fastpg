@@ -57,6 +57,14 @@ asyncio.run(main())
 `into=Person` turns the row into a `Person`.
 Without `into=`, you get a tuple.
 
+## Settings from the environment
+
+Settings not in the connection string come from the `PG*` environment variables, then `~/.pgpass` for the password, as with psql.
+
+The variables are `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGPASSFILE`,
+`PGOPTIONS`, `PGAPPNAME`, `PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGSSLMODE`,
+`PGSSLNEGOTIATION`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLSNI` and `PGCHANNELBINDING`.
+
 ## One connection or a pool?
 
 * **One connection** for a script or a job that runs one query at a time.

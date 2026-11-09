@@ -47,8 +47,9 @@ async def test_connect_timeout_bounds_a_startup_never_answered(
     server); libpq's minimum, 2 s, applies."""
     fault_proxy.stall()
     start = time.monotonic()
-    with pytest.raises(fastpg.InterfaceError, match=r"startup .* timeout expired"):
+    with pytest.raises(fastpg.ConnectError, match=r"startup .* timeout expired") as exc:
         await fastpg.connect(with_params(proxied_dsn, connect_timeout="1"))
+    assert isinstance(exc.value, fastpg.OperationalError)
     assert 1.9 < time.monotonic() - start < 3
     async with asyncio.timeout(2):  # and its socket is closed
         while fault_proxy.to_server.ended < 1:
@@ -60,7 +61,7 @@ async def test_connect_timeout_bounds_an_address_that_never_answers() -> None:
     timeout the OS gives up only after a minute or more. Where it isn't routable at all,
     connecting fails at once instead."""
     start = time.monotonic()
-    with pytest.raises(fastpg.InterfaceError, match="could not connect"):
+    with pytest.raises(fastpg.ConnectError, match="could not connect"):
         await fastpg.connect("postgresql://fastpg@192.0.2.1:5432/fastpg?connect_timeout=2")
     assert time.monotonic() - start < 3
 
@@ -95,7 +96,7 @@ async def test_create_pool_with_a_connect_timeout(
     fault_proxy.stall()
     start = time.monotonic()
     dsn = with_params(proxied_dsn, connect_timeout="2")
-    with pytest.raises(fastpg.InterfaceError, match="timeout expired"):
+    with pytest.raises(fastpg.ConnectError, match="timeout expired"):
         await fastpg.create_pool(dsn, min_size=3)
     assert time.monotonic() - start < 3
     async with asyncio.timeout(2):  # every socket closed
@@ -113,7 +114,7 @@ async def test_pool_growth_with_a_connect_timeout_fails_waiters(
     async with await fastpg.create_pool(dsn, min_size=0, max_size=2) as pool:
         fault_proxy.stall()
         start = time.monotonic()
-        with pytest.raises(fastpg.InterfaceError, match="timeout expired"):
+        with pytest.raises(fastpg.ConnectError, match="timeout expired"):
             await pool.select_one("SELECT 1")
         assert time.monotonic() - start < 3
         fault_proxy.resume()
@@ -148,7 +149,7 @@ async def test_a_refusing_database_fails_statements_at_once(
         fault_proxy.refuse = True  # every new connection is reset at once
         start = time.monotonic()
         for _ in range(20):
-            with pytest.raises(fastpg.InterfaceError):
+            with pytest.raises(fastpg.ConnectError):
                 await pool.select_one("SELECT 1")
         assert time.monotonic() - start < 2
         assert fault_proxy.accepted == 20  # one connect attempt per statement
@@ -167,7 +168,7 @@ async def test_concurrent_statements_on_a_refusing_database_connect_once_each(
         fault_proxy.refuse = True
         queries = [pool.select_one("SELECT 1") for _ in range(10)]
         results = await asyncio.gather(*queries, return_exceptions=True)
-        assert all(isinstance(r, fastpg.InterfaceError) for r in results)
+        assert all(isinstance(r, fastpg.ConnectError) for r in results)
         assert 1 <= fault_proxy.accepted <= min(10, max_size)
 
 
@@ -178,7 +179,7 @@ async def test_acquire_on_a_refusing_database_connects_once(
     async with await fastpg.create_pool(proxied_dsn, min_size=0, max_size=4) as pool:
         fault_proxy.refuse = True
         for _ in range(5):
-            with pytest.raises(fastpg.InterfaceError):
+            with pytest.raises(fastpg.ConnectError):
                 async with pool.acquire():
                     pass
         assert fault_proxy.accepted == 5
