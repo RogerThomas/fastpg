@@ -65,6 +65,9 @@ The variables are `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PGP
 `PGOPTIONS`, `PGAPPNAME`, `PGCONNECT_TIMEOUT`, `PGTARGETSESSIONATTRS`, `PGSSLMODE`,
 `PGSSLNEGOTIATION`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLSNI` and `PGCHANNELBINDING`.
 
+With no host, fastpg connects to the local server's Unix socket in `/var/run/postgresql`, `/run/postgresql` or `/tmp`.
+With no user, it uses your login name.
+
 ## One connection or a pool?
 
 * **One connection** for a script or a job that runs one query at a time.

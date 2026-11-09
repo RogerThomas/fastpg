@@ -503,10 +503,13 @@ enum Target {
 /// Parse `dsn` into xitca's config and the settings xitca never sees (TLS, socket options),
 /// with libpq's environment variables for the keys it leaves out.
 pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
-    config_with(dsn, &pgenv::process_env)
+    config_with(dsn, &pgenv::process_env, &pgenv::os_user)
 }
 
-fn config_with(dsn: &str, env: Env) -> Result<(Config, DsnOptions), QueryError> {
+/// Looks up the default user: [`pgenv::os_user`], or a fixed one in tests.
+type OsUser<'a> = &'a dyn Fn() -> Result<String, String>;
+
+fn config_with(dsn: &str, env: Env, os_user: OsUser) -> Result<(Config, DsnOptions), QueryError> {
     let (rest, options) = tls::split_dsn(dsn, env)?;
     // Every key is known by now (`split_dsn` names an unknown one), and xitca's parse errors
     // carry no detail at all ("WIP error type ...").
@@ -515,17 +518,25 @@ fn config_with(dsn: &str, env: Env) -> Result<(Config, DsnOptions), QueryError> 
             "invalid connection string: malformed, or an invalid port value".to_owned(),
         )
     })?;
-    let cfg = fill_from(cfg, options.port_set, env)?;
+    let cfg = fill_from(cfg, options.port_set, env, os_user)?;
     Ok((cfg, options))
 }
 
 /// libpq's environment variables ("Environment Variables" in the libpq docs) for the keys
-/// xitca parses, where the DSN leaves them out (or gives them empty).
-fn fill_from(mut cfg: Config, port_set: bool, env: Env) -> Result<Config, QueryError> {
+/// xitca parses, where the DSN leaves them out (or gives them empty). With no user from
+/// either, the OS user's login name, as in libpq (the server's default database follows it).
+fn fill_from(
+    mut cfg: Config,
+    port_set: bool,
+    env: Env,
+    os_user: OsUser,
+) -> Result<Config, QueryError> {
     let unset = |value: Option<&str>| value.is_none_or(str::is_empty);
-    if unset(cfg.get_user())
-        && let Some(user) = env("PGUSER")
-    {
+    if unset(cfg.get_user()) {
+        let user = match env("PGUSER") {
+            Some(user) => user,
+            None => os_user().map_err(QueryError::Interface)?,
+        };
         cfg.user(&user);
     }
     if cfg.get_password().is_none_or(<[u8]>::is_empty)
@@ -640,19 +651,29 @@ pub fn socket_options(dsn: &str) -> Result<SocketOptions, QueryError> {
 
 /// The hosts of `dsn` as `("tcp" | "unix", host or directory/path, port)`, in connection
 /// order, for Python to connect the socket to. As in libpq, host N goes with port N; a single
-/// port goes with every host, and no port means 5432.
+/// port goes with every host, and no port means 5432. No host means the local unix socket,
+/// in the first of `pgenv::DEFAULT_SOCKET_DIRS` that holds it.
 pub fn targets(dsn: &str) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
-    targets_of(&config(dsn)?.0)
+    targets_of(&config(dsn)?.0, pgenv::DEFAULT_SOCKET_DIRS)
 }
 
-fn targets_of(cfg: &Config) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
+fn targets_of(
+    cfg: &Config,
+    socket_dirs: &[&str],
+) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
     let (hosts, ports) = (cfg.get_hosts(), cfg.get_ports());
-    if ports.len() > 1 && ports.len() != hosts.len() {
+    let host_count = hosts.len().max(1);
+    if ports.len() > 1 && ports.len() != host_count {
         return Err(QueryError::Interface(format!(
-            "could not match {} port numbers to {} hosts",
+            "could not match {} port numbers to {host_count} hosts",
             ports.len(),
-            hosts.len()
         )));
+    }
+    if hosts.is_empty() {
+        let port = ports.first().copied().unwrap_or(5432);
+        let dir = pgenv::socket_dir(socket_dirs, port)
+            .map_err(|e| QueryError::Connect(format!("could not connect to server: {e}")))?;
+        return Ok(vec![("unix", dir.to_owned(), port)]);
     }
     let mut out = Vec::new();
     for (i, host) in hosts.iter().enumerate() {
@@ -1118,15 +1139,16 @@ mod tests {
                 .find(|(var, _)| *var == name)
                 .map(|(_, value)| (*value).to_owned())
         };
-        Ok(config_with(dsn, &env)?.0)
+        Ok(config_with(dsn, &env, &|| Ok("osuser".to_owned()))?.0)
     }
 
-    /// [`targets`] with the environment variables `vars` only.
+    /// [`targets`] with the environment variables `vars` only, and no default socket
+    /// directory.
     fn targets_with(
         dsn: &str,
         vars: &[(&str, &str)],
     ) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
-        targets_of(&config_env(dsn, vars)?)
+        targets_of(&config_env(dsn, vars)?, &[])
     }
 
     const ENV: &[(&str, &str)] = &[
@@ -1149,7 +1171,7 @@ mod tests {
             assert_eq!(cfg.get_options(), Some("-c work_mem=7MB"));
             assert_eq!(cfg.get_application_name(), Some("envapp"));
             assert_eq!(
-                targets_of(&cfg).unwrap_or_default(),
+                targets_of(&cfg, &[]).unwrap_or_default(),
                 vec![
                     ("tcp", "envhost".to_owned(), 6001),
                     ("unix", "/run/env".to_owned(), 6002)
@@ -1158,7 +1180,85 @@ mod tests {
             );
         }
         let cfg = config_env("", &[]).unwrap_or_else(|_| panic!("no environment"));
-        assert_eq!(cfg, Config::new(), "no environment: nothing set, as before");
+        let mut expected = Config::new();
+        expected.user("osuser");
+        assert_eq!(cfg, expected, "no environment: only the OS user is set");
+    }
+
+    #[test]
+    fn with_no_user_the_os_user_is_used() {
+        for dsn in ["", "host=h", "postgresql://h/d", "user='' host=h"] {
+            let cfg = config_env(dsn, &[]).unwrap_or_else(|_| panic!("{dsn}"));
+            assert_eq!(cfg.get_user(), Some("osuser"), "{dsn}");
+        }
+        let cfg =
+            config_env("host=h", &[("PGUSER", "envuser")]).unwrap_or_else(|_| panic!("PGUSER"));
+        assert_eq!(cfg.get_user(), Some("envuser"));
+        // Only looked up when needed: a failing lookup doesn't matter then.
+        let fails = || Err("could not look up local user ID 7: user does not exist".to_owned());
+        let env = |_: &str| None;
+        assert!(config_with("user=u", &env, &fails).is_ok());
+        match config_with("host=h", &env, &fails) {
+            Err(QueryError::Interface(m)) => {
+                assert_eq!(m, "could not look up local user ID 7: user does not exist");
+            }
+            _ => panic!("expected an InterfaceError"),
+        }
+    }
+
+    #[test]
+    fn with_no_host_the_local_socket_is_used() {
+        let base = std::env::temp_dir().join(format!("fastpg-nohost-{}", std::process::id()));
+        let (empty, full) = (base.join("empty"), base.join("full"));
+        for dir in [&empty, &full] {
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{e}"));
+        }
+        for port in [5432, 6001] {
+            std::fs::write(full.join(format!(".s.PGSQL.{port}")), "")
+                .unwrap_or_else(|e| panic!("{e}"));
+        }
+        let (empty, full) = (empty.to_string_lossy(), full.to_string_lossy());
+        let dirs = [empty.as_ref(), full.as_ref()];
+        let targets = |dsn: &str, vars: &[(&str, &str)]| {
+            targets_of(
+                &config_env(dsn, vars).unwrap_or_else(|_| panic!("{dsn}")),
+                &dirs,
+            )
+        };
+        let pairs = |dsn: &str, vars: &[(&str, &str)]| {
+            targets(dsn, vars).unwrap_or_else(|_| panic!("{dsn} {vars:?}"))
+        };
+        let unix = |port| vec![("unix", full.to_string(), port)];
+        assert_eq!(pairs("", &[]), unix(5432));
+        assert_eq!(pairs("user=u dbname=d", &[]), unix(5432));
+        assert_eq!(pairs("postgresql:///d", &[]), unix(5432));
+        assert_eq!(pairs("port=6001", &[]), unix(6001));
+        assert_eq!(pairs("", &[("PGPORT", "6001")]), unix(6001));
+        // A host from PGHOST or the DSN is used as before.
+        assert_eq!(
+            pairs("", &[("PGHOST", "h")]),
+            vec![("tcp", "h".to_owned(), 5432)]
+        );
+        // No socket for the port: the error names each path tried.
+        match targets("port=6002", &[]) {
+            Err(QueryError::Connect(m)) => assert_eq!(
+                m,
+                format!(
+                    "could not connect to server: no host given, and no local server socket \
+                     found (tried {empty}/.s.PGSQL.6002, {full}/.s.PGSQL.6002); set host= or \
+                     PGHOST"
+                )
+            ),
+            _ => panic!("expected a ConnectError"),
+        }
+        // No host is one host, for matching ports.
+        match targets("port=1,2", &[]) {
+            Err(QueryError::Interface(m)) => {
+                assert_eq!(m, "could not match 2 port numbers to 1 hosts");
+            }
+            _ => panic!("expected an InterfaceError"),
+        }
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
@@ -1174,7 +1274,7 @@ mod tests {
             assert_eq!(cfg.get_options(), Some("-cx=y"));
             assert_eq!(cfg.get_application_name(), Some("a"));
             assert_eq!(
-                targets_of(&cfg).unwrap_or_default(),
+                targets_of(&cfg, &[]).unwrap_or_default(),
                 vec![("tcp", "h".to_owned(), 1)]
             );
         }
