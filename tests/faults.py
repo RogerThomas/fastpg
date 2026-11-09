@@ -77,6 +77,9 @@ class Faults:
     ended: int = 0
     """Connections whose sending side closed (EOF or error), e.g. `to_server.ended` counts
     connections the client closed."""
+    keep_open: bool = False
+    """Don't pass a close on: the receiving side stays connected, as when the RST that would
+    end its connection is lost."""
     _flowing: asyncio.Event = field(default_factory=asyncio.Event)
     _budget: int | None = None
     _rst: bool = False
@@ -213,6 +216,8 @@ class FaultProxy:
         with contextlib.suppress(OSError):
             while True:
                 due, data = await queue.get()
+                if not data and faults.keep_open:
+                    return  # `sink` stays open
                 await faults.flowing()
                 await asyncio.sleep(max(0.0, due - loop.time()))
                 await faults.flowing()  # stalled meanwhile
