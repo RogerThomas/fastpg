@@ -62,7 +62,7 @@ tasks:
       # or against one shared FASTPG_DSN server).
       PARALLEL: '{{.PARALLEL | default "-n auto --maxprocesses 8 --dist loadfile"}}'
     cmds:
-      - cargo test --manifest-path native/Cargo.toml -q
+      - task: test-rust
       # The tests that time something (marked `timing`) run after the rest, one at a time, so
       # no other worker competes for the CPU. Exit 5 (no test selected, e.g. by -k) is fine
       # for one pass, but not for both: then nothing ran at all.
@@ -72,6 +72,10 @@ tasks:
         second=0; uv run pytest -m timing {{.CLI_ARGS}} || second=$?
         [ $second -eq 0 ] || [ $second -eq 5 ] || exit $second
         [ $first -eq 0 ] || [ $second -eq 0 ] || exit 5
+
+  test-rust:
+    desc: Run the Rust unit tests
+    cmd: cargo test --manifest-path native/Cargo.toml -q
 
   test-against:
     desc: Run both test suites against existing servers, starting none (`task test-against DSN=... [TLS_DSN=... TLS_CA=...] [SEED=1]`)

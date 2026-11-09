@@ -1,24 +1,30 @@
 #!/bin/sh
-# Tests built wheels (.github/workflows/release.yml), each on the Python it's for: the smoke test
-# (tests/smoke.py) in a clean environment with just the wheel and its dependencies, then the test
-# suite against the wheel installed with the dev dependencies, in a venv of its own
-# (.venv-<python>). Run from the repo root, with uv, and FASTPG_DSN set (the test database, which
-# the smoke test needs too; FASTPG_TLS_DSN and FASTPG_TLS_CA for the TLS tests, and pytest's own
-# PYTEST_ADDOPTS, as for the suite run any other way):
+# Tests built wheels (.github/workflows/release.yml), each on the Python it's for, all Pythons at
+# once (.github/scripts/parallel.sh), each against a test server of its own: the Nth PYTHON (from
+# 0) against server N (.github/scripts/with-server.sh N: started by test-servers.sh, or by
+# native-postgres.sh on port 55432+N; FASTPG_TEST_TLS=1 for the TLS-only ones). On each Python,
+# the smoke test (tests/smoke.py) in a clean environment with just the wheel and its
+# dependencies, then the test suite, serially, without the `timing` tests, against the wheel
+# installed with the dev dependencies, in a venv of its own (.venv-<python>). Then, with
+# FASTPG_TIMING_PYTHON set to one of the PYTHONs (e.g. 3.14), that one runs the `timing` tests
+# (the ones that wait in real time for timeouts, keepalives and stalls) alone. pytest's own
+# PYTEST_ADDOPTS applies, as for the suite run any other way. Run from the repo root, with uv:
 #   sh .github/scripts/test-wheel.sh DIR PYTHON...
-# With FASTPG_TEST_OWN_SERVERS=1 (where Docker is available), the suite ignores those servers and
-# runs in parallel on throwaway ones of its own, a set per worker, as `task test` does; the smoke
-# test still uses FASTPG_DSN.
-# With FASTPG_TIMING_PYTHON set (e.g. 3.14), only that Python runs the `timing` tests (the ones
-# that wait in real time for timeouts, keepalives and stalls); the others run the rest of the
-# suite. Unset, every Python runs them all.
-# With FASTPG_FULL_SUITE_PYTHON set (e.g. 3.14), only that Python runs the test suite; the others
-# run just the smoke test. Unset, every Python runs the suite.
 # e.g. `sh .github/scripts/test-wheel.sh dist 3.14 3.14t` tests the one cp314 wheel in dist on
-# Python 3.14, then the one cp314t (free-threaded) wheel on 3.14t; uv finds or downloads each.
-set -eux
+# Python 3.14 against server 0, and the one cp314t (free-threaded) wheel on 3.14t against server
+# 1, at once; uv finds or downloads each Python.
+set -eu
 
-: "${FASTPG_DSN:?FASTPG_DSN must name the test database}"
+# test-wheel.sh --one WHEEL PYTHON: one Python's part (run by parallel.sh, through with-server.sh).
+if [ "$1" = --one ]; then
+    set -x
+    export UV_PYTHON="$3" UV_PROJECT_ENVIRONMENT=".venv-$3"
+    uv run --isolated --no-project --with "$2" -- python tests/smoke.py
+    uv sync --locked --no-install-project # the dev dependencies, without building fastpg
+    uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$2"
+    exec uv run --no-sync pytest -n0 -p no:cacheprovider -ra -m "not timing"
+fi
+
 dir=$1
 shift
 
@@ -31,34 +37,26 @@ only() {
     echo "$1"
 }
 
+n=0
+timing=""
 for python; do
     tag=cp$(echo "$python" | tr -d '.t') # 3.14t: cp314
     abi=$tag${python##*[0-9]}            # 3.14t: cp314t
     wheel=$(only "$dir"/fastpg-*-"$tag"-"$abi"-*.whl)
-    (
-        export UV_PYTHON="$python" UV_PROJECT_ENVIRONMENT=".venv-$python"
-        uv run --isolated --no-project --with "$wheel" -- python tests/smoke.py
-        if [ -n "${FASTPG_FULL_SUITE_PYTHON:-}" ] && [ "$python" != "$FASTPG_FULL_SUITE_PYTHON" ]; then
-            exit 0 # this subshell: on to the next Python
-        fi
-        uv sync --locked --no-install-project # the dev dependencies, without building fastpg
-        uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$wheel"
-        timing=true
-        if [ -n "${FASTPG_TIMING_PYTHON:-}" ] && [ "$python" != "$FASTPG_TIMING_PYTHON" ]; then
-            timing=false
-        fi
-        if [ "${FASTPG_TEST_OWN_SERVERS:-}" = 1 ]; then
-            # As `task test`: in parallel, then the `timing` tests alone.
-            env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
-                uv run --no-sync pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-            if [ "$timing" = true ]; then
-                env -u FASTPG_DSN -u FASTPG_TLS_DSN -u FASTPG_TLS_CA \
-                    uv run --no-sync pytest -ra -m timing
-            fi
-        elif [ "$timing" = true ]; then
-            uv run --no-sync pytest -ra
-        else
-            uv run --no-sync pytest -ra -m "not timing"
-        fi
-    )
+    [ "$python" != "${FASTPG_TIMING_PYTHON:-}" ] || timing=$n
+    # As arguments of `set`, after the loop's own (which it has already taken).
+    set -- "$@" "Python $python" \
+        "sh .github/scripts/with-server.sh $n sh .github/scripts/test-wheel.sh --one '$wheel' $python"
+    n=$((n + 1))
 done
+shift "$n"
+
+status=0
+sh .github/scripts/parallel.sh "$@" || status=$?
+if [ -n "$timing" ]; then
+    echo "The timing tests, on Python $FASTPG_TIMING_PYTHON"
+    UV_PYTHON="$FASTPG_TIMING_PYTHON" UV_PROJECT_ENVIRONMENT=".venv-$FASTPG_TIMING_PYTHON" \
+        sh .github/scripts/with-server.sh "$timing" uv run --no-sync pytest -ra -m timing \
+        || status=$?
+fi
+exit "$status"

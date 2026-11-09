@@ -2,16 +2,16 @@
 # task docs-test), so the two can't drift. uv takes Python from .python-version (or a job's
 # UV_PYTHON) and rustup takes Rust from rust-toolchain.toml.
 #
-# The test suite starts its own PostgreSQL 18 containers with testcontainers (tests/conftest.py),
-# the TLS-only one included, so on Linux it runs whole, as `task test` does locally. The macOS
-# runners have no Docker: there it runs against a PostgreSQL of the runner's own
-# (.github/scripts/native-postgres.sh), without the TLS tests (skipped) and the two files that
-# pause, kill and restart a server container of their own.
+# On Linux the test suite runs whole. With one Python, as `task test` does locally: it starts
+# its own PostgreSQL 18 containers with testcontainers (tests/conftest.py), the TLS-only one
+# included. The macOS runners have no Docker: there it runs against a PostgreSQL of the runner's
+# own (.github/scripts/native-postgres.sh), without the TLS tests (skipped), the pgbouncer tests
+# and the two files that pause, kill and restart a server container of their own.
 #
 # On a pull request only the Python 3.14 tests run, on Linux x86_64 and macOS, on PostgreSQL 18.
 # Pushes to main, and pull requests with the `full-ci` label, run every test: one Linux x86_64
-# job for every supported Python and the other supported PostgreSQL majors (15, 16, 17), and
-# Linux aarch64 and macOS on Python 3.14.
+# job for every supported Python and the other supported PostgreSQL majors (15, 16, 17), all at
+# once, each serially against servers of its own, and Linux aarch64 and macOS on Python 3.14.
 #
 # Branch protection need only require "CI passed", which fails unless every other job passed.
 name: CI
@@ -81,8 +81,8 @@ jobs:
       - id: scope
         env:
           FULL_CI_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          # `all`: the job runs every supported Python, then the other PostgreSQL majors (the test
-          # job's steps list them); otherwise Python 3.14 on PostgreSQL 18 only. Every Python on
+          # `all`: the job runs every supported Python and the other PostgreSQL majors, at once
+          # (the test job's steps list them); otherwise Python 3.14 on PostgreSQL 18 only. Every Python on
           # Linux x86_64 only: what differs between them is how the Python code runs and how the
           # extension builds against each CPython, not the architecture, so aarch64 (and macOS,
           # test-macos) run one Python; release.yml tests every wheel natively.
@@ -187,15 +187,14 @@ jobs:
           workspaces: native -> target
           key: ${{ matrix.runner }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # Each Python in a venv of its own (.venv-<python>), with the extension built for it; uv
-      # downloads the Python if need be. Each step runs even if one before it failed (the job
-      # then fails).
-      # On 3.14 (.python-version's), `task test`: the Rust unit tests, then the pytest suite in
-      # parallel, then its `timing` tests alone, on PostgreSQL 18. `uv python find` (the
-      # Taskfile's PYO3_PYTHON) reads .python-version and ignores UV_PYTHON, so without the pin
-      # it looks for .python-version's exact release: --no-project, written as given, for this
-      # job only; uv resolves it to the latest release of that version.
+      # One Python (pull requests, and Linux aarch64): `task test`, the Rust unit tests, then the
+      # pytest suite in parallel, then its `timing` tests alone, on PostgreSQL 18, in throwaway
+      # containers of its own. `uv python find` (the Taskfile's PYO3_PYTHON) reads
+      # .python-version and ignores UV_PYTHON, so without the pin it looks for
+      # .python-version's exact release: --no-project, written as given, for this job only; uv
+      # resolves it to the latest release of that version.
       - name: Test (Python 3.14)
+        if: ${{ !matrix.all }}
         env:
           UV_PYTHON: "3.14"
           UV_PROJECT_ENVIRONMENT: .venv-3.14
@@ -203,63 +202,60 @@ jobs:
           uv python pin --no-project "$UV_PYTHON"
           uv sync
           task test -- -ra
-      # The other Pythons, then the other PostgreSQL majors on 3.14 (the test containers run
-      # FASTPG_PG_IMAGE, tests/faults.py): the suite in parallel, as `task test` runs it, without
-      # the `timing` tests, which ran above. 3.13 has no t-strings; fastpg runs the free-threaded
-      # builds with the GIL back on (ADR 0011, tests/test_free_threading.py).
-      - name: Test (Python 3.13)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
-          UV_PYTHON: "3.13"
-          UV_PROJECT_ENVIRONMENT: .venv-3.13
+      # Every Python and PostgreSQL: each Python in a venv of its own (.venv-<python>), with the
+      # extension built for it; uv downloads the Python if need be. 3.13 has no t-strings;
+      # fastpg runs the free-threaded builds with the GIL back on (ADR 0011,
+      # tests/test_free_threading.py). The pin is for `task test-rust`, as above.
+      - name: Build (every Python)
+        if: matrix.all
         run: |
-          uv sync
-          uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (Python 3.15)
+          uv python pin --no-project 3.14
+          for python in 3.14 3.13 3.15 3.14t 3.15t; do
+            echo "::group::Python $python"
+            UV_PYTHON=$python UV_PROJECT_ENVIRONMENT=.venv-$python uv sync
+            echo "::endgroup::"
+          done
+      # A server and a TLS-only one for each Python, all PostgreSQL 18, then for 15, 16 and 17
+      # (set N on ports 55432+N and 55532+N).
+      - name: Start PostgreSQL
+        if: matrix.all
+        run: >-
+          sh .github/scripts/test-servers.sh default default default default default
+          postgres:15.19-trixie postgres:16.15-trixie postgres:17.11-trixie
+      # All at once, each serially against servers of its own: the suite without the `timing`
+      # tests on every Python, and on 3.14 against each older PostgreSQL; and the Rust unit
+      # tests. The tests that need servers of their own (pgbouncer, and the ones that kill a
+      # server) still start them in containers (tests/conftest.py).
+      - name: Test (every Python, and PostgreSQL 15, 16 and 17)
+        if: matrix.all
+        env:
+          FASTPG_TEST_TLS: 1
+          SUITE: uv run --no-sync pytest -n0 -p no:cacheprovider -ra -m "not timing"
+        run: >-
+          sh .github/scripts/parallel.sh
+          "Python 3.14" "UV_PYTHON=3.14 UV_PROJECT_ENVIRONMENT=.venv-3.14 sh .github/scripts/with-server.sh 0 $SUITE"
+          "Python 3.13" "UV_PYTHON=3.13 UV_PROJECT_ENVIRONMENT=.venv-3.13 sh .github/scripts/with-server.sh 1 $SUITE"
+          "Python 3.15" "UV_PYTHON=3.15 UV_PROJECT_ENVIRONMENT=.venv-3.15 sh .github/scripts/with-server.sh 2 $SUITE"
+          "Python 3.14t" "UV_PYTHON=3.14t UV_PROJECT_ENVIRONMENT=.venv-3.14t sh .github/scripts/with-server.sh 3 $SUITE"
+          "Python 3.15t" "UV_PYTHON=3.15t UV_PROJECT_ENVIRONMENT=.venv-3.15t sh .github/scripts/with-server.sh 4 $SUITE"
+          "PostgreSQL 15" "UV_PYTHON=3.14 UV_PROJECT_ENVIRONMENT=.venv-3.14 FASTPG_PG_IMAGE=postgres:15.19-trixie sh .github/scripts/with-server.sh 5 $SUITE"
+          "PostgreSQL 16" "UV_PYTHON=3.14 UV_PROJECT_ENVIRONMENT=.venv-3.14 FASTPG_PG_IMAGE=postgres:16.15-trixie sh .github/scripts/with-server.sh 6 $SUITE"
+          "PostgreSQL 17" "UV_PYTHON=3.14 UV_PROJECT_ENVIRONMENT=.venv-3.14 FASTPG_PG_IMAGE=postgres:17.11-trixie sh .github/scripts/with-server.sh 7 $SUITE"
+          "Rust unit tests" "task test-rust"
+      # Then the `timing` tests, alone, on 3.14 and PostgreSQL 18.
+      - name: Test (the timing tests, Python 3.14)
         if: ${{ !cancelled() && matrix.all }}
         env:
-          UV_PYTHON: "3.15"
-          UV_PROJECT_ENVIRONMENT: .venv-3.15
-        run: |
-          uv sync
-          uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (Python 3.14t)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
-          UV_PYTHON: "3.14t"
-          UV_PROJECT_ENVIRONMENT: .venv-3.14t
-        run: |
-          uv sync
-          uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (Python 3.15t)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
-          UV_PYTHON: "3.15t"
-          UV_PROJECT_ENVIRONMENT: .venv-3.15t
-        run: |
-          uv sync
-          uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (PostgreSQL 15)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
+          FASTPG_TEST_TLS: 1
           UV_PYTHON: "3.14"
           UV_PROJECT_ENVIRONMENT: .venv-3.14
-          FASTPG_PG_IMAGE: postgres:15.19-trixie
-        run: uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (PostgreSQL 16)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
-          UV_PYTHON: "3.14"
-          UV_PROJECT_ENVIRONMENT: .venv-3.14
-          FASTPG_PG_IMAGE: postgres:16.15-trixie
-        run: uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
-      - name: Test (PostgreSQL 17)
-        if: ${{ !cancelled() && matrix.all }}
-        env:
-          UV_PYTHON: "3.14"
-          UV_PROJECT_ENVIRONMENT: .venv-3.14
-          FASTPG_PG_IMAGE: postgres:17.11-trixie
-        run: uv run pytest -ra -n auto --maxprocesses 8 --dist loadfile -m "not timing"
+        run: sh .github/scripts/with-server.sh 0 uv run --no-sync pytest -ra -m timing
+      - name: Show the servers' logs
+        if: failure() && matrix.all
+        run: |
+          for n in 0 1 2 3 4 5 6 7; do
+            docker compose --project-name "fastpg-test-$n" --profile tls logs postgres postgres-tls
+          done
 
   test-macos:
     name: Test (macOS arm64, Python 3.14)
@@ -302,7 +298,7 @@ jobs:
       # Serially: every worker would share this one server (not yet reliable in parallel).
       - name: Test
         run: >-
-          task test PARALLEL=-n0 -- -ra
+          task test PARALLEL=-n0 -- -ra --ignore tests/test_pgbouncer.py
           --ignore tests/test_network_server.py --ignore tests/test_network_stall.py
       - name: Show the server's log
         if: failure()

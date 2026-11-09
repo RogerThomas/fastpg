@@ -515,6 +515,10 @@ async def test_tls_connect_cancelled_at_random_points_leaks_nothing(
 ) -> None:
     dsn, ca = tls_server
     verified = f"{dsn}?sslmode=verify-full&sslrootcert={ca}&application_name=edge_tls_cancel"
+    # The process's first TLS connection opens descriptors that stay open for later ones: not
+    # a leak, so made before counting (the TLS server may come from FASTPG_TLS_DSN, unused yet).
+    async with await fastpg.connect(verified):
+        pass
     fds = _open_fds()
     for _ in range(30):
         await _connect_cancelled_after(verified, rng.randrange(30))
