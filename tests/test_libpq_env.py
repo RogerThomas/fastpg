@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import secrets
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -272,25 +273,52 @@ TMP = "/tmp"  # noqa: S108 - a default socket directory, not a temporary file
 SOCKET_DIRS = ("/var/run/postgresql", "/run/postgresql", TMP)
 
 
+def socket_taken(port: int) -> bool:
+    """Whether any default socket directory has a socket (or any file) for `port`."""
+    return any(Path(d, f".s.PGSQL.{port}").exists() for d in SOCKET_DIRS)
+
+
 def free_socket_port() -> int:
     """A port number with no server socket in any default socket directory."""
     while True:
         port = 40000 + secrets.randbelow(20000)
-        if not any(Path(d, f".s.PGSQL.{port}").exists() for d in SOCKET_DIRS):
+        if not socket_taken(port):
             return port
+
+
+def bind_local_socket() -> tuple[int, socket.socket]:
+    """``(port, socket)``: a unix socket bound at `/tmp/.s.PGSQL.<port>`, for a port that no
+    default socket directory had a socket for. Binding fails on an existing path, so it never
+    replaces another socket; a port another directory has (or gets meanwhile) is skipped."""
+    while True:
+        port = free_socket_port()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        path = Path(TMP, f".s.PGSQL.{port}")
+        try:
+            sock.bind(str(path))
+        except OSError:  # created meanwhile: another port
+            sock.close()
+            continue
+        others = [Path(d, path.name) for d in SOCKET_DIRS if d != TMP]
+        if not any(other.exists() for other in others):
+            return port, sock
+        sock.close()
+        path.unlink()
 
 
 @pytest.fixture
 async def local_socket(server: Server) -> AsyncIterator[tuple[int, FaultProxy]]:
     """``(port, proxy)``: a socket in `/tmp`, a default socket directory, for that port,
-    forwarding to the test server."""
-    port = free_socket_port()
-    proxy = FaultProxy((server.host, server.port))
+    forwarding to the test server. Only that socket is ever created or removed."""
+    port, sock = bind_local_socket()
     path = Path(TMP, f".s.PGSQL.{port}")
-    await proxy.start_unix(str(path))
+    inode = path.stat().st_ino
+    proxy = FaultProxy((server.host, server.port))
+    await proxy.start_unix(sock)
     yield port, proxy
     await proxy.close()
-    path.unlink(missing_ok=True)
+    if path.exists() and path.stat().st_ino == inode:
+        path.unlink()
 
 
 async def test_with_no_host_the_local_socket_is_used(

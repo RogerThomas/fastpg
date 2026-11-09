@@ -274,9 +274,12 @@ class FaultProxy:
         self.port = self._server.sockets[0].getsockname()[1]
         return self.port
 
-    async def start_unix(self, path: str) -> None:
-        """Listen on the unix socket `path` instead."""
-        self._server = await asyncio.start_unix_server(self._track, path)
+    async def start_unix(self, path: str | socket.socket) -> None:
+        """Listen on the unix socket `path` (or on a bound one) instead."""
+        if isinstance(path, socket.socket):
+            self._server = await asyncio.start_unix_server(self._track, sock=path)
+        else:
+            self._server = await asyncio.start_unix_server(self._track, path)
 
     def route(self, dsn: str) -> str:
         """URL `dsn` pointed at this (started) proxy."""
