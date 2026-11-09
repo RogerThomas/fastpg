@@ -268,7 +268,8 @@ async def test_passfile_key_and_pgpassfile(
 # --- no host, no user -----------------------------------------------------------------------
 
 # libpq's default socket directories, as fastpg tries them when nothing gives a host.
-SOCKET_DIRS = ("/var/run/postgresql", "/run/postgresql", "/tmp")
+TMP = "/tmp"  # noqa: S108 - a default socket directory, not a temporary file
+SOCKET_DIRS = ("/var/run/postgresql", "/run/postgresql", TMP)
 
 
 def free_socket_port() -> int:
@@ -285,10 +286,11 @@ async def local_socket(server: Server) -> AsyncIterator[tuple[int, FaultProxy]]:
     forwarding to the test server."""
     port = free_socket_port()
     proxy = FaultProxy((server.host, server.port))
-    await proxy.start_unix(f"/tmp/.s.PGSQL.{port}")
+    path = Path(TMP, f".s.PGSQL.{port}")
+    await proxy.start_unix(str(path))
     yield port, proxy
     await proxy.close()
-    Path(f"/tmp/.s.PGSQL.{port}").unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
 
 
 async def test_with_no_host_the_local_socket_is_used(
@@ -297,11 +299,11 @@ async def test_with_no_host_the_local_socket_is_used(
     monkeypatch: pytest.MonkeyPatch,
     local_socket: tuple[int, FaultProxy],
 ) -> None:
-    """The password file's `localhost` entry is the one for the default socket, as in libpq."""
+    """The password file is looked up as `localhost` for the default socket, as in libpq."""
     port, proxy = local_socket
     password_file(
         tmp_path / ".pgpass",
-        f"{server.host}:{port}:*:*:wrong",
+        f"{TMP}:{port}:*:*:wrong",
         f"localhost:{port}:{server.dbname}:{server.user}:{server.password}",
     )
     monkeypatch.setenv("PGPORT", str(port))

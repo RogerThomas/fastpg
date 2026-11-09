@@ -1191,8 +1191,8 @@ mod tests {
             let cfg = config_env(dsn, &[]).unwrap_or_else(|_| panic!("{dsn}"));
             assert_eq!(cfg.get_user(), Some("osuser"), "{dsn}");
         }
-        let cfg = config_env("host=h", &[("PGUSER", "envuser")])
-            .unwrap_or_else(|_| panic!("PGUSER"));
+        let cfg =
+            config_env("host=h", &[("PGUSER", "envuser")]).unwrap_or_else(|_| panic!("PGUSER"));
         assert_eq!(cfg.get_user(), Some("envuser"));
         // Only looked up when needed: a failing lookup doesn't matter then.
         let fails = || Err("could not look up local user ID 7: user does not exist".to_owned());
