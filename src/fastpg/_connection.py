@@ -1207,8 +1207,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
                 )
             except _NextAddressError as e:
                 failures.append(str(e))
-    reason = "; ".join(failures) or "no host to connect to"
-    msg = f"could not connect to server: {reason}"
+    msg = f"could not connect to server: {'; '.join(failures)}"
     raise ConnectError(msg)
 
 
