@@ -370,7 +370,8 @@ pub fn numeric_special(raw: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Render a binary NUMERIC as a decimal string (`Decimal(str)` / msgspec input).
+/// Render a binary NUMERIC as a decimal string.
+#[cfg(test)]
 pub fn numeric_to_string(raw: &[u8]) -> Result<String, String> {
     let mut out = String::new();
     write_numeric(raw, &mut out)?;
