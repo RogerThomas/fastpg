@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.2.0](https://github.com/RogerThomas/fastpg/compare/v0.1.4...v0.2.0) (2026-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* a json or jsonb query parameter now takes what bulk writes take. Values that used to be refused are now stored: a `tuple` as a JSON array, `bytes` as base64 text, a `bool`, number, `UUID` or date as its JSON. An `Enum` whose value is a `str` is now stored as a JSON string, as bulk writes did, not sent as JSON text.
+* `Pool(...)` and `Transaction(...)` can no longer be called directly; use `await fastpg.create_pool(dsn, ...)` and `conn.transaction()` / `pool.transaction()`. `DatabaseError.from_server` is now private (`_from_server`), and `fastpg.errors.SQLStateRegistry` is now private (`_SQLStateRegistry`).
+* `statement_cache_size=0` used to be treated as 1. It now raises `ValueError` on `connect()` and `create_pool()`.
+* connect failures and closed or lost connections are `OperationalError` (`ConnectError`, `ConnectionClosedError`), no longer `InterfaceError`. `DatabaseError.sqlstate` and `.severity` are `str | None`.
+
+### Features
+
+* connection failures are OperationalError (ConnectError, AuthenticationError) ([#54](https://github.com/RogerThomas/fastpg/issues/54)) ([49fe053](https://github.com/RogerThomas/fastpg/commit/49fe0530027f6ebbac8e848db684469496ccd3fe))
+* json and jsonb parameters accept what bulk writes accept ([#63](https://github.com/RogerThomas/fastpg/issues/63)) ([06d234b](https://github.com/RogerThomas/fastpg/commit/06d234b35becfe5dd06af2ff5ed83dafa68e605a))
+* read PG* environment variables and .pgpass, like libpq ([#55](https://github.com/RogerThomas/fastpg/issues/55)) ([1f1b674](https://github.com/RogerThomas/fastpg/commit/1f1b674ada3e8458197c033e8c88b500710afe20))
+* type query strings as LiteralString so type checkers catch f-string SQL ([#65](https://github.com/RogerThomas/fastpg/issues/65)) ([bfcc6da](https://github.com/RogerThomas/fastpg/commit/bfcc6da34d15bb56f3fb891a569e9689b6085385))
+* with no host or user, connect like libpq: local socket and OS user name ([#66](https://github.com/RogerThomas/fastpg/issues/66)) ([8e8592b](https://github.com/RogerThomas/fastpg/commit/8e8592b1d9732d47a03fac61c150b7c8db48ea2c))
+
+
+### Bug Fixes
+
+* a bulk write cancelled while BEGIN runs commits nothing ([#58](https://github.com/RogerThomas/fastpg/issues/58)) ([013932b](https://github.com/RogerThomas/fastpg/commit/013932bd365f0fc0cc7334a59417e00cff96e33e))
+* a FATAL error ends the session even when the server's close is lost ([#56](https://github.com/RogerThomas/fastpg/issues/56)) ([62cc007](https://github.com/RogerThomas/fastpg/commit/62cc00707efba1826d20882051aded18b21f58a6))
+* refuse statement_cache_size=0 on connect() and create_pool() ([#61](https://github.com/RogerThomas/fastpg/issues/61)) ([5bd0f0d](https://github.com/RogerThomas/fastpg/commit/5bd0f0df90c60917542560bc351d4caa385b5c13))
+* strategy="auto" keeps Decimal digits inside JSON fields ([#57](https://github.com/RogerThomas/fastpg/issues/57)) ([e478dc4](https://github.com/RogerThomas/fastpg/commit/e478dc41deb6b58a5754c2f4365c68df19adc48e))
+
+
+### Performance Improvements
+
+* build the release wheels with profile-guided optimisation ([#75](https://github.com/RogerThomas/fastpg/issues/75)) ([9be771f](https://github.com/RogerThomas/fastpg/commit/9be771f941168d433506f975daf4237dd6535017))
+* use mimalloc in the musl wheels ([#74](https://github.com/RogerThomas/fastpg/issues/74)) ([3c2f668](https://github.com/RogerThomas/fastpg/commit/3c2f6687e61bd555b11111348e4bd31fc6b43b62))
+* write UUIDs, dates and numbers without format! in the msgpack and JSON routes ([#68](https://github.com/RogerThomas/fastpg/issues/68)) ([b31efa8](https://github.com/RogerThomas/fastpg/commit/b31efa89d492c48c00b884e6a4f5012e8f09a6d7))
+
+
+### Code Refactoring
+
+* hide Pool and Transaction constructors, DatabaseError.from_server and SQLStateRegistry ([#64](https://github.com/RogerThomas/fastpg/issues/64)) ([f32a5bd](https://github.com/RogerThomas/fastpg/commit/f32a5bd9c593b55650e9ca74c8d09ab4d9ed1c45))
+
 ## [0.1.4](https://github.com/RogerThomas/fastpg/compare/v0.1.3...v0.1.4) (2026-11-08)
 
 
