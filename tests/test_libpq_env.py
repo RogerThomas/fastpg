@@ -1,7 +1,10 @@
 """Settings the DSN leaves out come from libpq's PG* environment variables, and the password
-from the password file (``~/.pgpass``, ``PGPASSFILE`` or ``passfile=``), as in libpq."""
+from the password file (``~/.pgpass``, ``PGPASSFILE`` or ``passfile=``), as in libpq. With no
+host, the local unix socket; with no user, the OS user's login name."""
 
 import os
+import pwd
+import re
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -9,7 +12,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from faults import with_params
+from faults import FaultProxy, with_params
 
 import fastpg
 
@@ -260,3 +263,76 @@ async def test_passfile_key_and_pgpassfile(
     monkeypatch.setenv("PGPASSFILE", str(wrong))
     async with await fastpg.connect(server.dsn(passfile=str(right))) as conn:
         assert await conn.select_one("SELECT 1") == (1,)
+
+
+# --- no host, no user -----------------------------------------------------------------------
+
+# libpq's default socket directories, as fastpg tries them when nothing gives a host.
+SOCKET_DIRS = ("/var/run/postgresql", "/run/postgresql", "/tmp")
+
+
+def free_socket_port() -> int:
+    """A port number with no server socket in any default socket directory."""
+    while True:
+        port = 40000 + secrets.randbelow(20000)
+        if not any(Path(d, f".s.PGSQL.{port}").exists() for d in SOCKET_DIRS):
+            return port
+
+
+@pytest.fixture
+async def local_socket(server: Server) -> AsyncIterator[tuple[int, FaultProxy]]:
+    """``(port, proxy)``: a socket in `/tmp`, a default socket directory, for that port,
+    forwarding to the test server."""
+    port = free_socket_port()
+    proxy = FaultProxy((server.host, server.port))
+    await proxy.start_unix(f"/tmp/.s.PGSQL.{port}")
+    yield port, proxy
+    await proxy.close()
+    Path(f"/tmp/.s.PGSQL.{port}").unlink(missing_ok=True)
+
+
+async def test_with_no_host_the_local_socket_is_used(
+    server: Server,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_socket: tuple[int, FaultProxy],
+) -> None:
+    """The password file's `localhost` entry is the one for the default socket, as in libpq."""
+    port, proxy = local_socket
+    password_file(
+        tmp_path / ".pgpass",
+        f"{server.host}:{port}:*:*:wrong",
+        f"localhost:{port}:{server.dbname}:{server.user}:{server.password}",
+    )
+    monkeypatch.setenv("PGPORT", str(port))
+    monkeypatch.setenv("PGUSER", server.user)
+    monkeypatch.setenv("PGDATABASE", server.dbname)
+    async with await fastpg.connect("") as conn:
+        assert await conn.select_one("SELECT current_user") == (server.user,)
+    assert proxy.accepted == 1
+
+
+async def test_with_no_host_and_no_local_socket_the_error_says_where_it_looked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = free_socket_port()
+    monkeypatch.setenv("PGUSER", "nobody")
+    tried = ", ".join(f"{d}/.s.PGSQL.{port}" for d in SOCKET_DIRS)
+    with pytest.raises(fastpg.ConnectError) as exc:
+        await fastpg.connect(f"port={port}")
+    assert str(exc.value) == (
+        "could not connect to server: no host given, and no local server socket found "
+        f"(tried {tried}); set host= or PGHOST"
+    )
+
+
+async def test_with_no_user_the_os_login_name_is_sent(
+    server: Server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server is asked for the OS user's role (``getpwuid(geteuid())``, not ``$USER``)."""
+    login = pwd.getpwuid(os.geteuid()).pw_name
+    monkeypatch.setenv("USER", "not-the-login-name")
+    monkeypatch.setenv("PGPASSWORD", f"wrong-{secrets.token_hex(4)}")
+    with pytest.raises(fastpg.FastPGError, match=re.escape(f'"{login}"')):
+        await fastpg.connect(f"host={server.host} port={server.port} dbname={server.dbname}")

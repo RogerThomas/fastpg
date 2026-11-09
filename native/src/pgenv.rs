@@ -7,6 +7,8 @@
 //! * "The Password File" (<https://www.postgresql.org/docs/current/libpq-pgpass.html>) and
 //!   libpq's `passwordFromFile` (`fe-connect.c`): the password, when neither the DSN nor
 //!   `PGPASSWORD` gives one.
+//! * With no host and no user from either, libpq's defaults: the local unix socket
+//!   ([`socket_dir`]) and the OS user's login name ([`os_user`]).
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -70,11 +72,69 @@ pub fn lookup(path: &Path, host: &str, port: u16, dbname: &str, user: &str) -> P
     find(&text, [host, &port, dbname, user]).map_or(Passfile::Nothing, Passfile::Password)
 }
 
-/// libpq looks up `localhost` for a unix socket in its default socket directory, which is
-/// set when libpq is built: `/tmp` upstream, `/var/run/postgresql` in the Debian, Ubuntu and
-/// Red Hat packages (`/run/postgresql` is the same directory). fastpg has none of its own, so
-/// all of them count. Any other socket directory is matched as written.
-const DEFAULT_SOCKET_DIRS: &[&str] = &["/tmp", "/var/run/postgresql", "/run/postgresql"];
+/// libpq's default socket directory, which is set when libpq is built: `/tmp` upstream,
+/// `/var/run/postgresql` in the Debian, Ubuntu and Red Hat packages (`/run/postgresql` is the
+/// same directory). fastpg has none of its own, so it uses all of them: with no host it
+/// connects to the first that holds the server's socket ([`socket_dir`]), and the password
+/// file is looked up as `localhost` for any of them. Any other socket directory is matched
+/// as written.
+pub const DEFAULT_SOCKET_DIRS: &[&str] = &["/var/run/postgresql", "/run/postgresql", "/tmp"];
+
+/// The first of `dirs` holding the socket of a server on `port` (`.s.PGSQL.<port>`), for a
+/// connection with no host; else the error, naming each path tried.
+pub fn socket_dir<'a>(dirs: &[&'a str], port: u16) -> Result<&'a str, String> {
+    let socket = |dir: &str| Path::new(dir).join(format!(".s.PGSQL.{port}"));
+    if let Some(dir) = dirs.iter().find(|dir| socket(dir).exists()) {
+        return Ok(dir);
+    }
+    let tried: Vec<_> = dirs
+        .iter()
+        .map(|dir| socket(dir).display().to_string())
+        .collect();
+    Err(format!(
+        "no host given, and no local server socket found (tried {}); set host= or PGHOST",
+        tried.join(", ")
+    ))
+}
+
+/// The login name of the effective user, from the password database: libpq's default user
+/// (it doesn't read `USER`).
+pub fn os_user() -> Result<String, String> {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    let mut buf = vec![0 as libc::c_char; 1024];
+    loop {
+        // SAFETY: an all-zero `passwd` is valid (null pointers and zero ids).
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found = std::ptr::null_mut();
+        // SAFETY: every pointer is valid for the call, and `buf.len()` is `buf`'s size.
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &raw mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &raw mut found,
+            )
+        };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 {
+            let reason = std::io::Error::from_raw_os_error(rc);
+            return Err(format!("could not look up local user ID {uid}: {reason}"));
+        }
+        if found.is_null() {
+            return Err(format!(
+                "could not look up local user ID {uid}: user does not exist"
+            ));
+        }
+        // SAFETY: on success `pw_name` points to a NUL-terminated string in `buf`.
+        let name = unsafe { std::ffi::CStr::from_ptr(pwd.pw_name) };
+        return Ok(name.to_string_lossy().into_owned());
+    }
+}
 
 /// The password of the first line of `text` whose first four fields match `keys` (host,
 /// port, database, user). Lines starting with `#` are comments; a trailing `\r` is dropped.
@@ -269,5 +329,47 @@ mod tests {
         assert_eq!(password("/srv/pg"), Passfile::Password(b"srv".to_vec()));
         assert_eq!(password("/elsewhere"), Passfile::Nothing);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_first_directory_holding_the_socket_is_used() {
+        let base = std::env::temp_dir().join(format!("fastpg-sockets-{}", std::process::id()));
+        let text = |name: &str| base.join(name).to_string_lossy().into_owned();
+        let (missing, empty, full, other) =
+            (text("missing"), text("empty"), text("full"), text("other"));
+        for dir in [&empty, &full, &other] {
+            fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{e}"));
+        }
+        for dir in [&full, &other] {
+            fs::write(Path::new(dir).join(".s.PGSQL.6543"), "").unwrap_or_else(|e| panic!("{e}"));
+        }
+        let dirs = [
+            missing.as_str(),
+            empty.as_str(),
+            full.as_str(),
+            other.as_str(),
+        ];
+        assert_eq!(socket_dir(&dirs, 6543), Ok(full.as_str()));
+        // The socket's name holds the port.
+        assert_eq!(
+            socket_dir(&dirs, 5432),
+            Err(format!(
+                "no host given, and no local server socket found (tried \
+                 {missing}/.s.PGSQL.5432, {empty}/.s.PGSQL.5432, {full}/.s.PGSQL.5432, \
+                 {other}/.s.PGSQL.5432); set host= or PGHOST"
+            ))
+        );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn the_os_user_is_the_effective_users_login_name() {
+        let out = std::process::Command::new("id")
+            .arg("-un")
+            .output()
+            .unwrap_or_else(|e| panic!("{e}"));
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        assert!(!name.is_empty());
+        assert_eq!(os_user(), Ok(name));
     }
 }
