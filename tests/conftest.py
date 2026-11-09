@@ -1,9 +1,12 @@
 """Shared fixtures.
 
-With ``FASTPG_DSN`` set, the tests use that server and start nothing; the TLS-server tests
-then need ``FASTPG_TLS_DSN`` and ``FASTPG_TLS_CA`` too, and are skipped without them. With
+With ``FASTPG_DSN`` set, the tests use that server; the TLS-server tests then need
+``FASTPG_TLS_DSN`` and ``FASTPG_TLS_CA`` too, and are skipped without them. With
 ``FASTPG_DSN`` unset, each server is started on first use in a throwaway container, set up
-like its compose service, and removed at the end of the session.
+like its compose service, and removed at the end of the session. Either way, the tests that
+need servers of their own start them in containers: the pgbouncer tests (test_pgbouncer.py)
+and the ones that pause, kill and restart a server (test_network_server.py,
+test_network_stall.py). Without Docker, leave those files out (``--ignore``).
 """
 
 import asyncio
@@ -207,8 +210,6 @@ def tls_server(
 @pytest.fixture(scope="session")
 def pgbouncer_network(container_password: str) -> Iterator[Network]:
     """A Docker network with a server of the pgbouncer tests' own on it, as `postgres`."""
-    if "FASTPG_DSN" in os.environ:
-        pytest.skip("FASTPG_DSN is set: the pgbouncer tests start servers of their own")
     with Network() as network:
         container = (
             _postgres_container(container_password)

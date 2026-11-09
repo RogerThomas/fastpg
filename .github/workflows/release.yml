@@ -8,9 +8,9 @@
 # Builds the wheels and the sdist in one job per runner image (Linux x86_64, which also builds the
 # sdist, Linux aarch64, macOS arm64 and macOS x86_64), each uploaded with its SHA-256 as soon as
 # it's built, and tests them in the same job (.github/scripts/test-wheel.sh: tests/smoke.py, then
-# the test suite against the installed wheel), each wheel on the Python it's for: on Linux the
-# suite on every Python, its `timing` tests on Python 3.14 only; on macOS the suite on 3.14 only,
-# and the smoke test on the others. When a release was created, once every build and test passed,
+# the test suite against the installed wheel), each wheel on the Python it's for, every Python at
+# once, each serially against a server of its own; then the `timing` tests alone, on Python 3.14.
+# When a release was created, once every build and test passed,
 # it publishes them all to PyPI with trusted publishing, checking first that each SHA-256 still
 # matches: what's published is exactly what was tested.
 # Manual runs build and test only, and so do pull requests that change the packaging (the
@@ -49,9 +49,9 @@ env:
   CARGO_TERM_COLOR: always
   MATURIN_VERSION: v1.15.0
   UV_VERSION: 0.13.0
-  # The one Python each wheel test job runs the `timing` tests on (tests that wait in real time
-  # for timeouts, keepalives and stalls; most of the suite's time): .python-version's, with the
-  # GIL. Every other Python runs the smoke test and the rest of the suite.
+  # The one Python each set of wheels runs the `timing` tests on (tests that wait in real time
+  # for timeouts, keepalives and stalls), after the rest, alone: .python-version's, with the
+  # GIL. Every Python runs the smoke test and the rest of the suite.
   FASTPG_TIMING_PYTHON: "3.14"
 
 jobs:
@@ -159,10 +159,8 @@ jobs:
             musllinux: ghcr.io/rust-cross/rust-musl-cross@sha256:ecae5dd62d1c938c14f8071d36c16fa699860aace03bfb5284fb1216474d2643 # aarch64-musl
     env:
       ALPINE_PYTHON_314: python@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 # 3.14.8-alpine
-      # The compose servers (task db-up db-tls-up), as `task test-tls` reaches them.
-      FASTPG_DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
-      FASTPG_TLS_DSN: postgresql://fastpg:fastpg@localhost:55433/fastpg
-      FASTPG_TLS_CA: docker/tls/certs/ca.crt
+      # Each Python's tests against a TLS-only server too (.github/scripts/with-server.sh).
+      FASTPG_TEST_TLS: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -245,62 +243,59 @@ jobs:
           name: dist-${{ matrix.platform.arch }}-unknown-linux-musl
           path: dist/musllinux/
           if-no-files-found: error
-      - name: Start PostgreSQL (docker-compose.yml, and its TLS-only server)
+      # A server and a TLS-only one for each Python (docker-compose.yml's; set N on ports
+      # 55432+N and 55532+N), which each set of wheels below is tested against in turn.
+      - name: Start PostgreSQL
         if: ${{ !cancelled() }}
-        run: docker compose --profile tls up --detach --wait postgres postgres-tls
+        run: sh .github/scripts/test-servers.sh default default default default default
       - name: Test the wheel built from the sdist
         if: ${{ !cancelled() && steps.sdist-wheel.outcome == 'success' }}
         env:
           UV_PYTHON_PREFERENCE: only-managed
-          FASTPG_TEST_OWN_SERVERS: 1 # in parallel, as the manylinux wheels' tests
+          FASTPG_TIMING_PYTHON: "" # they run on the manylinux and musllinux wheels
         run: sh .github/scripts/test-wheel.sh wheel 3.14
       - name: Test the manylinux wheels
         if: ${{ !cancelled() && steps.manylinux.outcome == 'success' }}
-        # On the Pythons uv downloads (python-build-standalone's). The suite in parallel, on
-        # throwaway servers of its own (Docker is here); the compose ones serve the smoke test.
-        # Fresh venvs: not the ones the sdist's wheel was tested in.
+        # On the Pythons uv downloads (python-build-standalone's). Fresh venvs: not the ones the
+        # sdist's wheel was tested in.
         env:
           UV_PYTHON_PREFERENCE: only-managed
-          FASTPG_TEST_OWN_SERVERS: 1
         run: |
           rm -rf .venv-*
           sh .github/scripts/test-wheel.sh dist/manylinux 3.13 3.14 3.14t 3.15 3.15t
       - name: Test the musllinux wheels (in Alpine)
         if: ${{ !cancelled() && steps.musllinux.outcome == 'success' }}
-        # Last: the containers run as root and leave root-owned files in the checkout. 3.14 on
-        # the Alpine image's Python, the others on ones uv downloads into the same image (there's
-        # no free-threaded image). The suite in parallel on throwaway servers of its own, as for
-        # glibc, through the host's Docker socket; the compose ones serve the smoke test.
-        # On the host's network, so the servers' published ports are on localhost (the name the
-        # TLS certificate is for); testcontainers is told so, as inside a container it would
-        # otherwise connect through the Docker gateway (172.17.0.1). The repo and
-        # /tmp are mounted at their host paths, since the host's daemon resolves the servers'
-        # bind mounts (docker/, and the TLS server's certificates in pytest's tmp_path). The
-        # wheels are mounted read-only. The host's venvs are removed first: they're glibc's,
-        # and the test script would reuse them.
+        # Last: the container runs as root and leaves root-owned files in the checkout. On the
+        # host's network, so the servers' ports are on localhost (the name the TLS certificate is
+        # for). 3.14 on the Alpine image's Python (uv's default preference takes it, as the image
+        # has no managed 3.14), the others on ones uv downloads into the same image (there's no
+        # free-threaded image). The tests that start servers of their own do it through the
+        # host's Docker socket (docker-cli for the ones that kill a server); testcontainers is
+        # told they're on localhost, as inside a container it would otherwise connect through the
+        # Docker gateway (172.17.0.1). The repo is mounted at its host path, the wheels
+        # read-only. The host's venvs are removed first: they're glibc's, and the test script
+        # would reuse them.
         run: |
           rm -rf .venv-*
-          for python in 3.13 3.14 3.14t 3.15 3.15t; do
-            docker run --rm --network host \
-              --volume /var/run/docker.sock:/var/run/docker.sock --volume /tmp:/tmp \
-              --volume "$PWD:$PWD" --volume "$PWD/dist/musllinux:$PWD/dist/musllinux:ro" --workdir "$PWD" \
-              --env UV_VERSION --env PYTHON="$python" \
-              --env UV_PYTHON_PREFERENCE="$([ "$python" = 3.14 ] && echo system || echo only-managed)" \
-              --env FASTPG_DSN --env FASTPG_TEST_OWN_SERVERS=1 --env FASTPG_TIMING_PYTHON \
-              --env TESTCONTAINERS_CONNECTION_MODE=docker_host --env TESTCONTAINERS_HOST_OVERRIDE=localhost \
-              "$ALPINE_PYTHON_314" sh -euxc '
-                apk add --no-cache build-base docker-cli
-                pip install --root-user-action=ignore --disable-pip-version-check "uv==$UV_VERSION"
-                sh .github/scripts/test-wheel.sh dist/musllinux "$PYTHON"
-              '
-          done
+          docker run --rm --network host \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD:$PWD" --volume "$PWD/dist/musllinux:$PWD/dist/musllinux:ro" --workdir "$PWD" \
+            --env UV_VERSION --env FASTPG_TEST_TLS --env FASTPG_TIMING_PYTHON \
+            --env TESTCONTAINERS_CONNECTION_MODE=docker_host --env TESTCONTAINERS_HOST_OVERRIDE=localhost \
+            "$ALPINE_PYTHON_314" sh -euxc '
+              apk add --no-cache build-base docker-cli
+              pip install --root-user-action=ignore --disable-pip-version-check "uv==$UV_VERSION"
+              sh .github/scripts/test-wheel.sh dist/musllinux 3.13 3.14 3.14t 3.15 3.15t
+            '
       - name: Show the servers' logs
         if: failure()
-        run: docker compose --profile tls logs postgres postgres-tls
+        run: |
+          for n in 0 1 2 3 4; do
+            docker compose --project-name "fastpg-test-$n" --profile tls logs postgres postgres-tls
+          done
 
   # macOS, a job per architecture, each built natively on a runner of its own, uploaded with its
-  # SHA-256, then tested there: the suite on FASTPG_TIMING_PYTHON's Python, and only the smoke
-  # test on the others.
+  # SHA-256, then tested there, as on Linux.
   macos:
     name: Build and test ${{ matrix.platform.name }}
     needs: [release-please, packaging]
@@ -321,10 +316,12 @@ jobs:
             runner: macos-15-intel
             target: x86_64-apple-darwin
     env:
-      # A PostgreSQL of the runner's own (no Docker on macOS): no TLS tests (skipped), and not the
-      # two test files that pause and kill a server container of their own.
-      FASTPG_DSN: postgresql://fastpg:fastpg@127.0.0.1:55432/fastpg
-      PYTEST_ADDOPTS: --ignore tests/test_network_server.py --ignore tests/test_network_stall.py
+      # PostgreSQLs of the runner's own (no Docker on macOS): no TLS tests (skipped), and not the
+      # test files that start server containers of their own (pgbouncer, and the two that pause
+      # and kill one).
+      PYTEST_ADDOPTS: >-
+        --ignore tests/test_pgbouncer.py
+        --ignore tests/test_network_server.py --ignore tests/test_network_stall.py
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
     steps:
@@ -377,12 +374,15 @@ jobs:
           name: dist-${{ matrix.platform.target }}
           path: dist/
           if-no-files-found: error
+      # One for each Python, on ports 55432 to 55436.
       - name: Start PostgreSQL 18
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           brew install postgresql@18
-          PATH="$(brew --prefix postgresql@18)/bin:$PATH" \
-            sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres" 55432
+          PATH="$(brew --prefix postgresql@18)/bin:$PATH"
+          for n in 0 1 2 3 4; do
+            sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres-$n" $((55432 + n))
+          done
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
@@ -392,15 +392,17 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # On the Pythons uv downloads (python-build-standalone's), as on Linux: with setup-python's,
         # a request for 3.14 could find its free-threaded 3.14t, which can't load a cp314 wheel.
-        # Here the suite runs serially against one server: it runs on one Python, and the
-        # others run the smoke test.
         env:
           UV_PYTHON_PREFERENCE: only-managed
-          FASTPG_FULL_SUITE_PYTHON: ${{ env.FASTPG_TIMING_PYTHON }}
         run: sh .github/scripts/test-wheel.sh dist 3.13 3.14 3.14t 3.15 3.15t
-      - name: Show the server's log
+      - name: Show the servers' logs
         if: failure()
-        run: cat "$RUNNER_TEMP/postgres/server.log"
+        run: |
+          for n in 0 1 2 3 4; do
+            echo "::group::Server $n"
+            cat "$RUNNER_TEMP/postgres-$n/server.log"
+            echo "::endgroup::"
+          done
 
   publish:
     name: Publish to PyPI
