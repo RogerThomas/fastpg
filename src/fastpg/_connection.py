@@ -38,6 +38,7 @@ from fastpg._nulls import null_value_error
 from fastpg._spec import Plan, Planner
 from fastpg._template import Template, TemplateCompiler
 from fastpg.errors import (
+    ConnectError,
     DatabaseError,
     DecodeError,
     FastPGError,
@@ -1139,6 +1140,11 @@ class _Canceller:
 async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     """Open a connection, e.g. ``await connect("postgresql://user:pw@host:5432/db")``.
 
+    As in libpq, settings the DSN leaves out come from the ``PG*`` environment variables
+    (``PGHOST``, ``PGPORT``, ``PGUSER``, ``PGPASSWORD``, ``PGDATABASE``, ...; ``connect("")``
+    takes everything from them), and a password still missing from the password file
+    (``passfile``, else ``PGPASSFILE``, else ``~/.pgpass``).
+
     TLS takes libpq's DSN keys: ``sslmode`` (``disable``, ``prefer`` (the default),
     ``require``, ``verify-ca``, ``verify-full``), ``sslrootcert`` (a CA file, or ``system``;
     ``verify-*`` without it uses the system's trusted roots), ``sslnegotiation=direct``,
@@ -1147,13 +1153,13 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
 
     ``connect_timeout`` (seconds, as in libpq: 0 or absent waits indefinitely, 1 means 2)
     bounds each address tried, from its TCP connect to the end of the startup; when it
-    expires, ``InterfaceError`` says so.
+    expires, ``ConnectError`` says so.
 
     Several hosts (``host=a,b port=5432,5433``, or ``postgresql://a:5432,b:5433/db``) are
     tried in order, as in libpq: host N with port N, or one port for every host. An address
     that can't be reached or doesn't start a session within ``connect_timeout`` is passed
     over for the next, as is a session that ``target_session_attrs`` (``read-write`` or
-    ``read-only``) doesn't want. When none is left, ``InterfaceError`` names each one tried.
+    ``read-only``) doesn't want. When none is left, ``ConnectError`` names each one tried.
 
     TCP keepalives are on, as in libpq (``keepalives=0`` turns them off), and libpq's
     ``keepalives_idle``, ``keepalives_interval``, ``keepalives_count`` (seconds, probes) and
@@ -1182,6 +1188,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
                     statement_cache_size,
                     options,
                     host,
+                    port,
                     family,
                     address,
                 )
@@ -1189,7 +1196,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
                 failures.append(str(e))
     reason = "; ".join(failures) or "no host to connect to"
     msg = f"could not connect to server: {reason}"
-    raise InterfaceError(msg)
+    raise ConnectError(msg)
 
 
 async def _connect_to(
@@ -1198,10 +1205,12 @@ async def _connect_to(
     statement_cache_size: int,
     options: SocketOptions,
     host: str,
+    port: int,
     family: socket.AddressFamily,
     address: _Address,
 ) -> Connection:
-    """Open a connection to `address`, of the DSN's `host` (the TLS server name).
+    """Open a connection to `address`, of the DSN's `host` (the TLS server name) and `port`
+    (with `host`, the password file entry).
 
     As in libpq, ``connect_timeout`` applies to each address tried, from its TCP connect to
     the end of the startup. Raises `_NextAddressError` where libpq tries the next address.
@@ -1221,11 +1230,12 @@ async def _connect_to(
         # Registered first: attach() can fail at once (e.g. a TLS file is missing), and then
         # detaches (unregisters and closes) the socket before returning.
         loop.add_reader(sfd, native.on_readable)
-        native.attach(
+        warning = native.attach(
             dsn,
             sfd,
             unix=sock.family == socket.AF_UNIX,
             host=host,
+            port=port,
             add_writer=partial(loop.add_writer, sfd, native.on_writable),
             remove_writer=partial(loop.remove_writer, sfd),
             flush_soon=partial(loop.call_soon, native.flush),
@@ -1233,6 +1243,8 @@ async def _connect_to(
             connected=connected,
             closed=closed,
         )
+        if warning is not None:  # the password file is ignored (libpq warns too)
+            warnings.warn(warning, UserWarning, stacklevel=1)
         await _started(connected, deadline, address)
     except BaseException:
         native.close()  # once attached, the socket is detached and closed by native

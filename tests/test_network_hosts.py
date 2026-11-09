@@ -110,7 +110,7 @@ async def test_target_session_attrs_with_no_session_matching_names_every_host(
     fault_proxy.read_only = other_proxy.read_only = True
     ports = f"{fault_proxy.port},{other_proxy.port}"
     url = at_hosts(dsn, "127.0.0.1,127.0.0.1", ports, target_session_attrs="read-write")
-    with pytest.raises(fastpg.InterfaceError) as exc:
+    with pytest.raises(fastpg.ConnectError) as exc:
         await fastpg.connect(url)
     message = str(exc.value)
     assert message.startswith("could not connect to server: ")

@@ -61,6 +61,7 @@ New here? Start with [Getting started](guide/getting-started.md).
 | Single-row INSERT, 16 tasks | 35,860/s | 16,087/s (asyncpg) | 2.23x |
 | Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s (psycopg) | 1.41x |
 
+Measured on an x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
 All workloads and how they're measured: [Benchmarks](performance.md).
 
 fastpg is alpha software. See what it can't do yet in [Limitations](limitations.md).
