@@ -38,6 +38,7 @@ from fastpg._nulls import null_value_error
 from fastpg._spec import Plan, Planner
 from fastpg._template import Template, TemplateCompiler
 from fastpg.errors import (
+    ConnectError,
     DatabaseError,
     DecodeError,
     FastPGError,
@@ -1143,13 +1144,13 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
 
     ``connect_timeout`` (seconds, as in libpq: 0 or absent waits indefinitely, 1 means 2)
     bounds each address tried, from its TCP connect to the end of the startup; when it
-    expires, ``InterfaceError`` says so.
+    expires, ``ConnectError`` says so.
 
     Several hosts (``host=a,b port=5432,5433``, or ``postgresql://a:5432,b:5433/db``) are
     tried in order, as in libpq: host N with port N, or one port for every host. An address
     that can't be reached or doesn't start a session within ``connect_timeout`` is passed
     over for the next, as is a session that ``target_session_attrs`` (``read-write`` or
-    ``read-only``) doesn't want. When none is left, ``InterfaceError`` names each one tried.
+    ``read-only``) doesn't want. When none is left, ``ConnectError`` names each one tried.
 
     TCP keepalives are on, as in libpq (``keepalives=0`` turns them off), and libpq's
     ``keepalives_idle``, ``keepalives_interval``, ``keepalives_count`` (seconds, probes) and
@@ -1185,7 +1186,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
                 failures.append(str(e))
     reason = "; ".join(failures) or "no host to connect to"
     msg = f"could not connect to server: {reason}"
-    raise InterfaceError(msg)
+    raise ConnectError(msg)
 
 
 async def _connect_to(

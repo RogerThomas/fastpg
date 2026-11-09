@@ -184,8 +184,10 @@ def _is_fatal(error: BaseException) -> bool:
     """Whether ``error`` means the session is gone (it may not be ``closed`` just yet)."""
     if isinstance(error, ConnectionClosedError):
         return True
-    return isinstance(error, DatabaseError) and (
-        error.sqlstate.startswith("08") or error.sqlstate in {"57P01", "57P02", "57P03"}
+    return (
+        isinstance(error, DatabaseError)
+        and error.sqlstate is not None
+        and (error.sqlstate.startswith("08") or error.sqlstate in {"57P01", "57P02", "57P03"})
     )
 
 

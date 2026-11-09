@@ -21,7 +21,6 @@ The connection stays usable after a server error.
 ```
 FastPGError
 ├── InterfaceError                a problem on the client side
-│   ├── ConnectionClosedError     the connection is closed or was lost
 │   └── ParameterError            a value can't be sent as its column's type
 ├── ResultError
 │   ├── NoRowsError               select_one() found no row
@@ -32,7 +31,7 @@ FastPGError
 │       ├── MissingColumnError    a required field has no column
 │       ├── UnknownColumnError    an extra column, when the type forbids them
 │       └── UnsupportedTypeError  a type or strategy fastpg can't use
-└── DatabaseError                 an error from the server
+└── DatabaseError                 an error from the server, or reaching it
     ├── DataError                 bad data, e.g. a division by zero
     ├── IntegrityError            a constraint failed
     │   └── NotNullViolationError, ForeignKeyViolationError,
@@ -41,20 +40,25 @@ FastPGError
     │   └── SerializationError, DeadlockDetectedError
     ├── ProgrammingError          bad SQL, e.g. a missing table
     │   └── SQLSyntaxError, UndefinedTableError, UndefinedColumnError
-    ├── OperationalError          e.g. the server is out of resources
+    ├── OperationalError          the database can't be reached or used
+    │   ├── ConnectError          connecting failed: refused, unreachable, timed out
+    │   ├── ConnectionClosedError the connection is closed or was lost
+    │   ├── AuthenticationError   e.g. a wrong password
     │   └── QueryCanceledError    cancelled, e.g. by statement_timeout
     ├── InternalError             an internal server error
     └── NotSupportedError         a feature the server doesn't support
 ```
 
-All of them are in `fastpg.errors`.
-The common ones can also be imported from `fastpg`.
+All of them can be imported from `fastpg`.
+
+To handle "the database is unreachable", catch `OperationalError`.
 
 ## What a server error tells you
 
 A `DatabaseError` has the server's details: `sqlstate`, `detail`, `hint`, `table_name`,
 `column_name`, `constraint_name` and more.
 Each is `None` when the server doesn't send it.
+For `ConnectError` and `ConnectionClosedError` they are all `None`.
 
 ## Good to know
 

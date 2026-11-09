@@ -53,6 +53,11 @@ fn interface(message: impl Into<String>) -> QueryError {
     QueryError::Interface(message.into())
 }
 
+/// The socket failed, or the server closed it: the connection couldn't be established.
+fn lost(message: impl Into<String>) -> QueryError {
+    QueryError::Connect(message.into())
+}
+
 /// libpq's `sslmode`, in increasing order of strictness (`allow` is not supported).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SslMode {
@@ -766,7 +771,7 @@ async fn read_byte<Io: AsyncIo>(io: &mut Io) -> io::Result<Option<u8>> {
 
 /// Ask the server for TLS (`SSLRequest`); `true` if it agreed.
 async fn ssl_request<Io: AsyncIo>(io: &mut Io) -> Result<bool, QueryError> {
-    let failed = |e: io::Error| interface(format!("SSL negotiation failed: {e}"));
+    let failed = |e: io::Error| lost(format!("SSL negotiation failed: {e}"));
     let mut buf = BytesMut::new();
     frontend::ssl_request(&mut buf);
     write_all(io, &buf).await.map_err(failed)?;
@@ -781,9 +786,7 @@ async fn ssl_request<Io: AsyncIo>(io: &mut Io) -> Result<bool, QueryError> {
             "received invalid response to SSL negotiation: {:?}",
             char::from(other)
         ))),
-        None => Err(interface(
-            "server closed the connection during SSL negotiation",
-        )),
+        None => Err(lost("server closed the connection during SSL negotiation")),
     }
 }
 
@@ -811,7 +814,7 @@ async fn handshake<Io: AsyncIo>(
     tls: &mut ClientConnection,
     host: &str,
 ) -> Result<(), QueryError> {
-    let failed = |e: io::Error| interface(format!("TLS handshake with {host} failed: {e}"));
+    let failed = |e: io::Error| lost(format!("TLS handshake with {host} failed: {e}"));
     loop {
         while tls.wants_write() {
             match tls.write_tls(io) {
@@ -827,7 +830,7 @@ async fn handshake<Io: AsyncIo>(
         }
         match tls.read_tls(io) {
             Ok(0) => {
-                return Err(interface(format!(
+                return Err(lost(format!(
                     "TLS handshake with {host} failed: the server closed the connection"
                 )));
             }

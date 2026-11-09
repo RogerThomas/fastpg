@@ -308,7 +308,7 @@ async def test_paused_server(edge: DisposableServer) -> None:
         # A new connection gets through TCP (Docker's port forwarder answers) but its
         # startup waits: only connect_timeout bounds it.
         start = time.monotonic()
-        with pytest.raises(fastpg.InterfaceError, match="timeout expired"):
+        with pytest.raises(fastpg.ConnectError, match="timeout expired"):
             await fastpg.connect(f"{edge.dsn}?connect_timeout=2")
         assert time.monotonic() - start < 3
         await edge.unpause()
