@@ -117,8 +117,9 @@ jobs:
       WORKLOADS: ${{ inputs.workloads || '' }}
       FASTPG_VERSION: ${{ inputs.fastpg-version || '' }}
       RELEASE_RUN: ${{ inputs.release-run || '' }}
-      # A wheel: `uv run` (task bench-ci) mustn't build the source over it.
-      UV_NO_SYNC: ${{ (inputs.fastpg-version || inputs.release-run) && '1' || '' }}
+      # A wheel: `uv run` (task bench-ci) mustn't build the source over it. `0`, not empty, when
+      # there's none: uv refuses an empty UV_NO_SYNC.
+      UV_NO_SYNC: ${{ (inputs.fastpg-version || inputs.release-run) && '1' || '0' }}
     steps:
       - name: Check the inputs
         if: inputs.fastpg-version && inputs.release-run
@@ -132,11 +133,11 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust (rust-toolchain.toml)
-        if: ${{ !env.UV_NO_SYNC }}
+        if: env.UV_NO_SYNC == '0'
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: ${{ !env.UV_NO_SYNC }}
+        if: env.UV_NO_SYNC == '0'
         with:
           workspaces: native -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -149,7 +150,7 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build fastpg (release, via maturin) and install every dependency group
-        if: ${{ !env.UV_NO_SYNC }}
+        if: env.UV_NO_SYNC == '0'
         run: uv sync --all-groups
 
       # The manylinux wheels a Release run uploaded for this runner's architecture.
@@ -162,7 +163,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Install fastpg's wheel and every dependency group
-        if: ${{ env.UV_NO_SYNC }}
+        if: env.UV_NO_SYNC == '1'
         run: |
           uv sync --all-groups --no-install-project
           if [ -n "$RELEASE_RUN" ]; then
