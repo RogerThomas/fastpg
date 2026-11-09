@@ -7,6 +7,10 @@
 # - on a pull request only once it has the `benchmark` label (and on each push to it after):
 #   a full run takes ~25-30 minutes of a runner that the PR's own checks are waiting for;
 # - by hand, on any branch, tag or commit (`ref`), on x86_64 or arm64 (`runner`).
+# Each run builds fastpg from the checked-out source, except by hand with `fastpg-version` (a
+# release's wheel from PyPI, as users get it: the published numbers are these) or `release-run`
+# (the Linux wheel a Release workflow run built, e.g. a pull request's). The benchmarks, drivers
+# and dependencies are still the checked-out ones. The run's summary says which fastpg it was.
 # A shared runner's run-to-run noise is larger than most single-commit changes: read the ratios
 # between drivers within one run, not one run's absolute numbers against another's. The job
 # fails only if a run crashes or a driver returns or writes wrong data, never on the numbers.
@@ -17,6 +21,14 @@ on:
     inputs:
       ref:
         description: Branch, tag or commit SHA to benchmark (empty for the one picked above)
+        default: ""
+        type: string
+      fastpg-version:
+        description: A released fastpg to benchmark, its wheel from PyPI, e.g. 0.1.4 (empty builds the source)
+        default: ""
+        type: string
+      release-run:
+        description: Or the ID of a Release workflow run, to benchmark the Linux wheel it built
         default: ""
         type: string
       runner:
@@ -57,6 +69,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # a Release run's wheel (`release-run`)
 
 # One run per ref; a newer push to a pull request supersedes its running benchmark.
 concurrency:
@@ -102,16 +115,28 @@ jobs:
       DURATION: ${{ inputs.duration || '3' }}
       WARMUP: ${{ inputs.warmup || '1' }}
       WORKLOADS: ${{ inputs.workloads || '' }}
+      FASTPG_VERSION: ${{ inputs.fastpg-version || '' }}
+      RELEASE_RUN: ${{ inputs.release-run || '' }}
+      # A wheel: `uv run` (task bench-ci) mustn't build the source over it.
+      UV_NO_SYNC: ${{ (inputs.fastpg-version || inputs.release-run) && '1' || '' }}
     steps:
+      - name: Check the inputs
+        if: inputs.fastpg-version && inputs.release-run
+        run: |
+          echo "::error::Give fastpg-version or release-run, not both"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Install Rust (rust-toolchain.toml)
+        if: ${{ !env.UV_NO_SYNC }}
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !env.UV_NO_SYNC }}
         with:
           workspaces: native -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -124,7 +149,40 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build fastpg (release, via maturin) and install every dependency group
+        if: ${{ !env.UV_NO_SYNC }}
         run: uv sync --all-groups
+
+      # The manylinux wheels a Release run uploaded for this runner's architecture.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.release-run
+        with:
+          name: dist-${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}-unknown-linux-gnu
+          path: release-wheels
+          run-id: ${{ inputs.release-run }}
+          github-token: ${{ github.token }}
+
+      - name: Install fastpg's wheel and every dependency group
+        if: ${{ env.UV_NO_SYNC }}
+        run: |
+          uv sync --all-groups --no-install-project
+          if [ -n "$RELEASE_RUN" ]; then
+            uv pip install release-wheels/fastpg-*-cp314-cp314-manylinux*.whl
+          else
+            uv pip install "fastpg==$FASTPG_VERSION"
+          fi
+
+      - name: Say which fastpg is benchmarked
+        run: |
+          if [ -n "$FASTPG_VERSION" ]; then
+            what="fastpg $FASTPG_VERSION, the wheel from PyPI"
+          elif [ -n "$RELEASE_RUN" ]; then
+            what="the wheel built by Release run [$RELEASE_RUN]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN)"
+          else
+            what="fastpg built from source, at $(git rev-parse --short HEAD)"
+          fi
+          installed=$(uv run python -c 'import fastpg, importlib.metadata as m; print(m.version("fastpg"), fastpg.__file__)')
+          echo "Benchmarking $what: $installed"
+          echo "Benchmarked $what (\`$installed\`)." >> "$GITHUB_STEP_SUMMARY"
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
