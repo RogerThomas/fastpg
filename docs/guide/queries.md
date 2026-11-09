@@ -122,6 +122,8 @@ fastpg prepares each query the first time it runs on a connection and reuses it 
 You don't need to do anything.
 Each connection keeps the last 256; change that with `statement_cache_size=` on `connect()`
 or `create_pool()`.
+The smallest is 1: prepared statements can't be turned off.
+For pgbouncer, see [Limitations](../limitations.md).
 
 ## Not supported yet
 

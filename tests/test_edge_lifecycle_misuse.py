@@ -243,7 +243,8 @@ async def test_an_unknown_strategy_is_refused_by_the_pool(dsn: str) -> None:
         ({"min_size": -1}, "min_size <= max_size"),
         ({"max_size": 0}, "max_size >= 1"),
         ({"max_inflight_per_conn": 0}, "max_inflight_per_conn must be >= 1"),
-        ({"statement_cache_size": -1}, "statement_cache_size must be >= 0"),
+        ({"statement_cache_size": 0}, "statement_cache_size must be >= 1, got 0"),
+        ({"statement_cache_size": -1}, "statement_cache_size must be >= 1, got -1"),
         ({"max_lifetime": -1.0}, "max_lifetime must be a positive number of seconds"),
         ({"max_lifetime": 0.0}, "max_lifetime must be a positive number of seconds"),
         ({"max_lifetime": float("nan")}, "max_lifetime must be a positive number of seconds"),
@@ -266,13 +267,23 @@ async def test_invalid_pool_configs_are_refused_before_connecting(
     assert [str(w.message) for w in caught if w.category is ResourceWarning] == []
 
 
+@pytest.mark.parametrize("size", [0, -1])
+async def test_a_statement_cache_of_less_than_one_is_refused_by_connect(
+    dsn: str,
+    size: int,
+) -> None:
+    message = f"statement_cache_size must be >= 1, got {size}: fastpg always uses named"
+    with pytest.raises(ValueError, match=message):
+        await fastpg.connect(dsn, statement_cache_size=size)
+
+
 async def test_valid_edge_pool_configs(dsn: str) -> None:
     async with await fastpg.create_pool(
         dsn,
         min_size=0,
         max_size=1,
         max_inflight_per_conn=1,
-        statement_cache_size=0,
+        statement_cache_size=1,
         max_lifetime=None,
         max_idle=None,
     ) as pool:

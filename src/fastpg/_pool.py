@@ -50,6 +50,7 @@ from fastpg._connection import (
     Strategy,
     Transaction,
     cancelling,
+    check_statement_cache_size,
     connect,
 )
 from fastpg._group import grouping_for
@@ -154,9 +155,7 @@ def _check_config(
     if max_inflight_per_conn < 1:
         msg = f"max_inflight_per_conn must be >= 1, got {max_inflight_per_conn}"
         raise ValueError(msg)
-    if statement_cache_size < 0:
-        msg = f"statement_cache_size must be >= 0, got {statement_cache_size}"
-        raise ValueError(msg)
+    check_statement_cache_size(statement_cache_size)
     _check_seconds("max_lifetime", max_lifetime)
     _check_seconds("max_idle", max_idle)
 
