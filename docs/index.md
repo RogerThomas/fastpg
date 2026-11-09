@@ -65,3 +65,5 @@ Measured on an x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
 All workloads and how they're measured: [Benchmarks](performance.md).
 
 fastpg is alpha software. See what it can't do yet in [Limitations](limitations.md).
+
+fastpg follows Semantic Versioning. Names starting with `_` are internal and can change in any release.
