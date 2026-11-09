@@ -37,6 +37,12 @@ mod tls;
 
 use pyo3::prelude::*;
 
+// musllinux wheels: mimalloc for the Rust side, not musl's malloc. local_dynamic_tls: the
+// extension is loaded with dlopen. Not with `alloc-stats`, which sets an allocator of its own.
+#[cfg(all(target_env = "musl", not(feature = "alloc-stats")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Number of Rust heap allocations made so far, or `None` when built without `alloc-stats`.
 #[pyfunction]
 fn rust_allocations() -> Option<u64> {
