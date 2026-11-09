@@ -240,13 +240,35 @@ jobs:
         run: |
           sh .github/scripts/pgo-train.sh pgo/gnu/wheel pgo/gnu/raw 5
           rm -r pgo/gnu/wheel
-      # The profile is merged in the build's container (by the before-script), with its
-      # toolchain's llvm-profdata. rustc runs through rustc-pgo.sh, which logs what it says about
-      # the profile for the check below; not through sccache, which would reuse what it compiled
-      # with another profile.
+      # The wheel for 3.14 first, on its own: the one the check below can hold to the profile
+      # exactly (the build for any other Python finds some code changed, e.g. PyO3's). The
+      # profile is merged in its container (by the before-script), with the toolchain's
+      # llvm-profdata. rustc runs through rustc-pgo.sh, which logs what it says about the
+      # profile; not through sccache, which would reuse what it compiled with another profile.
+      - name: Build manylinux for 3.14
+        id: manylinux-314
+        if: ${{ !cancelled() && steps.manylinux-training.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/gnu/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/gnu/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-gnu
+          manylinux: "2_28"
+          container: ${{ matrix.platform.manylinux }}
+          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/gnu/raw pgo/gnu/fastpg.profdata
+          args: --release --locked --out dist/manylinux --interpreter python3.14
+      - name: Check the manylinux wheel for 3.14 was built with its profile
+        id: manylinux-pgo
+        if: ${{ !cancelled() && steps.manylinux-314.outcome == 'success' }}
+        run: sh .github/scripts/pgo-check.sh pgo/gnu/rustc-3.14.log
       - name: Build manylinux
         id: manylinux
-        if: ${{ !cancelled() && steps.manylinux-training.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.manylinux-pgo.outcome == 'success' }}
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           RUSTFLAGS: >-
@@ -259,18 +281,13 @@ jobs:
           target: ${{ matrix.platform.arch }}-unknown-linux-gnu
           manylinux: "2_28"
           container: ${{ matrix.platform.manylinux }}
-          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/gnu/raw pgo/gnu/fastpg.profdata
           # Listed rather than --find-interpreter, which would also take the images' PyPy.
           args: >-
             --release --locked --out dist/manylinux
-            --interpreter python3.13 python3.14 python3.14t python3.15 python3.15t
-      - name: Check the manylinux wheels were built with the profile
-        id: manylinux-pgo
-        if: ${{ !cancelled() && steps.manylinux.outcome == 'success' }}
-        run: sh .github/scripts/pgo-check.sh pgo/gnu/rustc.log
+            --interpreter python3.13 python3.14t python3.15 python3.15t
       - name: Record the manylinux wheels' SHA-256
         id: manylinux-sha256
-        if: ${{ !cancelled() && steps.manylinux-pgo.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.manylinux.outcome == 'success' }}
         run: sh .github/scripts/sha256.sh record dist/manylinux/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && steps.manylinux-sha256.outcome == 'success' }}
@@ -307,9 +324,31 @@ jobs:
               sh .github/scripts/pgo-train.sh pgo/musl/wheel pgo/musl/raw 5 --no-install-package psqlpy
             '
           rm -r pgo/musl/wheel
+      # As manylinux's: 3.14 first, checked, then the rest.
+      - name: Build musllinux for 3.14
+        id: musllinux-314
+        if: ${{ !cancelled() && steps.musllinux-training.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/musl/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/musl/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-musl
+          manylinux: musllinux_1_2
+          container: ${{ matrix.platform.musllinux }}
+          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/musl/raw pgo/musl/fastpg.profdata
+          args: --release --locked --out dist/musllinux --interpreter python3.14
+      - name: Check the musllinux wheel for 3.14 was built with its profile
+        id: musllinux-pgo
+        if: ${{ !cancelled() && steps.musllinux-314.outcome == 'success' }}
+        run: sh .github/scripts/pgo-check.sh pgo/musl/rustc-3.14.log
       - name: Build musllinux
         id: musllinux
-        if: ${{ !cancelled() && steps.musllinux-training.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.musllinux-pgo.outcome == 'success' }}
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           RUSTFLAGS: >-
@@ -322,17 +361,13 @@ jobs:
           target: ${{ matrix.platform.arch }}-unknown-linux-musl
           manylinux: musllinux_1_2
           container: ${{ matrix.platform.musllinux }}
-          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/musl/raw pgo/musl/fastpg.profdata
+          # Listed rather than --find-interpreter, which would also take the images' PyPy.
           args: >-
             --release --locked --out dist/musllinux
-            --interpreter python3.13 python3.14 python3.14t python3.15 python3.15t
-      - name: Check the musllinux wheels were built with the profile
-        id: musllinux-pgo
-        if: ${{ !cancelled() && steps.musllinux.outcome == 'success' }}
-        run: sh .github/scripts/pgo-check.sh pgo/musl/rustc.log
+            --interpreter python3.13 python3.14t python3.15 python3.15t
       - name: Record the musllinux wheels' SHA-256
         id: musllinux-sha256
-        if: ${{ !cancelled() && steps.musllinux-pgo.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.musllinux.outcome == 'success' }}
         run: sh .github/scripts/sha256.sh record dist/musllinux/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && steps.musllinux-sha256.outcome == 'success' }}
@@ -473,6 +508,22 @@ jobs:
           sh .github/scripts/pgo-train.sh pgo/wheel pgo/raw 5
           rm -r pgo/wheel
           sh .github/scripts/pgo-merge.sh pgo/raw pgo/fastpg.profdata
+      - name: Build for 3.14
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.target }}
+          args: >-
+            --release --locked --out dist --interpreter
+            ${{ steps.python314.outputs.python-path }}
+      - name: Check the wheel for 3.14 was built with its profile
+        run: sh .github/scripts/pgo-check.sh pgo/rustc-3.14.log
       - name: Build
         id: build
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -488,17 +539,12 @@ jobs:
           args: >-
             --release --locked --out dist --interpreter
             ${{ steps.python313.outputs.python-path }}
-            ${{ steps.python314.outputs.python-path }}
             ${{ steps.python314t.outputs.python-path }}
             ${{ steps.python315.outputs.python-path }}
             ${{ steps.python315t.outputs.python-path }}
-      - name: Check the wheels were built with the profile
-        id: pgo
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: sh .github/scripts/pgo-check.sh pgo/rustc.log
       - name: Record the SHA-256
         id: sha256
-        if: ${{ !cancelled() && steps.pgo.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: sh .github/scripts/sha256.sh record dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && steps.sha256.outcome == 'success' }}
