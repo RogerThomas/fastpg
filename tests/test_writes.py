@@ -5,6 +5,7 @@
 import asyncio
 import datetime as dt
 import enum
+import math
 import uuid
 from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
@@ -262,6 +263,106 @@ async def test_non_finite_float_in_a_json_column_is_refused(
     ) as exc:
         await write(conn, tier, table, [(0, {"x": 1.0}), (1, {"x": float("nan")})], ["i", "v"])
     assert exc.value.row_index == 1
+    assert await conn.select_one(f"SELECT count(*) FROM {table}") == (0,)
+
+
+@dataclass
+class Reading:
+    value: float
+
+
+@dataclass
+class Blob:
+    data: bytes
+
+
+def json_case_id(value: object) -> str:
+    # A memoryview's repr holds its address, which differs between xdist workers.
+    return "memoryview" if isinstance(value, memoryview) else repr(value)
+
+
+# Bytes have no JSON form: msgspec writes them as base64 text, on every path alike.
+JSON_VALUES = [
+    b"x",
+    bytearray(b"x"),
+    memoryview(b"x"),
+    {"a": [1, b"x"]},
+    Blob(b"x"),
+    True,
+    1,
+    2**70,
+    1.5,
+    uuid.UUID(int=1),
+    dt.date(2024, 1, 2),
+    dt.datetime(2024, 1, 2, 3, 4, 5),  # noqa: DTZ001 - naive on purpose
+    dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC),
+    dt.time(3, 4, 5),
+    dt.time(3, 4, 5, tzinfo=dt.UTC),
+    dt.timedelta(days=1),
+    Decimal("1.50"),
+    Inner(2),
+    Reading(2.5),
+    (1, "a"),
+    Mood.SAD,
+]
+
+
+@pytest.mark.parametrize("pg_type", ["json", "jsonb"])
+@pytest.mark.parametrize("value", JSON_VALUES, ids=json_case_id)
+async def test_json_values_are_stored_alike_by_parameters_and_bulk_writes(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+    pg_type: str,
+    value: object,
+) -> None:
+    table = await make_table(f"i int, v {pg_type}")
+    insert = f"INSERT INTO {table} VALUES ($1, $2)"
+    await conn.execute(insert, 0, value)  # the statement's first use
+    await conn.execute(insert, 1, value)  # prepared: the parameter's type is known
+    await write(conn, tier, table, [(2, value)], ["i", "v"])
+    stored = await conn.select_many(f"SELECT v::text FROM {table} ORDER BY i")
+    expected = await conn.select_one(
+        f"SELECT $1::{pg_type}::text",
+        msgspec.json.encode(value).decode(),
+    )
+    assert stored == [expected] * 3
+
+
+@pytest.mark.parametrize("value", JSON_VALUES, ids=json_case_id)
+async def test_json_values_in_select_and_named_params(
+    conn: fastpg.Connection,
+    value: object,
+) -> None:
+    # t-strings: test_templates.py
+    expected = await conn.select_one("SELECT $1::jsonb::text", msgspec.json.encode(value).decode())
+    assert await conn.select_one("SELECT $1::jsonb::text", value) == expected
+    assert await conn.select_one("SELECT CAST(:v AS jsonb)::text", params={"v": value}) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "found"),
+    [
+        (math.nan, r"nan at \$ has no JSON form \(it would be stored as null\)"),
+        ((1.5, -math.inf), r"-inf at \$\[1\] has no JSON form"),
+        (Reading(math.inf), r"inf at \$\.value has no JSON form"),
+    ],
+    ids=["nan", "inf-in-tuple", "inf-in-dataclass"],
+)
+async def test_non_finite_json_value_is_refused_by_parameters_and_bulk_writes(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+    value: object,
+    found: str,
+) -> None:
+    table = await make_table("i int, v jsonb")
+    insert = f"INSERT INTO {table} VALUES ($1, $2)"
+    for _ in range(2):  # the statement's first use, then prepared
+        with pytest.raises(fastpg.ParameterError, match=rf"^parameter \$2: ValueError: {found}"):
+            await conn.execute(insert, 0, value)
+    with pytest.raises(fastpg.ParameterError, match=rf"^row 0, .*: ValueError: {found}"):
+        await write(conn, tier, table, [(0, value)], ["i", "v"])
     assert await conn.select_one(f"SELECT count(*) FROM {table}") == (0,)
 
 

@@ -125,7 +125,6 @@ async def test_unencodable_python_value_is_a_parameter_error(
         ("date", dt.datetime(2024, 1, 1), "naive datetime.datetime"),  # noqa: DTZ001
         ("timestamp", dt.date(2024, 1, 1), "datetime.date"),
         ("bytea", "a", "str"),
-        ("jsonb", b"{}", "bytes"),
         ("bool", 1, "int"),
     ],
 )

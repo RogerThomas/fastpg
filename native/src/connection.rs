@@ -31,7 +31,7 @@ use crate::json;
 use crate::mailbox::Mailbox;
 use crate::msgpack;
 use crate::net::{self, IoWatch};
-use crate::params::{self, Param, ParamError, indexed};
+use crate::params::{self, ParamError, Params, indexed};
 use crate::rows::RowBuffer;
 use crate::stmt_cache::{CachedStmt, StatementCache};
 use crate::structs::{StructBuilder, StructSpec, collect_list, scalar_columns, tuple_row};
@@ -944,7 +944,9 @@ impl Connection {
             return Err(py_err(py, "InterfaceError", copy_check::REFUSED));
         }
         // A prepared statement's parameter types decide what lists become (see `convert`).
-        let types = cached.as_ref().map(|stmt| stmt.statement().params());
+        let types = cached
+            .as_ref()
+            .map(|stmt| (stmt.statement().params(), stmt.takes_json()));
         let params = params::from_py_tuple(params, types)?;
         let source = match cached {
             Some(stmt) => StmtSource::Cached(stmt),
@@ -1025,7 +1027,7 @@ async fn run(
     stream_chunks: bool,
     client: Arc<Client>,
     source: StmtSource,
-    params: &[Param],
+    params: &Params,
     op: Op,
 ) -> Result<Outcome, QueryError> {
     // Whether `stmt` was prepared by an earlier query (so possibly before a schema change).
@@ -1084,16 +1086,16 @@ async fn run_once(
     stream_chunks: bool,
     client: &Arc<Client>,
     stmt: &Arc<CachedStmt>,
-    params: &[Param],
+    params: &Params,
     op: Op,
     delivered: &mut bool,
 ) -> Result<Outcome, QueryError> {
     let statement = stmt.statement();
-    if params.len() != statement.params().len() {
+    if params.values.len() != statement.params().len() {
         return Err(QueryError::Parameter(format!(
             "query expects {} parameter(s), got {}",
             statement.params().len(),
-            params.len()
+            params.values.len()
         )));
     }
     match op {

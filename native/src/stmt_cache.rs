@@ -11,11 +11,14 @@ use pyo3::prelude::*;
 use xitca_postgres::{Client, Statement};
 
 use crate::decode::Codec;
+use crate::params;
 use crate::structs::{Binding, StructSpec};
 
 pub struct CachedStmt {
     sql: Box<str>,
     stmt: Option<Statement>,
+    /// A parameter is json or jsonb (see `params::from_py_tuple`).
+    takes_json: bool,
     client: Arc<Client>,
     codecs: OnceLock<Result<Arc<[Codec]>, String>>,
     bindings: Mutex<Vec<(Py<StructSpec>, Arc<Binding>)>>,
@@ -28,6 +31,7 @@ impl CachedStmt {
     pub fn new(sql: &str, stmt: Statement, client: Arc<Client>) -> Self {
         Self {
             sql: sql.into(),
+            takes_json: stmt.params().iter().any(params::is_json),
             stmt: Some(stmt),
             client,
             codecs: OnceLock::new(),
@@ -38,6 +42,10 @@ impl CachedStmt {
 
     pub fn sql(&self) -> &str {
         &self.sql
+    }
+
+    pub fn takes_json(&self) -> bool {
+        self.takes_json
     }
 
     // `stmt` is `Some` from `new` until `Drop` takes it, and nothing else can see it then.

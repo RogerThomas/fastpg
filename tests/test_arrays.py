@@ -352,7 +352,6 @@ async def test_list_for_json_is_still_json(conn: fastpg.Connection) -> None:
         ("SELECT $1::int[]", [1, 2**40], r"element 1: int out of range for PostgreSQL type int4$"),
         ("SELECT $1::int[]", [[1, 2]], r"element 0: multi-dimensional arrays are not supported"),
         ("SELECT $1::int[]", [object()], r"unsupported"),  # first use: as JSON
-        ("SELECT $1::jsonb", (1, 2), r"cannot encode list/tuple \(array\) as .* type jsonb"),
         ("SELECT $1::text", (1, 2), r"cannot encode list/tuple \(array\) as .* type text"),
         ("SELECT $1::text", [1, 2], r"cannot encode dict/list \(JSON\) as .* type text"),
     ],
