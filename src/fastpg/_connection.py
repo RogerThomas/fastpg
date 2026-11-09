@@ -587,6 +587,7 @@ class Connection(_Queries):
             isolation=isolation,
             readonly=readonly,
             deferrable=deferrable,
+            _pre_commit="SELECT 1",
         )
         return self._transaction
 
@@ -678,13 +679,15 @@ class Transaction(_Queries):
         isolation: IsolationLevel | None = None,
         readonly: bool = False,
         deferrable: bool = False,
-        pre_commit: str = "SELECT 1",
+        _pre_commit: str | None = None,
     ) -> None:
-        """Prefer ``Connection.transaction()``; ``pre_commit`` runs right before COMMIT.
-
-        ``pre_commit`` must fail inside an aborted transaction (any statement does). The pool
-        passes its session-reset statements here, saving a round trip.
-        """
+        # Only conn.transaction() and pool.transaction() create one: without _pre_commit,
+        # direct construction is refused. _pre_commit runs right before COMMIT and must fail
+        # inside an aborted transaction (any statement does). The pool passes its
+        # session-reset statements here, saving a round trip.
+        if _pre_commit is None:
+            msg = "use `conn.transaction()` or `pool.transaction()` to create a Transaction"
+            raise TypeError(msg)
         # The query methods use a view of the session that refuses them unless the
         # transaction is active; BEGIN, COMMIT, ROLLBACK and savepoints use the session.
         super().__init__(conn._native.transaction_view(), conn._loop, conn._canceller)
@@ -701,7 +704,7 @@ class Transaction(_Queries):
         if deferrable:
             begin.append("DEFERRABLE")
         self._begin = " ".join(begin)
-        self._pre_commit = pre_commit
+        self._pre_commit = _pre_commit
         self._depth = 0
         self._state = self._NEW
 

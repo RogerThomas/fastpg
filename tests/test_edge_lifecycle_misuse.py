@@ -295,3 +295,14 @@ async def test_valid_edge_pool_configs(dsn: str) -> None:
             (1,),
             (2,),
         ]
+
+
+async def test_a_pool_is_not_constructed_directly() -> None:
+    with pytest.raises(TypeError, match=r"use `await fastpg.create_pool\(dsn, ...\)`"):
+        fastpg.Pool("postgresql://unused", min_size=0, max_size=1, max_inflight_per_conn=1)
+
+
+async def test_a_transaction_is_not_constructed_directly(conn: fastpg.Connection) -> None:
+    with pytest.raises(TypeError, match=r"use `conn.transaction\(\)` or `pool.transaction\(\)`"):
+        fastpg.Transaction(conn)
+    await _assert_usable(conn)

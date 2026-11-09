@@ -128,7 +128,7 @@ fn db_error(py: Python<'_>, db: &DbError) -> PyResult<PyErr> {
     };
     let exc = module(py)?
         .getattr("DatabaseError")?
-        .getattr("from_server")?
+        .getattr("_from_server")?
         .call1((
             db.code().code(),
             db.message(),
