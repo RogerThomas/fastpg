@@ -212,7 +212,11 @@ jobs:
         if: ${{ !cancelled() && steps.sdist.outcome == 'success' }}
         run: uv build --python 3.14 --wheel --out-dir wheel dist/sdist/*.tar.gz
       # PGO (see the top of this file): the instrumented wheel, for 3.14 only, in pgo/ (never
-      # uploaded); the training on the host, against server set 5; then the wheels.
+      # uploaded); the training on the host, against server set 5; then the wheels. The
+      # directories are made here first: the builds' containers would make them root's.
+      - name: Make the PGO directories
+        if: ${{ !cancelled() }}
+        run: mkdir -p pgo/gnu/raw pgo/musl/raw
       - name: Build manylinux for PGO training (3.14, instrumented)
         id: manylinux-instrumented
         if: ${{ !cancelled() }}
@@ -293,10 +297,8 @@ jobs:
         if: ${{ !cancelled() && steps.musllinux-instrumented.outcome == 'success' }}
         # As the musllinux tests below, on the Alpine image's Python 3.14, with libgcc (which
         # their build-base brings). Without psqlpy, which has no musl wheel. As root: the venv in
-        # the container, no bytecode files in the checkout, and the counts in a directory made
-        # here first.
+        # the container, and no bytecode files in the checkout.
         run: |
-          mkdir -p pgo/musl/raw
           docker run --rm --network host --volume "$PWD:$PWD" --workdir "$PWD" \
             --env UV_VERSION --env UV_PROJECT_ENVIRONMENT=/tmp/venv-pgo --env PYTHONDONTWRITEBYTECODE=1 \
             "$ALPINE_PYTHON_314" sh -euxc '
