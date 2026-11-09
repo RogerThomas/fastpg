@@ -51,6 +51,7 @@ An empty DSN, `fastpg.connect("")`, takes every setting from the environment or 
 | `channel_binding` | `prefer` | `disable`, `prefer` or `require` |
 
 Any other key raises `InterfaceError` before fastpg connects, naming the key.
+`sslpassword` isn't supported either: use a client key that isn't encrypted.
 
 ## Environment variables
 
