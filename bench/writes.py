@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, ClassVar, LiteralString, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, ClassVar, LiteralString, Protocol
 
 import asyncpg
 import msgspec
@@ -108,7 +108,7 @@ class Target:
 
     @property
     def quoted(self) -> LiteralString:
-        return cast("LiteralString", fastpg.Identifier(self.table).quoted)
+        return fastpg.Identifier(self.table).quoted
 
     @property
     def create(self) -> LiteralString:

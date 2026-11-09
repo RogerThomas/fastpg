@@ -94,9 +94,10 @@ class Identifier:
         return self._parts
 
     @property
-    def quoted(self) -> str:
+    def quoted(self) -> LiteralString:
         """The quoted form spliced into the query, e.g. ``"my schema"."people"``."""
-        return self._quoted
+        # Safe as SQL text: each part is double-quoted with embedded quotes doubled.
+        return cast("LiteralString", self._quoted)
 
     @override
     def __repr__(self) -> str:
