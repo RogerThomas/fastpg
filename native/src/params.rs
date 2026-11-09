@@ -54,23 +54,16 @@ pub enum Param {
     /// A list for a parameter of a statement this query prepares, whose type isn't known
     /// yet: converted both ways, it is sent as an array or as JSON, as the server declares.
     List(Box<UntypedList>),
-    /// Any other value (not `None` or a `str`) for a parameter of a statement this query
-    /// prepares: converted both ways too, it is sent as JSON if the server declares json or
-    /// jsonb, and as itself otherwise.
-    Untyped(Box<Untyped>),
+    /// A value `convert` has no encoding for (a Struct, a set, ...), for a parameter of a
+    /// statement this query prepares: a json or jsonb parameter takes it as JSON (see
+    /// [`Params`]), any other fails with this message.
+    Unconverted(String),
 }
 
 /// Both encodings of a list, or why each is impossible.
 #[derive(Debug)]
 pub struct UntypedList {
     array: Result<Vec<Param>, String>,
-    json: Result<Vec<u8>, String>,
-}
-
-/// A value and its JSON (see [`json_value`]), or why each is impossible.
-#[derive(Debug)]
-pub struct Untyped {
-    value: Result<Param, String>,
     json: Result<Vec<u8>, String>,
 }
 
@@ -93,10 +86,7 @@ impl Param {
             Self::Array(_) => "list/tuple (array)",
             // As the same list is described once the statement is prepared.
             Self::List(_) => "dict/list (JSON)",
-            Self::Untyped(untyped) => match &untyped.value {
-                Ok(value) => value.describe(),
-                Err(_) => "value",
-            },
+            Self::Unconverted(_) => "value",
         }
     }
 }
@@ -259,13 +249,17 @@ fn param_error(py: Python<'_>, index: usize, msg: impl fmt::Display) -> PyErr {
 }
 
 /// `ty`: the parameter's type, when the statement is already prepared (see [`convert`]).
-/// `json`: the statement may take a value as JSON (see [`convert_param`]).
+/// `json`: the prepared statement has a json or jsonb parameter (see [`convert_param`]).
 fn from_py(obj: &Bound<'_, PyAny>, index: usize, ty: Option<&Type>, json: bool) -> PyResult<Param> {
     let py = obj.py();
-    let param = if json {
-        convert_param(obj, ty)
-    } else {
-        convert(obj, ty)
+    let param = match ty {
+        Some(ty) if json => convert_param(obj, ty),
+        Some(ty) => convert(obj, Some(ty)),
+        // A value with no encoding of its own may still suit a json or jsonb parameter.
+        None => match convert(obj, None) {
+            Err(ConvertError::Invalid(message)) => Ok(Param::Unconverted(message)),
+            param => param,
+        },
     };
     param.map_err(|e| match e {
         // As in bulk writes: a ParameterError naming the parameter, caused by the Python
@@ -279,31 +273,15 @@ fn from_py(obj: &Bound<'_, PyAny>, index: usize, ty: Option<&Type>, json: bool) 
     })
 }
 
-/// [`convert`] for a query parameter, except that a json or jsonb parameter takes any value as
-/// [`json_value`] does, as in bulk writes. Of a statement not prepared yet, a value is also
-/// kept as its JSON, unless it is `None` or a `str`, which both types take as they are, or a
-/// dict or list, which `convert` already sends as JSON.
-fn convert_param(obj: &Bound<'_, PyAny>, ty: Option<&Type>) -> Result<Param, ConvertError> {
-    if ty.is_some_and(|ty| !is_json(ty))
-        || obj.is_instance_of::<PyDict>()
-        || obj.is_instance_of::<PyList>()
+/// [`convert`] for a parameter of a prepared statement, except that a json or jsonb parameter
+/// takes any value as [`json_value`] does, as in bulk writes.
+fn convert_param(obj: &Bound<'_, PyAny>, ty: &Type) -> Result<Param, ConvertError> {
+    if is_json(ty)
+        && let Some(json) = json_value(obj)
     {
-        return convert(obj, ty);
-    }
-    let Some(json) = json_value(obj) else {
-        return convert(obj, ty);
-    };
-    if ty.is_some() {
         return Ok(Param::Json(json?));
     }
-    match (convert(obj, None), json) {
-        // Neither, for an exception: raised as it always has been.
-        (Err(ConvertError::Py(e)), Err(_)) => Err(ConvertError::Py(e)),
-        (value, json) => Ok(Param::Untyped(Box::new(Untyped {
-            value: value.map_err(ConvertError::message),
-            json: json.map_err(|e| e.to_string()),
-        }))),
-    }
+    convert(obj, Some(ty))
 }
 
 /// Why a Python value can't become a [`Param`]: a Python exception, or a message the caller
@@ -701,7 +679,7 @@ const MAX_PARAMS: usize = u16::MAX as usize;
 pub fn from_py_tuple(
     params: &Bound<'_, PyTuple>,
     types: Option<(&[Type], bool)>,
-) -> PyResult<Vec<Param>> {
+) -> PyResult<Params> {
     if params.len() > MAX_PARAMS {
         return Err(py_err(
             params.py(),
@@ -713,11 +691,15 @@ pub fn from_py_tuple(
         ));
     }
     let json = types.is_none_or(|(_, json)| json);
-    params
+    let values = params
         .iter()
         .enumerate()
         .map(|(i, p)| from_py(&p, i, types.and_then(|(types, _)| types.get(i)), json))
-        .collect()
+        .collect::<PyResult<_>>()?;
+    Ok(Params {
+        values,
+        source: types.is_none().then(|| params.clone().unbind()),
+    })
 }
 
 /// Encoding failure, carried through xitca's boxed error and downcast on the way out.
@@ -735,12 +717,28 @@ impl fmt::Display for ParamError {
 
 impl Error for ParamError {}
 
-/// A parameter paired with its position, so encoding errors can name it.
-#[derive(Debug, Clone, Copy)]
-pub struct Indexed<'a>(pub usize, pub &'a Param);
+/// A query's parameters, converted.
+pub struct Params {
+    pub values: Vec<Param>,
+    /// The Python values, for a statement this query prepares. A json or jsonb parameter takes
+    /// its value as JSON, as on the statement's later uses (see [`convert_param`]), but which
+    /// parameters are json isn't known yet: the JSON is made once the server says, by
+    /// [`Indexed`] (on the loop thread, which holds the GIL).
+    source: Option<Py<PyTuple>>,
+}
 
-pub fn indexed(params: &[Param]) -> impl ExactSizeIterator<Item = Indexed<'_>> + Clone {
-    params.iter().enumerate().map(|(i, p)| Indexed(i, p))
+/// A parameter paired with its position, so encoding errors can name it, and the Python values
+/// of a statement's first use (see [`Params`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Indexed<'a>(pub usize, pub &'a Param, pub Option<&'a Py<PyTuple>>);
+
+pub fn indexed(params: &Params) -> impl ExactSizeIterator<Item = Indexed<'_>> + Clone {
+    let source = params.source.as_ref();
+    params
+        .values
+        .iter()
+        .enumerate()
+        .map(move |(i, p)| Indexed(i, p, source))
 }
 
 /// Domains are sent in their base type's binary format.
@@ -770,7 +768,7 @@ type BoxError = Box<dyn Error + Sync + Send>;
 
 impl ToSql for Indexed<'_> {
     fn to_sql(&self, declared: &Type, out: &mut BytesMut) -> Result<IsNull, BoxError> {
-        let Indexed(index, param) = *self;
+        let Indexed(index, param, source) = *self;
         let ty = base_type(declared);
         // Errors name the declared type, and a domain's base type too.
         let type_name = if ty == declared {
@@ -790,6 +788,25 @@ impl ToSql for Indexed<'_> {
                 "{what} out of range for PostgreSQL type {type_name}"
             ))
         };
+
+        if let Some(source) = source
+            && is_json(ty)
+            && !matches!(param, Param::Null | Param::Json(_) | Param::List(_))
+        {
+            // The statement's first use: its value as JSON, as on later uses.
+            let json = Python::attach(|py| {
+                let obj = source.bind(py).get_item(index)?;
+                json_value(&obj).transpose()
+            });
+            match json {
+                Ok(Some(json)) => {
+                    put_json(ty, &json, out);
+                    return Ok(IsNull::No);
+                }
+                Ok(None) => {} // a str: JSON text
+                Err(e) => return Err(fail(e.to_string())),
+            }
+        }
 
         match param {
             Param::Null => return Ok(IsNull::Yes),
@@ -868,12 +885,7 @@ impl ToSql for Indexed<'_> {
                 (None, _, Err(message)) if is_json(ty) => return Err(fail(message.clone())),
                 (None, _, _) => return Err(mismatch()),
             },
-            Param::Untyped(untyped) => match (&untyped.value, &untyped.json) {
-                (_, Ok(json)) if is_json(ty) => put_json(ty, json, out),
-                (_, Err(message)) if is_json(ty) => return Err(fail(message.clone())),
-                (Ok(value), _) => return Indexed(index, value).to_sql(declared, out),
-                (Err(message), _) => return Err(fail(message.clone())),
-            },
+            Param::Unconverted(message) => return Err(fail(message.clone())),
             _ => return Err(mismatch()),
         }
         Ok(IsNull::No)
@@ -915,7 +927,7 @@ fn encode_array(
         }
         let len_at = out.len();
         out.put_i32(0);
-        let len = match Indexed(index, item).to_sql(elem, out) {
+        let len = match Indexed(index, item, None).to_sql(elem, out) {
             Ok(IsNull::Yes) => {
                 out[flags_at..flags_at + 4].copy_from_slice(&1i32.to_be_bytes());
                 -1

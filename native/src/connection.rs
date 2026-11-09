@@ -31,7 +31,7 @@ use crate::json;
 use crate::mailbox::Mailbox;
 use crate::msgpack;
 use crate::net::{self, IoWatch};
-use crate::params::{self, Param, ParamError, indexed};
+use crate::params::{self, ParamError, Params, indexed};
 use crate::rows::RowBuffer;
 use crate::stmt_cache::{CachedStmt, StatementCache};
 use crate::structs::{StructBuilder, StructSpec, collect_list, scalar_columns, tuple_row};
@@ -1027,7 +1027,7 @@ async fn run(
     stream_chunks: bool,
     client: Arc<Client>,
     source: StmtSource,
-    params: &[Param],
+    params: &Params,
     op: Op,
 ) -> Result<Outcome, QueryError> {
     // Whether `stmt` was prepared by an earlier query (so possibly before a schema change).
@@ -1086,16 +1086,16 @@ async fn run_once(
     stream_chunks: bool,
     client: &Arc<Client>,
     stmt: &Arc<CachedStmt>,
-    params: &[Param],
+    params: &Params,
     op: Op,
     delivered: &mut bool,
 ) -> Result<Outcome, QueryError> {
     let statement = stmt.statement();
-    if params.len() != statement.params().len() {
+    if params.values.len() != statement.params().len() {
         return Err(QueryError::Parameter(format!(
             "query expects {} parameter(s), got {}",
             statement.params().len(),
-            params.len()
+            params.values.len()
         )));
     }
     match op {

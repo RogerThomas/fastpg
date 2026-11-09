@@ -242,7 +242,7 @@ impl ColumnCodec {
             _ => {}
         }
         let param = params::convert(obj, Some(&self.ty))?;
-        match Indexed(0, &param).to_sql(&self.ty, out) {
+        match Indexed(0, &param, None).to_sql(&self.ty, out) {
             Ok(IsNull::Yes) => Ok(false),
             Ok(IsNull::No) => Ok(true),
             Err(e) => Err(ConvertError::Invalid(match e.downcast::<ParamError>() {
