@@ -7,7 +7,7 @@ and cached and the `into=` type already planned: what's measured is the steady s
 import datetime as dt
 import decimal
 import uuid
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, LiteralString, NamedTuple
 
 import msgspec
 import pytest
@@ -247,7 +247,7 @@ def test_select_one_named_params(benchmark: BenchmarkFixture, runner: Runner) ->
 
 
 @pytest.fixture
-def scratch(runner: Runner) -> str:
+def scratch(runner: Runner) -> LiteralString:
     """An empty temporary table shaped like part of `people` (dropped with the connection)."""
     runner.run(
         runner.conn.execute_script(
@@ -264,24 +264,24 @@ WRITE_ROWS = [
 ]
 
 
-def test_execute(benchmark: BenchmarkFixture, runner: Runner, scratch: str) -> None:
+def test_execute(benchmark: BenchmarkFixture, runner: Runner, scratch: LiteralString) -> None:
     conn = runner.conn
     query = f"INSERT INTO {scratch} VALUES ($1, $2, $3, $4)"  # noqa: S608 - a fixed name
     _measure(benchmark, runner, lambda: conn.execute(query, *WRITE_ROWS[0]))
 
 
-def test_execute_many(benchmark: BenchmarkFixture, runner: Runner, scratch: str) -> None:
+def test_execute_many(benchmark: BenchmarkFixture, runner: Runner, scratch: LiteralString) -> None:
     conn = runner.conn
     query = f"INSERT INTO {scratch} VALUES ($1, $2, $3, $4)"  # noqa: S608 - a fixed name
     _measure(benchmark, runner, lambda: conn.execute_many(query, WRITE_ROWS))
 
 
-def test_insert_many(benchmark: BenchmarkFixture, runner: Runner, scratch: str) -> None:
+def test_insert_many(benchmark: BenchmarkFixture, runner: Runner, scratch: LiteralString) -> None:
     conn = runner.conn
     _measure(benchmark, runner, lambda: conn.insert_many(scratch, WRITE_ROWS))
 
 
-def test_copy_in(benchmark: BenchmarkFixture, runner: Runner, scratch: str) -> None:
+def test_copy_in(benchmark: BenchmarkFixture, runner: Runner, scratch: LiteralString) -> None:
     conn = runner.conn
     _measure(benchmark, runner, lambda: conn.copy_in(scratch, WRITE_ROWS))
 

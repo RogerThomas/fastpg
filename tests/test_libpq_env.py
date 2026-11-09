@@ -6,6 +6,7 @@ import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import LiteralString, cast
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -215,7 +216,7 @@ async def test_wildcards_comments_and_the_first_match(server: Server, tmp_path: 
 @pytest.fixture
 async def odd_role(dsn: str) -> AsyncIterator[tuple[str, str]]:
     """A role whose name and password hold a `:` and a `\\`: ``(name, password)``."""
-    token = secrets.token_hex(4)
+    token = cast("LiteralString", secrets.token_hex(4))
     name, password = f"fastpg:pgpass\\{token}", f"pass:word\\{token}"
     async with await fastpg.connect(dsn) as conn:
         await conn.execute(f"CREATE ROLE \"{name}\" LOGIN PASSWORD '{password}'")

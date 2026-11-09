@@ -5,6 +5,7 @@ import datetime as dt
 import gc
 import time
 import warnings
+from typing import LiteralString, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -88,7 +89,7 @@ async def test_unique_violation(conn: fastpg.Connection) -> None:
 )
 async def test_server_errors_map_to_classes(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     error: type[fastpg.DatabaseError],
     sqlstate: str,
 ) -> None:
@@ -126,8 +127,11 @@ async def test_rows_of_any_width_with_nulls(conn: fastpg.Connection, width: int)
     # Rows of up to 16 columns are buffered in one pass, wider ones in two; 600 rows are
     # streamed in two chunks.
     nulls = [i % 3 == 0 for i in range(width)]
-    columns = ", ".join(
-        f"NULL::int4 AS c{i}" if null else f"n + {i} AS c{i}" for i, null in enumerate(nulls)
+    columns = cast(
+        "LiteralString",
+        ", ".join(
+            f"NULL::int4 AS c{i}" if null else f"n + {i} AS c{i}" for i, null in enumerate(nulls)
+        ),
     )
     query = f"SELECT {columns} FROM generate_series(1, $1) AS n"  # noqa: S608 - fixed text
     rows = await conn.select_many(query, 600)
@@ -200,7 +204,7 @@ async def test_queries_sent_after_results_arrive_together(conn: fastpg.Connectio
 async def test_statement_cache_is_bounded(dsn: str) -> None:
     async with await fastpg.connect(dsn, statement_cache_size=2) as conn:
         for i in range(5):
-            assert await conn.select_one(f"SELECT {i}") == (i,)
+            assert await conn.select_one(cast("LiteralString", f"SELECT {i}")) == (i,)
         assert conn.cached_statements == 2
         # Evicted statements were deallocated server-side and re-prepare transparently.
         assert await conn.select_one("SELECT 0") == (0,)

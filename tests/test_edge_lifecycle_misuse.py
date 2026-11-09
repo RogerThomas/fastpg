@@ -7,7 +7,7 @@ import asyncio
 import gc
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, LiteralString
 
 import msgspec
 import pytest
@@ -92,7 +92,10 @@ async def test_execute_script_takes_no_parameters(conn: fastpg.Connection) -> No
 
 
 @pytest.mark.parametrize("query", ["", "   ", "-- only a comment", "/* only a comment */"])
-async def test_empty_and_comment_only_queries(conn: fastpg.Connection, query: str) -> None:
+async def test_empty_and_comment_only_queries(
+    conn: fastpg.Connection,
+    query: LiteralString,
+) -> None:
     # The server answers EmptyQueryResponse: no rows, nothing affected.
     with pytest.raises(fastpg.NoRowsError):
         await conn.select_one(query)
@@ -129,7 +132,7 @@ async def copy_table(dsn: str) -> AsyncIterator[None]:
 
 def _query_methods(
     conn: fastpg.Connection | fastpg.Transaction,
-) -> list[Callable[[str], Awaitable[object]]]:
+) -> list[Callable[[LiteralString], Awaitable[object]]]:
     return [
         conn.select_one,
         conn.select_one_or_none,
@@ -144,7 +147,7 @@ def _query_methods(
 @pytest.mark.parametrize("query", ["COPY misuse_copy FROM STDIN", "COPY (SELECT 1) TO STDOUT"])
 async def test_copy_from_or_to_the_client_is_refused(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
 ) -> None:
     for method in _query_methods(conn):
         with pytest.raises(fastpg.InterfaceError, match=_COPY_REFUSED):

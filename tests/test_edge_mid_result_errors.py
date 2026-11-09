@@ -1,7 +1,7 @@
 """A query the server fails after sending some of its rows."""
 
 import asyncio
-from typing import NamedTuple
+from typing import LiteralString, NamedTuple, cast
 
 import msgspec
 import pydantic
@@ -64,7 +64,10 @@ async def test_error_after_some_rows_fails_select_many(
     failing_row: int,
 ) -> None:
     into, strategy = target
-    query = f"SELECT 1/(i - {failing_row}) AS value FROM generate_series(1, 5000) AS s(i)"  # noqa: S608
+    query = cast(
+        "LiteralString",
+        f"SELECT 1/(i - {failing_row}) AS value FROM generate_series(1, 5000) AS s(i)",  # noqa: S608
+    )
     with pytest.raises(fastpg.DataError, match="division by zero") as exc:
         await conn.select_many(query, into=into, strategy=strategy)
     assert exc.value.sqlstate == "22012"

@@ -5,7 +5,7 @@ import math
 import secrets
 from collections.abc import AsyncIterator
 from decimal import Decimal
-from typing import Annotated, Any, NamedTuple, TypeIs
+from typing import Annotated, Any, LiteralString, NamedTuple, TypeIs, cast
 from urllib.parse import urlsplit
 
 import msgspec
@@ -145,7 +145,7 @@ def _text_target(request: pytest.FixtureRequest) -> Target:
 @pytest.fixture(name="sql_ascii_dsn", scope="module")
 async def _sql_ascii_dsn(dsn: str) -> AsyncIterator[str]:
     """A throwaway database with encoding SQL_ASCII, which stores text bytes unchecked."""
-    name = f"fastpg_sql_ascii_{secrets.token_hex(4)}"
+    name = cast("LiteralString", f"fastpg_sql_ascii_{secrets.token_hex(4)}")
     create = f"CREATE DATABASE {name} ENCODING 'SQL_ASCII' LC_COLLATE 'C' LC_CTYPE 'C'"
     async with await fastpg.connect(dsn) as conn:
         try:
@@ -182,8 +182,8 @@ async def _sql_ascii_dsn(dsn: str) -> AsyncIterator[str]:
 async def test_date_python_cannot_represent_is_a_decode_error(
     conn: fastpg.Connection,
     any_target: Target,
-    pg_type: str,
-    literal: str,
+    pg_type: LiteralString,
+    literal: LiteralString,
 ) -> None:
     into, strategy = any_target
     query = f"SELECT '{literal}'::{pg_type} AS value"
@@ -211,8 +211,8 @@ async def test_date_python_cannot_represent_is_a_decode_error(
 async def test_first_and_last_dates_python_represents(
     conn: fastpg.Connection,
     any_target: Target,
-    pg_type: str,
-    literal: str,
+    pg_type: LiteralString,
+    literal: LiteralString,
     expected: object,
 ) -> None:
     into, strategy = any_target
@@ -271,7 +271,7 @@ async def test_time_2400_is_a_decode_error(
 )
 async def test_timestamptz_is_the_same_instant_whatever_the_session_time_zone(
     conn: fastpg.Connection,
-    time_zone: str,
+    time_zone: LiteralString,
     into: type[DateTimeValue | DateTimeValueModel],
     strategy: fastpg.Strategy,
 ) -> None:
@@ -334,7 +334,7 @@ async def test_numeric_digits_survive_exactly(
 )
 async def test_non_finite_numeric(
     conn: fastpg.Connection,
-    literal: str,
+    literal: LiteralString,
     into: type[DecimalValue | NonFiniteDecimalValueModel],
     strategy: fastpg.Strategy,
 ) -> None:
@@ -347,7 +347,7 @@ async def test_non_finite_numeric(
 @pytest.mark.parametrize("strategy", ["direct", "json"])
 async def test_non_finite_numeric_into_a_pydantic_decimal_is_refused(
     conn: fastpg.Connection,
-    literal: str,
+    literal: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     # pydantic's Decimal must be finite unless allow_inf_nan=True, and direct construction
@@ -370,7 +370,7 @@ async def test_non_finite_numeric_into_a_pydantic_decimal_is_refused(
 )
 async def test_non_finite_float8(
     conn: fastpg.Connection,
-    literal: str,
+    literal: LiteralString,
     into: type[FloatValue | FloatValueModel],
     strategy: fastpg.Strategy,
 ) -> None:
@@ -382,7 +382,7 @@ async def test_non_finite_float8(
 @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
 async def test_non_finite_float8_has_no_json_form_for_msgspec(
     conn: fastpg.Connection,
-    literal: str,
+    literal: LiteralString,
 ) -> None:
     query = f"SELECT '{literal}'::float8 AS value"
     expected = rf'^column "value": float8 {literal} has no JSON form msgspec accepts; use'
@@ -434,7 +434,7 @@ async def test_int8_extremes(
     into: type[IntValue | IntValueModel | FloatValue | FloatValueModel],
     strategy: fastpg.Strategy,
 ) -> None:
-    query = f"SELECT ({number})::int8 AS value"
+    query = cast("LiteralString", f"SELECT ({number})::int8 AS value")
     row = await conn.select_one(query, into=into, strategy=strategy)
     # A float field rounds, as Python's float(int) does: 2**63 - 1 becomes 2.0**63.
     expected = float(number) if into in (FloatValue, FloatValueModel) else number

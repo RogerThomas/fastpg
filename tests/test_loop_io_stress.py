@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import AsyncIterator, Iterable, Iterator
 from pathlib import Path
+from typing import LiteralString
 from urllib.parse import urlsplit
 
 import pytest
@@ -19,7 +20,7 @@ from fastpg import errors
 
 
 @pytest.fixture
-async def stress_table(conn: fastpg.Connection) -> AsyncIterator[str]:
+async def stress_table(conn: fastpg.Connection) -> AsyncIterator[LiteralString]:
     """A fresh ``loop_io_stress (id int, v text)`` table; yields its name."""
     await conn.execute_script(
         "DROP TABLE IF EXISTS loop_io_stress; CREATE TABLE loop_io_stress (id int, v text)",
@@ -150,7 +151,7 @@ async def test_pool_cancellation_storm(dsn: str) -> None:
 async def test_copy_in_fails_promptly_when_server_closes(
     conn: fastpg.Connection,
     dsn: str,
-    stress_table: str,
+    stress_table: LiteralString,
 ) -> None:
     victim = await fastpg.connect(dsn)
     (pid,) = await victim.select_one("SELECT pg_backend_pid()")

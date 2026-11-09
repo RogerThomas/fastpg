@@ -6,7 +6,7 @@ import secrets
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, LiteralString
 from urllib.parse import urlsplit
 
 import msgspec
@@ -82,7 +82,7 @@ async def _gate(conn: fastpg.Connection) -> AsyncGenerator[int]:
         await conn.execute("SELECT pg_advisory_unlock($1)", key)
 
 
-async def _gated_pid(pool: fastpg.Pool, key: int, query: str = _GATED) -> int:
+async def _gated_pid(pool: fastpg.Pool, key: int, query: LiteralString = _GATED) -> int:
     return (await pool.select_one(query, key))[0]
 
 

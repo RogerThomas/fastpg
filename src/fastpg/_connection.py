@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from types import TracebackType
-from typing import Any, ClassVar, Literal, Self, overload
+from typing import Any, ClassVar, Literal, LiteralString, Self, overload
 
 import msgspec
 
@@ -226,7 +226,7 @@ class _Queries:
     @overload
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -236,7 +236,7 @@ class _Queries:
     @overload
     async def select_one[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -246,14 +246,14 @@ class _Queries:
     @overload
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> tuple[Any, ...]: ...
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -276,7 +276,7 @@ class _Queries:
     @overload
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -286,7 +286,7 @@ class _Queries:
     @overload
     async def select_one_or_none[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -296,14 +296,14 @@ class _Queries:
     @overload
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> tuple[Any, ...] | None: ...
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -323,7 +323,7 @@ class _Queries:
     @overload
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -333,7 +333,7 @@ class _Queries:
     @overload
     async def select_many[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -343,14 +343,14 @@ class _Queries:
     @overload
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> list[tuple[Any, ...]]: ...
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -369,7 +369,7 @@ class _Queries:
 
     async def select_and_group[T: msgspec.Struct](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -402,7 +402,7 @@ class _Queries:
 
     async def execute(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -420,7 +420,7 @@ class _Queries:
             self._canceller.abandon(future)
             raise
 
-    async def execute_script(self, query: str | Template, /) -> None:
+    async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Run one or more `;`-separated statements without parameters (simple protocol).
 
         A t-string may splice in ``Identifier``s and fragments, but has no value parameters.
@@ -435,7 +435,7 @@ class _Queries:
             self._canceller.abandon(future)
             raise
 
-    async def execute_many(self, query: str, rows: Iterable[Sequence[object]], /) -> int:
+    async def execute_many(self, query: LiteralString, rows: Iterable[Sequence[object]], /) -> int:
         """Run `query` once per row of positional parameters; return the total row count.
 
         One prepared statement; rows are encoded in Rust and pipelined (no round trip per

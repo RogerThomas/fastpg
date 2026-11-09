@@ -5,6 +5,7 @@ Run: ./scripts/seed_test_db.py postgresql://user:password@host:5432/database
 """
 
 from pathlib import Path
+from typing import LiteralString, cast
 
 import fastpg
 
@@ -14,5 +15,5 @@ async def main(dsn: str) -> None:
     initdb = Path(__file__).resolve().parent.parent / "docker" / "initdb"
     async with await fastpg.connect(dsn) as conn:
         for script in sorted(initdb.glob("*.sql")):
-            await conn.execute_script(script.read_text())
+            await conn.execute_script(cast("LiteralString", script.read_text()))
             print(f"loaded {script.name}")

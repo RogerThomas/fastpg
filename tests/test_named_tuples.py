@@ -7,7 +7,7 @@ import sys
 import tracemalloc
 import uuid
 from decimal import Decimal
-from typing import Any, Literal, NamedTuple, Self, assert_type
+from typing import Any, Literal, LiteralString, NamedTuple, Self, assert_type
 
 import pytest
 
@@ -182,7 +182,7 @@ async def test_missing_required_field(conn: fastpg.Connection) -> None:
 )
 async def test_missing_fields_with_defaults_use_them(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     expected: WithDefaults,
 ) -> None:
     assert await conn.select_one(query, into=WithDefaults) == expected
@@ -221,7 +221,10 @@ async def test_int_column_into_float_field(conn: fastpg.Connection) -> None:
 
 
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
-async def test_str_field_gets_json_as_raw_text(conn: fastpg.Connection, json_type: str) -> None:
+async def test_str_field_gets_json_as_raw_text(
+    conn: fastpg.Connection,
+    json_type: LiteralString,
+) -> None:
     got = await conn.select_one(f"""SELECT '{{"a": 1}}'::{json_type} AS doc""", into=JSONAsText)
     assert got == JSONAsText('{"a": 1}')
 
@@ -373,7 +376,7 @@ async def test_rows_of_scalars_are_not_gc_tracked(conn: fastpg.Connection) -> No
 async def test_rows_that_could_hold_references_stay_gc_tracked(
     conn: fastpg.Connection,
     into: type[tuple[Any, ...]],
-    columns: str,
+    columns: LiteralString,
 ) -> None:
     rows = await conn.select_many(f"SELECT {columns} FROM people WHERE id <= 3", into=into)  # noqa: S608
     assert [gc.is_tracked(row) for row in rows] == [True, True, True]

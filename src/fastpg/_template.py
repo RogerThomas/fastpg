@@ -18,7 +18,7 @@ import re
 import sys
 import threading
 from itertools import pairwise
-from typing import Any, ClassVar, Final, Literal, Never, final, override
+from typing import Any, ClassVar, Final, Literal, LiteralString, Never, cast, final, override
 
 if sys.version_info >= (3, 14):
     from string.templatelib import Interpolation, Template
@@ -94,9 +94,10 @@ class Identifier:
         return self._parts
 
     @property
-    def quoted(self) -> str:
+    def quoted(self) -> LiteralString:
         """The quoted form spliced into the query, e.g. ``"my schema"."people"``."""
-        return self._quoted
+        # Safe as SQL text: each part is double-quoted with embedded quotes doubled.
+        return cast("LiteralString", self._quoted)
 
     @override
     def __repr__(self) -> str:
@@ -325,7 +326,7 @@ class TemplateCompiler:
         self,
         query: Template,
         params: tuple[object, ...],
-    ) -> tuple[str, tuple[object, ...]]:
+    ) -> tuple[LiteralString, tuple[object, ...]]:
         """`compile` for a query method called with ``(query, *params)``."""
         if params:
             msg = (
@@ -333,9 +334,10 @@ class TemplateCompiler:
                 f"{len(params)} extra positional parameter(s)"
             )
             raise TypeError(msg)
-        return self._compile(query)
+        # The SQL is the t-string's own literal text plus quoted identifiers.
+        return cast("tuple[LiteralString, tuple[object, ...]]", self._compile(query))
 
-    def script(self, template: Template) -> str:
+    def script(self, template: Template) -> LiteralString:
         """SQL text for `execute_script`: only identifiers and fragments, no parameters."""
         query, params = self._compile(template)
         if params:
@@ -345,4 +347,4 @@ class TemplateCompiler:
                 "(one statement), or Identifier for names"
             )
             raise TypeError(msg)
-        return query
+        return cast("LiteralString", query)

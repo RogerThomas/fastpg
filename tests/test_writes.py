@@ -9,7 +9,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, NamedTuple
+from typing import Any, LiteralString, NamedTuple, cast
 
 import msgspec
 import pytest
@@ -74,10 +74,10 @@ class TableMaker:
     """Creates fresh tables (`CREATE TABLE w_<n> (<columns>)`) and drops them afterwards."""
 
     _conn: fastpg.Connection
-    _created: list[str] = field(default_factory=list[str])
+    _created: list[LiteralString] = field(default_factory=list[LiteralString])
 
-    async def __call__(self, columns: str) -> str:
-        table = f"w_{len(self._created)}"
+    async def __call__(self, columns: LiteralString) -> LiteralString:
+        table = cast("LiteralString", f"w_{len(self._created)}")
         await self._conn.execute_script(
             f"DROP TABLE IF EXISTS {table}; CREATE TABLE {table} ({columns})",
         )
@@ -128,7 +128,7 @@ async def write(
     assert columns is not None
     placeholders = ", ".join(f"${i + 1}" for i in range(len(columns)))
     query = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
-    return await conn.execute_many(query, rows)
+    return await conn.execute_many(cast("LiteralString", query), rows)
 
 
 def numbered_rows(count: int, started: asyncio.Event) -> Iterator[tuple[int, str]]:
@@ -219,7 +219,7 @@ async def test_type_roundtrip(
     conn: fastpg.Connection,
     make_table: TableMaker,
     tier: str,
-    pg_type: str,
+    pg_type: LiteralString,
     value: object,
     expected: object,
 ) -> None:
@@ -631,10 +631,10 @@ async def test_execute_many_counts_survive_statement_closes(
     async with await fastpg.connect(dsn, statement_cache_size=1) as conn:
         for i in range(20):
             results = await asyncio.gather(
-                conn.select_one(f"SELECT {i}::int"),
-                conn.select_one(f"SELECT {i}::int + 1"),
+                conn.select_one(cast("LiteralString", f"SELECT {i}::int")),
+                conn.select_one(cast("LiteralString", f"SELECT {i}::int + 1")),
                 conn.execute_many(f"INSERT INTO {table} VALUES ($1)", rows),
-                conn.select_one(f"SELECT {i}::int + 2"),
+                conn.select_one(cast("LiteralString", f"SELECT {i}::int + 2")),
             )
             assert results == [(i,), (i + 1,), 3000, (i + 2,)]
         assert await conn.select_one(f"SELECT count(*) FROM {table}") == (60_000,)

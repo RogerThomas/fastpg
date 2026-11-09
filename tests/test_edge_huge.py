@@ -2,7 +2,7 @@
 
 import sysconfig
 import tracemalloc
-from typing import Any, NamedTuple
+from typing import Any, LiteralString, NamedTuple, cast
 
 import msgspec
 import pytest
@@ -81,11 +81,13 @@ def _wide_struct() -> type[msgspec.Struct]:
 @pytest.mark.timeout(120)
 async def test_100_mb_text_and_bytea(conn: fastpg.Connection) -> None:
     size = 100 * 1024 * 1024
-    (text,) = await conn.select_one(f"SELECT repeat('a', {size})")
+    (text,) = await conn.select_one(cast("LiteralString", f"SELECT repeat('a', {size})"))
     assert len(text) == size
     assert text[:1] == text[-1:] == "a"
     del text
-    (data,) = await conn.select_one(f"SELECT decode(repeat('ab', {size}), 'hex')")
+    (data,) = await conn.select_one(
+        cast("LiteralString", f"SELECT decode(repeat('ab', {size}), 'hex')"),
+    )
     assert len(data) == size
     assert data[:1] == data[-1:] == b"\xab"
     del data
@@ -96,7 +98,10 @@ async def test_100_mb_text_and_bytea(conn: fastpg.Connection) -> None:
 @pytest.mark.timeout(120)
 async def test_200_mb_row(conn: fastpg.Connection) -> None:
     size = 100 * 1024 * 1024
-    query = f"SELECT repeat('a', {size}) AS first, repeat('b', {size}) AS second"
+    query = cast(
+        "LiteralString",
+        f"SELECT repeat('a', {size}) AS first, repeat('b', {size}) AS second",
+    )
     row = await conn.select_one(query, into=TwoTexts)
     assert (len(row.first), len(row.second)) == (size, size)
     assert row.first[-1:] + row.second[:1] == "ab"
@@ -104,9 +109,10 @@ async def test_200_mb_row(conn: fastpg.Connection) -> None:
 
 @pytest.mark.timeout(60)
 async def test_1600_columns(conn: fastpg.Connection, wide_struct: type[msgspec.Struct]) -> None:
-    columns = [f"c{i}" for i in range(1600)]
+    columns = cast("list[LiteralString]", [f"c{i}" for i in range(1600)])
     await conn.execute_script(f"CREATE TEMP TABLE wide ({', '.join(f'{c} int' for c in columns)})")
-    insert = f"INSERT INTO wide VALUES ({', '.join(f'${i + 1}' for i in range(1600))})"  # noqa: S608
+    placeholders = cast("LiteralString", ", ".join(f"${i + 1}" for i in range(1600)))
+    insert = f"INSERT INTO wide VALUES ({placeholders})"  # noqa: S608
     assert await conn.execute(insert, *range(1600)) == 1
     assert await conn.select_one("SELECT * FROM wide") == tuple(range(1600))
     as_dict = dict(zip(columns, range(1600), strict=True))
@@ -125,7 +131,7 @@ async def test_most_columns_a_select_list_takes(
     conn: fastpg.Connection,
     wide_struct: type[msgspec.Struct],
 ) -> None:
-    most = ", ".join(f"{i} AS c{i}" for i in range(1664))
+    most = cast("LiteralString", ", ".join(f"{i} AS c{i}" for i in range(1664)))
     rows = await conn.select_many(f"SELECT {most} FROM generate_series(1, 1000)", into=wide_struct)  # noqa: S608
     assert len(rows) == 1000
     assert msgspec.structs.astuple(rows[-1]) == tuple(range(1600))  # extra columns ignored

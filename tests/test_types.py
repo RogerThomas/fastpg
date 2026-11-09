@@ -5,7 +5,7 @@ import enum
 import gc
 import uuid
 from decimal import Decimal
-from typing import Any
+from typing import Any, LiteralString, cast
 from zoneinfo import ZoneInfo
 
 import msgspec
@@ -51,7 +51,7 @@ import fastpg
         ("json", [1, "two"]),
     ],
 )
-async def test_roundtrip(conn: fastpg.Connection, pg_type: str, value: object) -> None:
+async def test_roundtrip(conn: fastpg.Connection, pg_type: LiteralString, value: object) -> None:
     (got,) = await conn.select_one(f"SELECT $1::{pg_type}", value)
     if isinstance(value, Decimal) and value.is_nan():
         assert isinstance(got, Decimal)
@@ -64,7 +64,8 @@ async def test_roundtrip(conn: fastpg.Connection, pg_type: str, value: object) -
 async def test_null_for_every_type(conn: fastpg.Connection) -> None:
     types = ["bool", "bytea", "date", "float4", "float8", "int2", "int4", "int8", "json", "jsonb"]
     types += ["numeric", "text", "time", "timestamp", "timestamptz", "uuid", "varchar"]
-    row = await conn.select_one("SELECT " + ", ".join(f"NULL::{t}" for t in types))
+    columns = cast("LiteralString", ", ".join(f"NULL::{t}" for t in types))
+    row = await conn.select_one(f"SELECT {columns}")
     assert row == (None,) * len(types)
 
 

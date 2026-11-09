@@ -9,6 +9,7 @@ pool replaces the connection.
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import LiteralString
 
 import pytest
 from faults import FaultProxy
@@ -21,7 +22,7 @@ _BIG = "SELECT n, repeat('x', 100) FROM generate_series(1, 20000) AS n"  # ~2.3 
 
 
 @pytest.fixture
-async def drop_items(conn: fastpg.Connection) -> AsyncIterator[str]:
+async def drop_items(conn: fastpg.Connection) -> AsyncIterator[LiteralString]:
     await conn.execute_script(
         "DROP TABLE IF EXISTS net_drop_items; CREATE TABLE net_drop_items (id int, v text)",
     )
@@ -124,7 +125,7 @@ async def test_cut_in_the_middle_of_copy_in(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
     conn: fastpg.Connection,
-    drop_items: str,
+    drop_items: LiteralString,
     *,
     rst: bool,
 ) -> None:
@@ -143,7 +144,7 @@ async def test_cut_in_the_middle_of_execute_many(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
     conn: fastpg.Connection,
-    drop_items: str,
+    drop_items: LiteralString,
     *,
     rst: bool,
 ) -> None:
@@ -177,7 +178,7 @@ async def test_pool_replaces_a_connection_cut_mid_copy(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
     conn: fastpg.Connection,
-    drop_items: str,
+    drop_items: LiteralString,
 ) -> None:
     async with await fastpg.create_pool(proxied_dsn, min_size=1, max_size=1) as pool:
         fault_proxy.to_server.cut_after(500_000, rst=True)
@@ -196,7 +197,7 @@ async def test_pool_replaces_a_connection_cut_mid_transaction(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
     conn: fastpg.Connection,
-    drop_items: str,
+    drop_items: LiteralString,
 ) -> None:
     async with await fastpg.create_pool(proxied_dsn, min_size=1, max_size=1) as pool:
         async with asyncio.timeout(5):
@@ -208,7 +209,11 @@ async def test_pool_replaces_a_connection_cut_mid_transaction(
     assert await conn.select_one(f"SELECT count(*) FROM {drop_items}") == (0,)
 
 
-async def _cut_inside_a_transaction(pool: fastpg.Pool, proxy: FaultProxy, table: str) -> None:
+async def _cut_inside_a_transaction(
+    pool: fastpg.Pool,
+    proxy: FaultProxy,
+    table: LiteralString,
+) -> None:
     async with pool.transaction() as tx:
         await tx.execute(f"INSERT INTO {table} VALUES (1, 'x')")
         proxy.drop(rst=True)

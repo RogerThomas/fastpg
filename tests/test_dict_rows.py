@@ -4,7 +4,7 @@ import datetime as dt
 import gc
 import uuid
 from decimal import Decimal
-from typing import Any, assert_type
+from typing import Any, LiteralString, assert_type, cast
 
 import pytest
 
@@ -54,7 +54,7 @@ async def test_keys_follow_column_order(conn: fastpg.Connection) -> None:
 async def test_nulls(conn: fastpg.Connection) -> None:
     types = ["bool", "bytea", "date", "float4", "float8", "int2", "int4", "int8", "json", "jsonb"]
     types += ["numeric", "text", "time", "timestamp", "timestamptz", "uuid", "varchar"]
-    columns = ", ".join(f"NULL::{t} AS {t}" for t in types)
+    columns = cast("LiteralString", ", ".join(f"NULL::{t} AS {t}" for t in types))
     row = await conn.select_one(f"SELECT {columns}", into=dict)
     assert row == dict.fromkeys(types)
 

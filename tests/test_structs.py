@@ -5,7 +5,7 @@ import gc
 import random
 import uuid
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, LiteralString, cast
 
 import msgspec
 import pytest
@@ -427,7 +427,7 @@ async def test_invalid_json_shape_is_decode_error(conn: fastpg.Connection) -> No
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_str_field_gets_json_as_raw_text(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
@@ -439,7 +439,7 @@ async def test_str_field_gets_json_as_raw_text(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_str_field_gets_json_as_raw_text_when_not_null(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
@@ -460,7 +460,7 @@ async def test_str_fields_get_internal_char(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_constrained_str_field_gets_json_as_raw_text(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
 ) -> None:
     got = await conn.select_one(f"SELECT '[1]'::{json_type} AS doc", into=ConstrainedJSONAsText)
     assert got == ConstrainedJSONAsText("[1]")
@@ -475,7 +475,7 @@ async def test_constrained_str_field_gets_json_as_raw_text(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_dict_and_any_fields_get_decoded_json(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
@@ -487,12 +487,12 @@ async def test_dict_and_any_fields_get_decoded_json(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_json_integers_beyond_64_bits_keep_every_digit(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     into: type[JSONValue | ConstrainedJSONValue],
     strategy: fastpg.Strategy,
 ) -> None:
     numbers = [2**64, 98765432109876543210, -(2**63) - 1, -(10**30), 2**64 - 1, -(2**63)]
-    query = f"SELECT 1 AS id, '{numbers}'::{json_type} AS doc"
+    query = cast("LiteralString", f"SELECT 1 AS id, '{numbers}'::{json_type} AS doc")
     got = await conn.select_one(query, into=into, strategy=strategy)
     assert got.doc == numbers
     assert all(type(n) is int for n in got.doc)
@@ -508,7 +508,7 @@ async def test_json_integers_beyond_64_bits_keep_every_digit(
 )
 async def test_json_object_keys_keep_the_servers_order(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     keys: list[str],
     inner_keys: list[str],
     into: type[JSONValue | ConstrainedJSONValue],
@@ -527,7 +527,7 @@ async def test_json_object_keys_keep_the_servers_order(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_deeply_nested_json(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     into: type[JSONValue | ConstrainedJSONValue],
     strategy: fastpg.Strategy,
 ) -> None:
@@ -543,7 +543,7 @@ async def test_deeply_nested_json(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_json_integer_beyond_64_bits_in_an_int_field(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
 ) -> None:
     query = f"""SELECT '{{"k": 98765432109876543210}}'::{json_type} AS doc, NULL AS meta"""
     for strategy in ("direct", "json"):
@@ -559,9 +559,9 @@ async def test_json_integer_beyond_64_bits_in_an_int_field(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_auto_keeps_decimal_digits_inside_json(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     into: type[DecimalsInJSON],
-    text: str,
+    text: LiteralString,
     expected: object,
 ) -> None:
     # MessagePack has no decimal type: "auto" reads these through JSON, not msgpack.
@@ -575,7 +575,7 @@ async def test_auto_keeps_decimal_digits_inside_json(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_auto_reads_json_without_decimals_through_msgpack(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
 ) -> None:
     # MessagePack integers stop at 64 bits, so this error shows the route "auto" took.
     query = f"""SELECT 1 AS id, '{{"k": 98765432109876543210}}'::{json_type} AS doc"""
@@ -595,7 +595,7 @@ async def test_auto_reads_plain_decimal_fields_through_msgpack(conn: fastpg.Conn
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_random_json_documents_read_the_same_through_every_strategy(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
 ) -> None:
     generator = RandomJSON(20261108, nul=json_type == "json")
     documents = [generator.document() for _ in range(400)]
@@ -622,7 +622,10 @@ async def test_random_json_documents_read_the_same_through_every_strategy(
 
 
 @pytest.mark.parametrize("text", ['"\\ud800"', '"a\\udc00"', '["\\ud800", 1]'])
-async def test_json_with_a_lone_surrogate_escape(conn: fastpg.Connection, text: str) -> None:
+async def test_json_with_a_lone_surrogate_escape(
+    conn: fastpg.Connection,
+    text: LiteralString,
+) -> None:
     # The json type keeps such text (jsonb refuses it); no strategy can decode it.
     query = f"SELECT '{text}'::json AS doc"
     for strategy in ("direct", "msgpack", "json"):
@@ -702,7 +705,7 @@ async def test_rows_of_scalars_are_not_gc_tracked(conn: fastpg.Connection) -> No
 async def test_rows_that_could_hold_references_stay_gc_tracked(
     conn: fastpg.Connection,
     into: type[Scalars],
-    extra_columns: str,
+    extra_columns: LiteralString,
 ) -> None:
     columns = f"id, external_id, balance, email{extra_columns}"
     rows = await conn.select_many(f"SELECT {columns} FROM people WHERE id <= 3", into=into)  # noqa: S608

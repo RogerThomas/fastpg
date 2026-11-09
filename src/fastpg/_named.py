@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from operator import attrgetter, itemgetter
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, LiteralString, cast
 
 import msgspec
 
@@ -222,7 +222,7 @@ class NamedBinder:
         query: str | Template,
         args: tuple[object, ...],
         params: NamedParams,
-    ) -> tuple[str, tuple[object, ...]]:
+    ) -> tuple[LiteralString, tuple[object, ...]]:
         """The ``$n`` SQL and parameter tuple for a query method called with ``params=``."""
         if type(query) is Template:
             msg = (
@@ -248,4 +248,5 @@ class NamedBinder:
                 raise
             missing = [name for name in self._scan(query)[1] if name not in params]
             raise self._missing(query, params_type, missing) from None
-        return rewritten, (values,) if single else values
+        # The SQL is the caller's query with each :name replaced by $n.
+        return cast("LiteralString", rewritten), (values,) if single else values
