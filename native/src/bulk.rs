@@ -73,9 +73,9 @@ type ExecFuture = <&'static str as Execute<&'static Client>>::ExecuteOutput;
 // Value encoding (loop thread)
 // ---------------------------------------------------------------------------------------
 
-/// Encoder shortcuts for the commonest (Python type, PostgreSQL type) pairs; everything else
-/// goes through `params::convert` + the regular `ToSql` encoders, so semantics match query
-/// parameters exactly.
+/// Encoder shortcuts for the commonest (Python type, PostgreSQL type) pairs. A json or jsonb
+/// value goes through `params::json_value` and everything else through `params::convert` + the
+/// regular `ToSql` encoders, as query parameters do, so both take the same values.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fast {
     Bool,
@@ -191,14 +191,15 @@ impl ColumnCodec {
                 out.put_slice(unsafe { obj.cast_unchecked::<PyBytes>() }.as_bytes());
                 return Ok(true);
             }
-            // A `str` is taken as JSON text (as for query parameters); anything else that
-            // msgspec can serialise (dict, list, nested Structs, numbers, ...) is encoded.
-            Fast::Json if !obj.is_instance_of::<PyString>() => {
-                let json = params::json_encode(obj).map_err(|e| {
-                    ConvertError::Invalid(format!("cannot encode value as JSON: {e}"))
-                })?;
-                params::put_json(&self.ty, &json, out);
-                return Ok(true);
+            // A `str` is JSON text, sent by the generic path below.
+            Fast::Json => {
+                if let Some(json) = params::json_value(obj) {
+                    let json = json.map_err(|e| {
+                        ConvertError::Invalid(format!("cannot encode value as JSON: {e}"))
+                    })?;
+                    params::put_json(&self.ty, &json, out);
+                    return Ok(true);
+                }
             }
             Fast::Uuid => {
                 let types = params::types(obj.py())?;

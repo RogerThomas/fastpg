@@ -200,6 +200,10 @@ async def test_casts_and_nulls(conn: fastpg.Connection) -> None:
         ),
         ("jsonb", {"key": "value"}, {"key": "value"}),
         ("json", ["json"], ["json"]),
+        ("jsonb", True, True),
+        ("jsonb", uuid.UUID(int=1), "00000000-0000-0000-0000-000000000001"),
+        ("jsonb", Person("Ann", 30), {"name": "Ann", "age": 30}),
+        ("json", (1, "a"), [1, "a"]),
     ],
 )
 async def test_every_param_type(

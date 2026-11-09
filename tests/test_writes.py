@@ -5,6 +5,7 @@
 import asyncio
 import datetime as dt
 import enum
+import math
 import uuid
 from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
@@ -262,6 +263,119 @@ async def test_non_finite_float_in_a_json_column_is_refused(
     ) as exc:
         await write(conn, tier, table, [(0, {"x": 1.0}), (1, {"x": float("nan")})], ["i", "v"])
     assert exc.value.row_index == 1
+    assert await conn.select_one(f"SELECT count(*) FROM {table}") == (0,)
+
+
+@dataclass
+class Reading:
+    value: float
+
+
+@dataclass
+class Blob:
+    data: bytes
+
+
+class Payload(enum.Enum):
+    RAW = b"x"
+
+
+JSON_VALUES = [
+    True,
+    1,
+    2**70,
+    1.5,
+    uuid.UUID(int=1),
+    dt.date(2024, 1, 2),
+    dt.datetime(2024, 1, 2, 3, 4, 5),  # noqa: DTZ001 - naive on purpose
+    dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC),
+    dt.time(3, 4, 5),
+    dt.time(3, 4, 5, tzinfo=dt.UTC),
+    dt.timedelta(days=1),
+    Decimal("1.50"),
+    Inner(2),
+    Reading(2.5),
+    (1, "a"),
+    Mood.SAD,
+]
+
+
+@pytest.mark.parametrize("pg_type", ["json", "jsonb"])
+@pytest.mark.parametrize("value", JSON_VALUES, ids=repr)
+async def test_json_values_are_stored_alike_by_parameters_and_bulk_writes(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+    pg_type: str,
+    value: object,
+) -> None:
+    table = await make_table(f"i int, v {pg_type}")
+    insert = f"INSERT INTO {table} VALUES ($1, $2)"
+    await conn.execute(insert, 0, value)  # the statement's first use
+    await conn.execute(insert, 1, value)  # prepared: the parameter's type is known
+    await write(conn, tier, table, [(2, value)], ["i", "v"])
+    stored = await conn.select_many(f"SELECT v::text FROM {table} ORDER BY i")
+    expected = await conn.select_one(
+        f"SELECT $1::{pg_type}::text",
+        msgspec.json.encode(value).decode(),
+    )
+    assert stored == [expected] * 3
+
+
+@pytest.mark.parametrize("value", JSON_VALUES, ids=repr)
+async def test_json_values_in_select_and_named_params(
+    conn: fastpg.Connection,
+    value: object,
+) -> None:
+    # t-strings: test_templates.py
+    expected = await conn.select_one("SELECT $1::jsonb::text", msgspec.json.encode(value).decode())
+    assert await conn.select_one("SELECT $1::jsonb::text", value) == expected
+    assert await conn.select_one("SELECT CAST(:v AS jsonb)::text", params={"v": value}) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "found"),
+    [
+        (math.nan, r"nan at \$ has no JSON form \(it would be stored as null\)"),
+        ((1.5, -math.inf), r"-inf at \$\[1\] has no JSON form"),
+        (Reading(math.inf), r"inf at \$\.value has no JSON form"),
+        (b"x", r"bytes at \$ has no JSON form: base64-encode it yourself"),
+        (bytearray(b"x"), r"bytearray at \$ has no JSON form: base64-encode it yourself"),
+        (memoryview(b"x"), r"memoryview at \$ has no JSON form: base64-encode it yourself"),
+        ({"a": [1, b"x"]}, r"bytes at \$\.a\[1\] has no JSON form"),
+        ({b"k": 1}, r"bytes at \$\[b'k'\] has no JSON form"),
+        ((1, b"x"), r"bytes at \$\[1\] has no JSON form"),
+        (Blob(b"x"), r"bytes at \$\.data has no JSON form"),
+        (Payload.RAW, r"bytes at \$ has no JSON form"),
+    ],
+    ids=[
+        "nan",
+        "inf-in-tuple",
+        "inf-in-dataclass",
+        "bytes",
+        "bytearray",
+        "memoryview",
+        "bytes-in-dict",
+        "bytes-dict-key",
+        "bytes-in-tuple",
+        "bytes-in-dataclass",
+        "bytes-enum",
+    ],
+)
+async def test_json_value_without_a_json_form_is_refused_by_parameters_and_bulk_writes(
+    conn: fastpg.Connection,
+    make_table: TableMaker,
+    tier: str,
+    value: object,
+    found: str,
+) -> None:
+    table = await make_table("i int, v jsonb")
+    insert = f"INSERT INTO {table} VALUES ($1, $2)"
+    for _ in range(2):  # the statement's first use, then prepared
+        with pytest.raises(fastpg.ParameterError, match=rf"^parameter \$2: ValueError: {found}"):
+            await conn.execute(insert, 0, value)
+    with pytest.raises(fastpg.ParameterError, match=rf"^row 0, .*: ValueError: {found}"):
+        await write(conn, tier, table, [(0, value)], ["i", "v"])
     assert await conn.select_one(f"SELECT count(*) FROM {table}") == (0,)
 
 
