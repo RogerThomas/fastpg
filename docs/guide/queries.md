@@ -111,27 +111,7 @@ print(await conn.select_one(cast(LiteralString, query), 5))  # (5, 'person-5')
 ## Types
 
 `NULL` is `None`, both ways.
-
-| PostgreSQL | you get | you can pass |
-|---|---|---|
-| `bool` | `bool` | `bool` |
-| `smallint`, `int`, `bigint` | `int` | `int` |
-| `real`, `double precision` | `float` | `float`, `int` |
-| `numeric` | `Decimal` | `Decimal`, `int`, `float`, `str` |
-| `text`, `varchar`, `char(n)`, enums | `str` | `str` |
-| `bytea` | `bytes` | `bytes`, `bytearray`, `memoryview` |
-| `uuid` | `uuid.UUID` | `uuid.UUID`, `str` |
-| `date`, `time` | `date`, `time` | `date`, `time` |
-| `timestamp` | `datetime` without a time zone | the same |
-| `timestamptz` | `datetime` in UTC | a `datetime` with a time zone |
-| `json`, `jsonb` | parsed JSON | a JSON `str`, or any value msgspec can encode |
-| arrays of the types above (`int[]`, `text[]`, ...) | `list` | a `list` or `tuple` |
-
-A Python `enum.Enum` is sent as its `.value`.
-In a `json` or `jsonb` value, `bytes` are stored as base64 text and read back as a `str`.
-A value that doesn't fit its column raises `ParameterError` before anything is sent.
-
-Lists and arrays: see [Arrays and grouping](lists.md).
+See [Types](types.md) for which Python type each PostgreSQL type gives and takes.
 
 ## Prepared statements
 
@@ -141,13 +121,3 @@ Each connection keeps the last 256; change that with `statement_cache_size=` on 
 or `create_pool()`.
 The smallest is 1: prepared statements can't be turned off.
 For pgbouncer, see [Limitations](../limitations.md).
-
-## Not supported yet
-
-* `interval`, ranges and composite types can't be read yet: they raise
-  `UnsupportedTypeError`.
-  Cast them in SQL instead, e.g. `SELECT period::text`.
-* Arrays must have one dimension and start at index 1 (the default).
-  Others raise `DecodeError`.
-
-More in [Limitations](../limitations.md).

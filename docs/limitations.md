@@ -5,7 +5,7 @@ fastpg is alpha software. This is what it can't do yet.
 * **No Windows.** fastpg runs on Linux and macOS.
 * **Some types can't be read yet:** `interval`, `timetz`, ranges, composite types,
   multi-dimensional arrays, and `infinity` dates and timestamps.
-  See [Queries](guide/queries.md#not-supported-yet) for workarounds.
+  See [Types](guide/types.md) for the types fastpg supports, and the workaround.
 * **pgbouncer in transaction mode needs pgbouncer 1.21 or later**, with
   `max_prepared_statements` above 0 (the default is 200 from pgbouncer 1.24).
   fastpg always uses named prepared statements, so older pgbouncer, or
