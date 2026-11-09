@@ -27,6 +27,7 @@ mod mailbox;
 mod msgpack;
 mod net;
 mod params;
+mod pgenv;
 mod pgtime;
 mod router;
 mod rows;

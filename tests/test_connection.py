@@ -347,14 +347,26 @@ async def test_pipelined_and_racing_queries_fail_when_server_closes(
 async def test_bad_credentials(dsn: str) -> None:
     parts = urlsplit(dsn)
     netloc = f"{parts.username}:wrong@{parts.netloc.rpartition('@')[2]}"
-    with pytest.raises(fastpg.DatabaseError) as exc:
+    with pytest.raises(fastpg.AuthenticationError) as exc:
         await fastpg.connect(urlunsplit(parts._replace(netloc=netloc)))
     assert exc.value.sqlstate == "28P01"
+    assert isinstance(exc.value, fastpg.OperationalError)
+
+
+async def test_unknown_role(dsn: str) -> None:
+    parts = urlsplit(dsn)
+    netloc = f"nobody:wrong@{parts.netloc.rpartition('@')[2]}"
+    with pytest.raises(fastpg.AuthenticationError) as exc:
+        await fastpg.connect(urlunsplit(parts._replace(netloc=netloc)))
+    assert exc.value.sqlstate is not None
+    assert exc.value.sqlstate.startswith("28")
 
 
 async def test_unreachable_server() -> None:
-    with pytest.raises(fastpg.InterfaceError, match="could not connect"):
+    with pytest.raises(fastpg.ConnectError, match="could not connect") as exc:
         await fastpg.connect("postgresql://fastpg:fastpg@127.0.0.1:1/fastpg")
+    assert isinstance(exc.value, fastpg.OperationalError)
+    assert exc.value.sqlstate is None
 
 
 async def _select_uv(dsn: str) -> tuple[object, ...]:

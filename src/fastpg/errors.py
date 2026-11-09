@@ -7,7 +7,6 @@ never raises one.
 
 FastPGError (alias: Error)
 ├── InterfaceError                client-side problems
-│   ├── ConnectionClosedError
 │   └── ParameterError            parameter missing, or can't be encoded for its declared type
 ├── ResultError                   result doesn't fit what the caller asked for
 │   ├── NoRowsError               select_one() found nothing
@@ -23,7 +22,11 @@ FastPGError (alias: Error)
     ├── IntegrityError (23)  → UniqueViolationError, ForeignKeyViolationError, ...
     ├── TransactionError (40) → SerializationError, DeadlockDetectedError
     ├── ProgrammingError (42) → SQLSyntaxError, UndefinedTableError, UndefinedColumnError
-    ├── OperationalError (08, 53, 57) → QueryCanceledError
+    ├── OperationalError (08, 53, 57) the database can't be reached or used
+    │   ├── ConnectError          a connection couldn't be established (no .sqlstate)
+    │   ├── ConnectionClosedError the connection is closed or was lost (no .sqlstate)
+    │   ├── AuthenticationError (28)
+    │   └── QueryCanceledError (57014)
     ├── InternalError (XX)
     └── NotSupportedError (0A)
 """
@@ -45,10 +48,6 @@ Error = FastPGError
 
 class InterfaceError(FastPGError):
     """Client-side failure (connection state, protocol, I/O)."""
-
-
-class ConnectionClosedError(InterfaceError):
-    """The connection is closed or was lost."""
 
 
 class ParameterError(InterfaceError):
@@ -92,10 +91,12 @@ class UnsupportedTypeError(DecodeError):
 
 
 class DatabaseError(FastPGError):
-    """An error reported by the PostgreSQL server."""
+    """An error reported by the PostgreSQL server, or (`ConnectError`,
+    `ConnectionClosedError`) one that never reached it: then ``sqlstate`` and the other
+    server fields are `None`."""
 
-    sqlstate: str
-    severity: str
+    sqlstate: str | None
+    severity: str | None
     detail: str | None
     hint: str | None
     position: int | None
@@ -109,8 +110,8 @@ class DatabaseError(FastPGError):
         self,
         message: str,
         *,
-        sqlstate: str = "",
-        severity: str = "ERROR",
+        sqlstate: str | None = None,
+        severity: str | None = None,
         detail: str | None = None,
         hint: str | None = None,
         position: int | None = None,
@@ -225,7 +226,23 @@ class UndefinedTableError(ProgrammingError):
 
 
 class OperationalError(DatabaseError):
-    """SQLSTATE classes 08, 53, 57: connection, resources, operator intervention."""
+    """The database can't be reached or used: connecting failed, the connection was lost,
+    or SQLSTATE classes 08, 28, 53, 57 (connection, authentication, resources, operator
+    intervention)."""
+
+
+class ConnectError(OperationalError):
+    """A connection couldn't be established: refused, unreachable, the host name didn't
+    resolve, ``connect_timeout`` expired, or no session matched ``target_session_attrs``.
+    Its message names each address tried."""
+
+
+class ConnectionClosedError(OperationalError):
+    """The connection is closed or was lost."""
+
+
+class AuthenticationError(OperationalError):
+    """SQLSTATE class 28: e.g. a wrong password (28P01) or an unknown role (28000)."""
 
 
 class QueryCanceledError(OperationalError):
@@ -260,6 +277,7 @@ class SQLStateRegistry:
         "0A": NotSupportedError,
         "22": DataError,
         "23": IntegrityError,
+        "28": AuthenticationError,
         "40": TransactionError,
         "42": ProgrammingError,
         "53": OperationalError,

@@ -9,7 +9,9 @@ stats go back to idle, and the loop reports no orphaned futures or tasks.
 import asyncio
 import gc
 import random
+import secrets
 import socket
+import struct
 from collections.abc import AsyncIterator, Coroutine, Iterator
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from typing import Any
 import msgspec
 import pytest
 from conftest import LoopErrors
+from faults import FaultProxy
 
 import fastpg
 from fastpg import errors
@@ -334,6 +337,55 @@ async def test_bulk_write_cancelled_inside_a_transaction_leaves_it_usable(
             assert written in ({0, rows} if task.cancelled() else {rows})
             expected += written
     assert await _count(conn, 0, 25 * rows) == expected
+
+
+def _simple_query(sql: str) -> bytes:
+    """A simple-protocol Query message."""
+    body = sql.encode() + b"\0"
+    return b"Q" + struct.pack("!i", 4 + len(body)) + body
+
+
+async def _lock_waits(conn: fastpg.Connection, pid: int) -> int:
+    """Locks session ``pid`` is waiting for."""
+    query = "SELECT count(*)::int FROM pg_locks WHERE pid = $1 AND NOT granted"
+    return (await conn.select_one(query, pid))[0]
+
+
+@pytest.mark.usefixtures("table")
+@pytest.mark.parametrize("method", ["execute_many", "insert_many"])
+async def test_bulk_write_cancelled_while_begin_runs_writes_nothing(
+    conn: fastpg.Connection,
+    fault_proxy: FaultProxy,
+    proxied_dsn: str,
+    method: str,
+) -> None:
+    # Outside a transaction the call sends BEGIN with its first chunks right behind it. BEGIN
+    # takes microseconds, so to cancel the call while it runs, the proxy puts a wait for a
+    # lock the test holds in front of it, in the same query: a cancel that lands there fails
+    # the BEGIN, as one that lands on BEGIN itself would.
+    key = secrets.randbits(62)
+    held_begin = _simple_query(f"SELECT pg_advisory_xact_lock({key}); BEGIN")
+    fault_proxy.to_server.replace = (_simple_query("BEGIN"), held_begin)
+    rows = 3000  # more chunks than are sent ahead (`BulkSettings.in_flight`)
+    async with await fastpg.connect(proxied_dsn) as writer:
+        pid = (await writer.select_one("SELECT pg_backend_pid()"))[0]
+        await conn.execute("SELECT pg_advisory_lock($1)", key)
+        before = asyncio.all_tasks()
+        task = asyncio.create_task(_bulk_write(writer, method, 0, rows))
+        while (await _lock_waits(conn, pid)) == 0:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.wait([task])
+        assert task.cancelled()
+        # A server-side cancel is sent in the background: once it is over, it has reached
+        # the server. Let it end the wait before the lock is released.
+        cancels = asyncio.all_tasks() - before - {task}
+        await asyncio.gather(*cancels)
+        while cancels and (await _lock_waits(conn, pid)) > 0:
+            await asyncio.sleep(0.01)
+        await conn.execute("SELECT pg_advisory_unlock($1)", key)
+        await _assert_consistent(writer, 0)  # runs once the call has ended
+    assert await _count(conn, 0, rows) == 0
 
 
 @pytest.mark.usefixtures("table")

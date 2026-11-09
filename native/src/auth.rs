@@ -42,6 +42,11 @@ fn failed(e: io::Error) -> QueryError {
     interface(format!("authentication failed: {e}"))
 }
 
+/// The socket failed, or the server closed it: the connection couldn't be established.
+fn lost(e: io::Error) -> QueryError {
+    QueryError::Connect(format!("authentication failed: {e}"))
+}
+
 /// Why `require` refuses a login, in libpq's words.
 fn unbound(what: &str) -> QueryError {
     interface(format!("channel binding required, but {what}"))
@@ -106,15 +111,15 @@ async fn next_message<Io: AsyncIo>(
         }
         match io.read(&mut chunk) {
             Ok(0) => {
-                return Err(interface(
-                    "server closed the connection during authentication",
+                return Err(QueryError::Connect(
+                    "server closed the connection during authentication".into(),
                 ));
             }
             Ok(n) => buf.extend_from_slice(&chunk[..n]),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                io.ready(Interest::READABLE).await.map_err(failed)?;
+                io.ready(Interest::READABLE).await.map_err(lost)?;
             }
-            Err(e) => return Err(failed(e)),
+            Err(e) => return Err(lost(e)),
         }
     }
 }
@@ -126,7 +131,7 @@ fn replay(mut message: BytesMut, rest: &[u8]) -> BytesMut {
 }
 
 async fn send<Io: AsyncIo>(io: &mut Io, out: &mut BytesMut) -> Result<(), QueryError> {
-    write_all(io, out).await.map_err(failed)?;
+    write_all(io, out).await.map_err(lost)?;
     out.clear();
     Ok(())
 }
