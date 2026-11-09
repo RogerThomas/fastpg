@@ -49,3 +49,6 @@ unwrap_used = "deny"
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }
