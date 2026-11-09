@@ -14,6 +14,7 @@ nav:
   - Getting started: guide/getting-started.md
   - Guides:
       - Queries: guide/queries.md
+      - Types: guide/types.md
       - Structs: guide/structs.md
       - Arrays and grouping: guide/lists.md
       - pydantic models: guide/pydantic.md

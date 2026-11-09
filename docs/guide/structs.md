@@ -65,7 +65,7 @@ Fields can be `bool`, `int`, `float`, `str`, `bytes`, `datetime`, `date`, `time`
 A `list[X]` field takes an array of values that fit `X`; use `list[X | None]` if the array
 can hold `NULL`s.
 A `json` or `jsonb` column can also fill a list, a dict or a nested Struct.
-See [Types](queries.md#types) for which column fills which field.
+See [Types](types.md) for which column fills which field.
 
 See [Arrays and grouping](lists.md) for reading one-to-many data into list fields.
 
