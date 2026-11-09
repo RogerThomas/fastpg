@@ -55,11 +55,15 @@ type Strategy = Literal["auto", "direct", "msgpack", "json"]
   column types once per statement. Not available when the type needs validation
   (constraints, validators, enums, literals, ...).
 * ``"msgpack"`` (msgspec only): Rust encodes rows as MessagePack; a cached
-  ``msgspec.msgpack.Decoder`` builds and fully validates them.
+  ``msgspec.msgpack.Decoder`` builds and fully validates them. MessagePack has no decimal
+  type, so a ``Decimal`` inside a ``json``/``jsonb`` value loses digits (``1.10`` gives
+  ``Decimal('1.1')``); ``"auto"`` uses ``"json"`` for such Structs instead, but not for a
+  plain ``Decimal`` field read from a ``json``/``jsonb`` number.
 * ``"json"``: Rust encodes rows as JSON; ``msgspec.json.Decoder`` or pydantic-core's
   ``validate_json`` builds and fully validates them.
-* ``"auto"`` (default): ``"direct"`` when possible, otherwise ``"msgpack"`` (msgspec) or
-  ``"json"`` (pydantic).
+* ``"auto"`` (default): ``"direct"`` when possible, otherwise ``"msgpack"`` (msgspec, or
+  ``"json"`` when a ``Decimal`` sits inside a list, dict or nested type) or ``"json"``
+  (pydantic).
 
 ``into=dict`` and ``into=`` a ``NamedTuple`` are always built directly; ``"msgpack"`` and
 ``"json"`` raise ``UnsupportedTypeError`` for them.
@@ -1133,6 +1137,18 @@ class _Canceller:
             task.cancel()
 
 
+def check_statement_cache_size(statement_cache_size: int) -> None:
+    """Reject a cache that can't hold a statement: fastpg always prepares named statements."""
+    if statement_cache_size < 1:
+        msg = (
+            f"statement_cache_size must be >= 1, got {statement_cache_size}: fastpg always "
+            "uses named prepared statements. pgbouncer in transaction mode works with them "
+            "from pgbouncer 1.21, with max_prepared_statements above 0; see "
+            "https://rogerthomas.github.io/fastpg/limitations/"
+        )
+        raise ValueError(msg)
+
+
 async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     """Open a connection, e.g. ``await connect("postgresql://user:pw@host:5432/db")``.
 
@@ -1167,6 +1183,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     waits on the database socket directly: no extra threads, and a query costs no thread
     hand-offs.
     """
+    check_statement_cache_size(statement_cache_size)
     loop = asyncio.get_running_loop()
     options = dsn_socket_options(dsn)
     failures: list[str] = []

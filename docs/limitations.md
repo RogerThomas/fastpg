@@ -6,8 +6,10 @@ fastpg is alpha software. This is what it can't do yet.
 * **Some types can't be read yet:** `interval`, `timetz`, ranges, composite types,
   multi-dimensional arrays, and `infinity` dates and timestamps.
   See [Queries](guide/queries.md#not-supported-yet) for workarounds.
-* **No pgbouncer in transaction pooling mode**, because fastpg always uses named prepared
-  statements.
+* **pgbouncer in transaction mode needs pgbouncer 1.21 or later**, with
+  `max_prepared_statements` above 0 (the default is 200 from pgbouncer 1.24).
+  fastpg always uses named prepared statements, so older pgbouncer, or
+  `max_prepared_statements = 0`, doesn't work.
 * **No `LISTEN`/`NOTIFY`**, and no `COPY ... TO`.
 * **One event loop per connection.** Use a connection or pool only from the event loop
   that opened it. A pool isn't thread-safe.

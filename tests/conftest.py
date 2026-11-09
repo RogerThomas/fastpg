@@ -22,6 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 from faults import PG_IMAGE, DisposableServer, FaultProxy, disposable_server, with_params
 from testcontainers.core.container import DockerContainer
+from testcontainers.core.network import Network
 
 import fastpg
 
@@ -201,6 +202,46 @@ def tls_server(
         container_password,
     ) as started:
         yield started, certs / "ca.crt"
+
+
+@pytest.fixture(scope="session")
+def pgbouncer_network(container_password: str) -> Iterator[Network]:
+    """A Docker network with a server of the pgbouncer tests' own on it, as `postgres`."""
+    if "FASTPG_DSN" in os.environ:
+        pytest.skip("FASTPG_DSN is set: the pgbouncer tests start servers of their own")
+    with Network() as network:
+        container = (
+            _postgres_container(container_password)
+            .with_network(network)
+            .with_network_aliases("postgres")
+        )
+        with _running(container, container_password):
+            yield network
+
+
+@pytest.fixture(scope="session", params=["1.21.0-p2", "v1.26.1-p0"])
+def pgbouncer_dsn(
+    request: pytest.FixtureRequest,
+    pgbouncer_network: Network,
+    container_password: str,
+) -> Iterator[str]:
+    """pgbouncer (1.21, the first that keeps prepared statements, and a current one) in
+    transaction mode, in front of `pgbouncer_network`'s server: every client shares its 2
+    server connections."""
+    container = (
+        DockerContainer(f"edoburu/pgbouncer:{request.param}")
+        .with_network(pgbouncer_network)
+        .with_env("DB_HOST", "postgres")
+        .with_env("DB_USER", "fastpg")
+        .with_env("DB_PASSWORD", container_password)
+        .with_env("AUTH_TYPE", "scram-sha-256")
+        .with_env("POOL_MODE", "transaction")
+        .with_env("DEFAULT_POOL_SIZE", "2")
+        .with_env("MAX_PREPARED_STATEMENTS", "200")
+        .with_exposed_ports(5432)
+    )
+    with _running(container, container_password) as started:
+        yield started
 
 
 @pytest.fixture

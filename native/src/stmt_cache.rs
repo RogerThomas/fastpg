@@ -102,9 +102,11 @@ pub struct StatementCache {
 }
 
 impl StatementCache {
+    /// `capacity` is at least 1: `connect()` refuses 0 (every query uses a named statement).
     pub fn new(capacity: usize) -> Self {
+        debug_assert!(capacity >= 1, "statement cache capacity must be >= 1");
         Self {
-            capacity: capacity.max(1),
+            capacity,
             inner: Mutex::new((HashMap::new(), 0, false)),
         }
     }

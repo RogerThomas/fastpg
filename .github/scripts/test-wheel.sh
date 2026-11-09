@@ -12,6 +12,8 @@
 # With FASTPG_TIMING_PYTHON set (e.g. 3.14), only that Python runs the `timing` tests (the ones
 # that wait in real time for timeouts, keepalives and stalls); the others run the rest of the
 # suite. Unset, every Python runs them all.
+# With FASTPG_FULL_SUITE_PYTHON set (e.g. 3.14), only that Python runs the test suite; the others
+# run just the smoke test. Unset, every Python runs the suite.
 # e.g. `sh .github/scripts/test-wheel.sh dist 3.14 3.14t` tests the one cp314 wheel in dist on
 # Python 3.14, then the one cp314t (free-threaded) wheel on 3.14t; uv finds or downloads each.
 set -eux
@@ -36,6 +38,9 @@ for python; do
     (
         export UV_PYTHON="$python" UV_PROJECT_ENVIRONMENT=".venv-$python"
         uv run --isolated --no-project --with "$wheel" -- python tests/smoke.py
+        if [ -n "${FASTPG_FULL_SUITE_PYTHON:-}" ] && [ "$python" != "$FASTPG_FULL_SUITE_PYTHON" ]; then
+            exit 0 # this subshell: on to the next Python
+        fi
         uv sync --locked --no-install-project # the dev dependencies, without building fastpg
         uv pip install --python "$UV_PROJECT_ENVIRONMENT" --no-deps "$wheel"
         timing=true
