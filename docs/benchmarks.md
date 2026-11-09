@@ -39,6 +39,8 @@ Use a Linux host, or a PostgreSQL that runs natively.
 ## The setup in CI
 
 * A GitHub-hosted `ubuntu-24.04` runner: AMD EPYC 9V74, 4 vCPUs, 16 GB.
+  GitHub's arm64 runner (`ubuntu-24.04-arm`, 4 vCPUs, 16 GB) gives similar ratios
+  ([run 42530219819](https://github.com/RogerThomas/fastpg/actions/runs/42530219819)).
 * PostgreSQL 18.6 on the same machine, with `synchronous_commit=off`.
 * CPython 3.14.7 and uvloop.
 * fastpg 0.1.0, asyncpg 0.32.0, psycopg 3.3.6 and psqlpy 0.12.1.
