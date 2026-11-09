@@ -1133,6 +1133,18 @@ class _Canceller:
             task.cancel()
 
 
+def check_statement_cache_size(statement_cache_size: int) -> None:
+    """Reject a cache that can't hold a statement: fastpg always prepares named statements."""
+    if statement_cache_size < 1:
+        msg = (
+            f"statement_cache_size must be >= 1, got {statement_cache_size}: fastpg always "
+            "uses named prepared statements. pgbouncer in transaction mode works with them "
+            "from pgbouncer 1.21, with max_prepared_statements above 0; see "
+            "https://rogerthomas.github.io/fastpg/limitations/"
+        )
+        raise ValueError(msg)
+
+
 async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     """Open a connection, e.g. ``await connect("postgresql://user:pw@host:5432/db")``.
 
@@ -1167,6 +1179,7 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     waits on the database socket directly: no extra threads, and a query costs no thread
     hand-offs.
     """
+    check_statement_cache_size(statement_cache_size)
     loop = asyncio.get_running_loop()
     options = dsn_socket_options(dsn)
     failures: list[str] = []

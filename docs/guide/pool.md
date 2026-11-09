@@ -24,7 +24,7 @@ Pass these to `create_pool()`:
 | `min_size` | 1 | connections kept open, even when idle |
 | `max_size` | 16 | the most connections the pool opens |
 | `max_inflight_per_conn` | 8 | the most queries sent to one connection at a time |
-| `statement_cache_size` | 256 | prepared statements kept per connection |
+| `statement_cache_size` | 256 | prepared statements kept per connection (at least 1) |
 | `max_lifetime` | 3600.0 | seconds before an idle connection is replaced (`None`: never) |
 | `max_idle` | 300.0 | seconds before an idle connection above `min_size` closes (`None`: never) |
 
