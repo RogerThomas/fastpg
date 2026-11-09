@@ -34,7 +34,7 @@ import time
 from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, LiteralString
 
 import asyncpg
 from drivers.base import DEFAULT_DSN, TABLE_ROWS
@@ -79,7 +79,7 @@ class _FastpgShared:
         self._conns = conns
         self._inflight = [0] * len(conns)
 
-    async def run(self, query: str, *params: object) -> None:
+    async def run(self, query: LiteralString, *params: object) -> None:
         i = min(range(len(self._inflight)), key=self._inflight.__getitem__)
         self._inflight[i] += 1
         try:
@@ -109,7 +109,7 @@ class _FastpgAware(_FastpgShared):
         oldest = now - min(started.values())
         return oldest + len(started) * self.PER_QUERY_NS
 
-    async def run(self, query: str, *params: object) -> None:
+    async def run(self, query: LiteralString, *params: object) -> None:
         now = time.perf_counter_ns()
         i = min(range(len(self._started)), key=partial(self._score, now=now))
         self._token += 1
@@ -127,7 +127,7 @@ class _FastpgPool:
 
     _pool: fastpg.Pool
 
-    async def run(self, query: str, *params: object) -> None:
+    async def run(self, query: LiteralString, *params: object) -> None:
         await self._pool.select_many(query, *params)
 
     async def close(self) -> None:
@@ -138,7 +138,7 @@ class _AsyncpgPool:
     def __init__(self, pool: asyncpg.Pool[asyncpg.Record]) -> None:
         self._pool = pool
 
-    async def run(self, query: str, *params: object) -> None:
+    async def run(self, query: LiteralString, *params: object) -> None:
         await self._pool.fetch(query, *params)
 
     async def close(self) -> None:

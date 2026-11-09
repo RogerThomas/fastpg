@@ -40,10 +40,10 @@ class SQL:
         "CREATE TEMP TABLE bench_write_latency (LIKE people INCLUDING ALL)"
     )
     truncate: ClassVar[LiteralString] = "TRUNCATE bench_write_latency"
-    insert_dollar: ClassVar[str] = (
+    insert_dollar: ClassVar[LiteralString] = (
         "INSERT INTO bench_write_latency VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
     )
-    returning_dollar: ClassVar[str] = insert_dollar + " RETURNING id"
+    returning_dollar: ClassVar[LiteralString] = insert_dollar + " RETURNING id"
     insert_percent: ClassVar[LiteralString] = (
         "INSERT INTO bench_write_latency VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )

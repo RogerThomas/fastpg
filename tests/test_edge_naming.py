@@ -1,6 +1,6 @@
 """Column names against field names: duplicates, case, quoting, renames and aliases."""
 
-from typing import Annotated, NamedTuple
+from typing import Annotated, LiteralString, NamedTuple
 
 import msgspec
 import pydantic
@@ -105,7 +105,7 @@ class NameOnlyModel(pydantic.BaseModel):
 async def test_pydantic_matches_columns_as_its_validation_does(
     conn: fastpg.Connection,
     into: type[AliasedModel | AliasOrNameModel | NameOnlyModel],
-    column: str,
+    column: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     row = await conn.select_one(f"SELECT 'x' AS {column}", into=into, strategy=strategy)
@@ -119,7 +119,7 @@ async def test_pydantic_matches_columns_as_its_validation_does(
 async def test_pydantic_column_its_validation_doesnt_match(
     conn: fastpg.Connection,
     into: type[AliasedModel | NameOnlyModel],
-    column: str,
+    column: LiteralString,
 ) -> None:
     with pytest.raises(fastpg.DecodeError, match="first"):
         await conn.select_one(f"SELECT 'x' AS {column}", into=into)

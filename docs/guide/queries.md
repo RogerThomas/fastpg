@@ -92,6 +92,22 @@ rows = await conn.select_many(t"SELECT id, age FROM people WHERE {where} ORDER B
 print(rows)  # [(52, 70), (53, 71)]
 ```
 
+### SQL built at runtime
+
+The query must be a string literal or a t-string.
+A type checker such as pyright then flags an f-string query, where a value could change the SQL.
+
+For a table or column name, use `Identifier` in a t-string, as above.
+If you do need to build the SQL yourself, say so with `cast`:
+
+```python
+from typing import LiteralString, cast
+
+columns = ", ".join(["id", "name"])
+query = f"SELECT {columns} FROM people WHERE id = $1"
+print(await conn.select_one(cast(LiteralString, query), 5))  # (5, 'person-5')
+```
+
 ## Types
 
 `NULL` is `None`, both ways.

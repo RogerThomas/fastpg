@@ -5,7 +5,7 @@ import gc
 import typing
 import uuid
 from decimal import Decimal
-from typing import Annotated, Any, NamedTuple
+from typing import Annotated, Any, LiteralString, NamedTuple
 
 import msgspec
 import pydantic
@@ -94,7 +94,7 @@ def _assert_same(got: object, expected: list[Any]) -> None:
 @pytest.mark.parametrize("element", ELEMENTS, ids=_id)
 async def test_roundtrip_in_tuple_and_dict_rows(
     conn: fastpg.Connection,
-    element: tuple[str, Any, list[Any]],
+    element: tuple[LiteralString, Any, list[Any]],
 ) -> None:
     pg_type, _, values = element
     query = f"SELECT $1::{pg_type}[] AS value"
@@ -110,7 +110,7 @@ async def test_roundtrip_in_tuple_and_dict_rows(
 @pytest.mark.parametrize("element", ELEMENTS, ids=_id)
 async def test_roundtrip_into_list_fields(
     conn: fastpg.Connection,
-    element: tuple[str, Any, list[Any]],
+    element: tuple[LiteralString, Any, list[Any]],
     holder: Holder,
 ) -> None:
     pg_type, item, values = element
@@ -223,7 +223,7 @@ class Bounded(msgspec.Struct):
 )
 async def test_wrong_element_type_is_a_type_mismatch(
     conn: fastpg.Connection,
-    expression: str,
+    expression: LiteralString,
     into: type[msgspec.Struct],
     expected: str,
 ) -> None:
@@ -259,7 +259,7 @@ async def test_any_field_takes_an_array(conn: fastpg.Connection) -> None:
 @pytest.mark.parametrize("strategy", ["direct", "msgpack", "json"])
 async def test_other_shapes_are_a_clear_error(
     conn: fastpg.Connection,
-    expression: str,
+    expression: LiteralString,
     message: str,
     strategy: fastpg.Strategy,
 ) -> None:
@@ -359,7 +359,7 @@ async def test_list_for_json_is_still_json(conn: fastpg.Connection) -> None:
 )
 async def test_parameter_errors_name_the_element(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     value: object,
     expected: str,
 ) -> None:

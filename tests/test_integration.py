@@ -5,6 +5,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from typing import LiteralString
 
 import msgspec
 import pytest
@@ -19,7 +20,7 @@ class Item(msgspec.Struct):
 
 
 @pytest.fixture(name="items")
-async def _items(conn: fastpg.Connection) -> AsyncIterator[str]:
+async def _items(conn: fastpg.Connection) -> AsyncIterator[LiteralString]:
     """A fresh ``integration_items (id int PRIMARY KEY, v text)`` table; yields its name."""
     await conn.execute_script(
         "DROP TABLE IF EXISTS integration_items;"
@@ -39,7 +40,7 @@ class AbortError(Exception):
     """Raised inside a transaction block to make it roll back."""
 
 
-async def _insert_then_abort(pool: fastpg.Pool, items: str) -> None:
+async def _insert_then_abort(pool: fastpg.Pool, items: LiteralString) -> None:
     async with pool.transaction() as tx:
         assert await tx.insert_many(items, [Item(1, "v"), Item(2, "v")]) == 2
         assert await tx.select_one(f"SELECT count(*) FROM {items}") == (2,)  # noqa: S608
@@ -50,7 +51,7 @@ def _rows(count: int) -> Iterator[tuple[int, str]]:
     return ((i, "v") for i in range(count))
 
 
-async def test_pool_bulk_writes(pool: fastpg.Pool, items: str) -> None:
+async def test_pool_bulk_writes(pool: fastpg.Pool, items: LiteralString) -> None:
     assert await pool.copy_in(items, [Item(1, "copy-in")]) == 1
     assert await pool.insert_many(items, [Item(2, "insert-many")]) == 1
     insert = f"INSERT INTO {items} VALUES ($1, $2)"  # noqa: S608 - fixture table name
@@ -62,7 +63,10 @@ async def test_pool_bulk_writes(pool: fastpg.Pool, items: str) -> None:
     assert stats.waiting_acquire == 0
 
 
-async def test_bulk_write_inside_pool_transaction_rolls_back(pool: fastpg.Pool, items: str) -> None:
+async def test_bulk_write_inside_pool_transaction_rolls_back(
+    pool: fastpg.Pool,
+    items: LiteralString,
+) -> None:
     with pytest.raises(AbortError):
         await _insert_then_abort(pool, items)
     assert await pool.select_one(f"SELECT count(*) FROM {items}") == (0,)  # noqa: S608
@@ -71,7 +75,7 @@ async def test_bulk_write_inside_pool_transaction_rolls_back(pool: fastpg.Pool, 
 async def test_copy_in_fails_promptly_when_server_closes(
     conn: fastpg.Connection,
     dsn: str,
-    items: str,
+    items: LiteralString,
 ) -> None:
     victim = await fastpg.connect(dsn)
     (pid,) = await victim.select_one("SELECT pg_backend_pid()")

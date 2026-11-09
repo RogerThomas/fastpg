@@ -2,7 +2,7 @@
 
 import dataclasses
 import types
-from typing import Any, assert_type
+from typing import Any, LiteralString, assert_type
 
 import msgspec
 import pytest
@@ -146,7 +146,7 @@ async def test_every_params_type(conn: fastpg.Connection, params: fastpg.NamedPa
 )
 async def test_text_that_is_not_a_placeholder_survives(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     expected: tuple[object, ...],
 ) -> None:
     assert await conn.select_one(query, params={"x": "x"}) == expected

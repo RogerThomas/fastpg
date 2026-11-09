@@ -10,6 +10,7 @@ than one per statement, and nothing times out on its own (fastpg has no internal
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from typing import LiteralString
 
 import msgspec
 import pytest
@@ -27,7 +28,7 @@ class Row(msgspec.Struct):
 
 
 @pytest.fixture
-async def net_items(conn: fastpg.Connection) -> AsyncIterator[str]:
+async def net_items(conn: fastpg.Connection) -> AsyncIterator[LiteralString]:
     await conn.execute_script(
         "DROP TABLE IF EXISTS net_latency_items; CREATE TABLE net_latency_items (id int, v text)",
     )
@@ -90,7 +91,7 @@ async def test_transaction_and_bulk_writes_under_latency(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
     conn: fastpg.Connection,
-    net_items: str,
+    net_items: LiteralString,
 ) -> None:
     rtt = 0.1
     fault_proxy.to_server.delay = fault_proxy.to_client.delay = rtt / 2
@@ -128,7 +129,7 @@ async def test_a_one_second_round_trip_is_only_slow(
 # --- fragmented delivery ----------------------------------------------------------------------
 
 
-async def _exercise(conn: fastpg.Connection, table: str) -> None:
+async def _exercise(conn: fastpg.Connection, table: LiteralString) -> None:
     """Statements whose responses cover every message the client parses."""
     one = await conn.select_one("SELECT 1, 'a', NULL::int, 2.5::float8, true")
     assert one == (1, "a", None, 2.5, True)
@@ -155,7 +156,7 @@ async def _exercise(conn: fastpg.Connection, table: str) -> None:
 async def test_responses_in_tiny_fragments(
     proxied_dsn: str,
     fault_proxy: FaultProxy,
-    net_items: str,
+    net_items: LiteralString,
     size: int,
 ) -> None:
     fault_proxy.to_client.fragment = fault_proxy.to_server.fragment = size

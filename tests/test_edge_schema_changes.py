@@ -1,7 +1,7 @@
 """Schema changes under cached prepared statements, for every result target."""
 
 import asyncio
-from typing import NamedTuple, TypeIs
+from typing import LiteralString, NamedTuple, TypeIs, cast
 
 import msgspec
 import pydantic
@@ -67,7 +67,7 @@ def _target(request: pytest.FixtureRequest) -> Target:
 
 
 @pytest.fixture(name="pairs")
-async def _pairs(conn: fastpg.Connection) -> str:
+async def _pairs(conn: fastpg.Connection) -> LiteralString:
     """A table `pairs (a int, b text)` holding (1, 'b'), and `SELECT * FROM pairs`."""
     await conn.execute_script(
         "CREATE TEMP TABLE pairs (a int, b text); INSERT INTO pairs VALUES (1, 'b')",
@@ -77,7 +77,7 @@ async def _pairs(conn: fastpg.Connection) -> str:
 
 async def _select(
     conn: fastpg.Connection | fastpg.Transaction,
-    query: str,
+    query: LiteralString,
     target: Target,
 ) -> list[object]:
     """Run `query` once for `target` (which prepares and caches it)."""
@@ -91,7 +91,7 @@ async def _add_column_and_select_in_a_transaction(conn: fastpg.Connection) -> No
         await tx.select_many("SELECT * FROM changing")
 
 
-async def test_column_added(conn: fastpg.Connection, pairs: str, target: Target) -> None:
+async def test_column_added(conn: fastpg.Connection, pairs: LiteralString, target: Target) -> None:
     [row] = await _select(conn, pairs, target)
     await conn.execute_script("ALTER TABLE pairs ADD COLUMN c int DEFAULT 3")
     [row] = await _select(conn, pairs, target)  # re-prepared: "SELECT *" has three columns
@@ -100,7 +100,11 @@ async def test_column_added(conn: fastpg.Connection, pairs: str, target: Target)
     assert await conn.select_many(pairs, into=dict) == [{"a": 1, "b": "b", "c": 3}]
 
 
-async def test_column_dropped(conn: fastpg.Connection, pairs: str, target: Target) -> None:
+async def test_column_dropped(
+    conn: fastpg.Connection,
+    pairs: LiteralString,
+    target: Target,
+) -> None:
     await conn.execute_script("ALTER TABLE pairs ADD COLUMN c int DEFAULT 3")
     [row] = await _select(conn, pairs, target)
     await conn.execute_script("ALTER TABLE pairs DROP COLUMN c")
@@ -121,7 +125,7 @@ async def test_column_dropped(conn: fastpg.Connection, pairs: str, target: Targe
 )
 async def test_column_type_changed_rebinds_the_fields(
     conn: fastpg.Connection,
-    pairs: str,
+    pairs: LiteralString,
     into: type[object],
     strategy: fastpg.Strategy,
     error: type[fastpg.DecodeError],
@@ -137,7 +141,7 @@ async def test_column_type_changed_rebinds_the_fields(
 
 async def test_column_type_changed_is_coerced_by_pydantic_validation(
     conn: fastpg.Connection,
-    pairs: str,
+    pairs: LiteralString,
 ) -> None:
     await conn.select_many(pairs, into=PairModel, strategy="json")
     await conn.execute_script("ALTER TABLE pairs ALTER COLUMN a TYPE text")
@@ -167,7 +171,7 @@ async def test_columns_of_one_type_swapping_names(
 
 async def test_table_dropped_and_recreated_with_columns_reordered(
     conn: fastpg.Connection,
-    pairs: str,
+    pairs: LiteralString,
     target: Target,
 ) -> None:
     await _select(conn, pairs, target)
@@ -220,7 +224,7 @@ async def test_every_pooled_connection_rebinds(dsn: str) -> None:
 
 async def test_statements_deallocated_behind_the_cache(
     conn: fastpg.Connection,
-    pairs: str,
+    pairs: LiteralString,
     target: Target,
 ) -> None:
     await _select(conn, pairs, target)
@@ -285,7 +289,7 @@ async def test_cursor_redeclared_in_a_transaction(conn: fastpg.Connection, targe
 )
 async def test_held_cursor_redeclared_with_another_type(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
 ) -> None:
     await conn.execute_script("DECLARE c CURSOR WITH HOLD FOR SELECT 7::int4")
     assert await conn.select_many(query) == [(7,)]
@@ -302,7 +306,7 @@ async def test_cursor_redeclared_on_an_acquired_connection(dsn: str) -> None:
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
         for declared, row in [("SELECT 7::int4", (7,)), ("SELECT 1.5::float4", (1.5,))]:
             async with pool.acquire() as conn, conn.transaction() as tx:
-                await tx.execute_script(f"DECLARE c CURSOR FOR {declared}")
+                await tx.execute_script(cast("LiteralString", f"DECLARE c CURSOR FOR {declared}"))
                 assert await tx.select_many("FETCH 1 FROM c") == [row]
 
 

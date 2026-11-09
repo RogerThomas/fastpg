@@ -14,7 +14,7 @@ import socket
 import struct
 from collections.abc import AsyncIterator, Coroutine, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, LiteralString
 
 import msgspec
 import pytest
@@ -237,7 +237,11 @@ async def test_select_one_cancelled_at_random_points(
     rng: random.Random,
     loop_errors: LoopErrors,
 ) -> None:
-    queries = ["SELECT $1::int", "SELECT $1::int FROM pg_sleep(0.001)", "SELECT $1::int / 0"]
+    queries: list[LiteralString] = [
+        "SELECT $1::int",
+        "SELECT $1::int FROM pg_sleep(0.001)",
+        "SELECT $1::int / 0",
+    ]
     for i in range(150):
         query = rng.choice(queries)
         task = await _cancel_after(conn.select_one(query, i), rng.randrange(6))

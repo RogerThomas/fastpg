@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, ClassVar, Protocol
+from typing import TYPE_CHECKING, Annotated, ClassVar, LiteralString, Protocol, cast
 
 import asyncpg
 import msgspec
@@ -107,18 +107,18 @@ class Target:
     ]
 
     @property
-    def quoted(self) -> str:
-        return fastpg.Identifier(self.table).quoted
+    def quoted(self) -> LiteralString:
+        return cast("LiteralString", fastpg.Identifier(self.table).quoted)
 
     @property
-    def create(self) -> str:
+    def create(self) -> LiteralString:
         return (
             f"DROP TABLE IF EXISTS {self.quoted}; "
             f"CREATE TABLE {self.quoted} (LIKE people INCLUDING ALL)"
         )
 
     @property
-    def insert_dollar(self) -> str:
+    def insert_dollar(self) -> LiteralString:
         return f"INSERT INTO {self.quoted} VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"  # noqa: S608 - quoted
 
     @property

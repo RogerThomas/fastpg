@@ -39,7 +39,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iter
 from contextlib import asynccontextmanager, suppress
 from dataclasses import InitVar, dataclass, field
 from types import TracebackType
-from typing import Any, ClassVar, Concatenate, Self, overload
+from typing import Any, ClassVar, Concatenate, LiteralString, Self, overload
 
 import msgspec
 
@@ -210,14 +210,14 @@ class Pool:
     _MAX_COSTS: ClassVar[int] = 10_000
     """Bound on the per-SQL cost table (cleared when exceeded, e.g. by generated SQL)."""
 
-    _RESET: ClassVar[str] = (
+    _RESET: ClassVar[LiteralString] = (
         "SELECT pg_advisory_unlock_all(); CLOSE ALL; UNLISTEN *; RESET ALL;"
         " RESET SESSION AUTHORIZATION; RESET ROLE; DISCARD TEMP"
     )
     """Session reset on release: everything ``DISCARD ALL`` does except dropping prepared
     statements (fastpg's statement cache) and cached plans."""
 
-    _GUARDED_RESET: ClassVar[str] = (
+    _GUARDED_RESET: ClassVar[LiteralString] = (
         # In the simple protocol, an implicit transaction starts with the statement, so
         # now() == statement_timestamp() exactly; in a transaction left open by the caller
         # now() is older, and the cast fails, aborting the script before the reset.
@@ -225,7 +225,7 @@ class Pool:
         " ELSE 'fastpg: connection released inside a transaction' END)::int; " + _RESET
     )
 
-    _ROLLBACK_RESET: ClassVar[str] = "ROLLBACK; " + _RESET
+    _ROLLBACK_RESET: ClassVar[LiteralString] = "ROLLBACK; " + _RESET
 
     # Shared statement kinds (the first three are Fetcher.fetch's result shapes).
     _ONE: ClassVar[int] = 0
@@ -897,7 +897,7 @@ class Pool:
     @overload
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -907,7 +907,7 @@ class Pool:
     @overload
     async def select_one[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -917,14 +917,14 @@ class Pool:
     @overload
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> tuple[Any, ...]: ...
     async def select_one(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -939,7 +939,7 @@ class Pool:
     @overload
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -949,7 +949,7 @@ class Pool:
     @overload
     async def select_one_or_none[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -959,14 +959,14 @@ class Pool:
     @overload
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> tuple[Any, ...] | None: ...
     async def select_one_or_none(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -981,7 +981,7 @@ class Pool:
     @overload
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -991,7 +991,7 @@ class Pool:
     @overload
     async def select_many[T](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -1001,14 +1001,14 @@ class Pool:
     @overload
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
     ) -> list[tuple[Any, ...]]: ...
     async def select_many(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -1022,7 +1022,7 @@ class Pool:
 
     async def select_and_group[T: msgspec.Struct](
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -1042,7 +1042,7 @@ class Pool:
 
     async def execute(
         self,
-        query: str | Template,
+        query: LiteralString | Template,
         /,
         *args: object,
         params: NamedParams | None = None,
@@ -1053,13 +1053,13 @@ class Pool:
         affected: int = await self._query(self._EXECUTE, query, args, None, "auto")
         return affected
 
-    async def execute_script(self, query: str | Template, /) -> None:
+    async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Shared mode ``Connection.execute_script``: runs as one implicit transaction."""
         if isinstance(query, Template):
             query = self._templates.script(query)
         await self._query(self._SCRIPT, query, (), None, "auto")
 
-    async def execute_many(self, query: str, rows: Iterable[Sequence[object]], /) -> int:
+    async def execute_many(self, query: LiteralString, rows: Iterable[Sequence[object]], /) -> int:
         """``Connection.execute_many`` on a connection checked out exclusively for the call."""
         return await self._bulk(Connection.execute_many, query, rows)
 

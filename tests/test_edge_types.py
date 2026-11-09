@@ -1,6 +1,6 @@
 """Types fastpg doesn't decode, and user-defined types built on ones it does."""
 
-from typing import Any, NamedTuple, TypeIs
+from typing import Any, LiteralString, NamedTuple, TypeIs, cast
 
 import msgspec
 import pydantic
@@ -88,8 +88,8 @@ def _target(request: pytest.FixtureRequest) -> Target:
 async def test_unsupported_type_names_the_column_and_type(
     conn: fastpg.Connection,
     target: Target,
-    expression: str,
-    type_name: str,
+    expression: LiteralString,
+    type_name: LiteralString,
 ) -> None:
     into, strategy = target
     query = f"SELECT {expression} AS value FROM generate_series(1, 1000)"  # noqa: S608
@@ -169,7 +169,7 @@ async def test_unsupported_column_no_field_reads_is_ignored_through_validation(
 )
 async def test_unsupported_parameter_type_names_it(
     conn: fastpg.Connection,
-    type_name: str,
+    type_name: LiteralString,
     value: object,
     text: str,
 ) -> None:
@@ -187,7 +187,11 @@ async def test_domains_decode_as_their_base_type(conn: fastpg.Connection, target
     )
     into, strategy = target
     for expression, expected in (("5::pg_temp.positive", 5), ("'label'::pg_temp.short", "label")):
-        row = await conn.select_one(f"SELECT {expression} AS value", into=into, strategy=strategy)
+        row = await conn.select_one(
+            cast("LiteralString", f"SELECT {expression} AS value"),
+            into=into,
+            strategy=strategy,
+        )
         assert _value_of(row) == expected
 
 

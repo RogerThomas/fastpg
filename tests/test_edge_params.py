@@ -3,6 +3,7 @@
 import datetime as dt
 import math
 from decimal import Decimal
+from typing import LiteralString, cast
 
 import msgspec
 import pytest
@@ -14,9 +15,10 @@ class Opaque:
     """Not serialisable as JSON."""
 
 
-def _array_of_parameters(count: int) -> str:
+def _array_of_parameters(count: int) -> LiteralString:
     """A query taking `count` int parameters (an array, so the parse tree stays flat)."""
-    return "SELECT cardinality(ARRAY[" + ",".join(f"${i}::int" for i in range(1, count + 1)) + "])"
+    placeholders = ",".join(f"${i}::int" for i in range(1, count + 1))
+    return cast("LiteralString", f"SELECT cardinality(ARRAY[{placeholders}])")
 
 
 async def test_65535_parameters(conn: fastpg.Connection) -> None:
@@ -51,7 +53,7 @@ async def test_int_beyond_64_bits_for_float(conn: fastpg.Connection) -> None:
 )
 async def test_int_beyond_64_bits_for_an_integer_type_is_out_of_range(
     conn: fastpg.Connection,
-    pg_type: str,
+    pg_type: LiteralString,
     value: int,
 ) -> None:
     expected = rf"^parameter \$1: int out of range for PostgreSQL type {pg_type}$"
@@ -102,7 +104,7 @@ async def test_int_with_more_digits_than_python_converts(conn: fastpg.Connection
 )
 async def test_unencodable_python_value_is_a_parameter_error(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     value: object,
     cause: type[Exception],
 ) -> None:
@@ -129,7 +131,7 @@ async def test_unencodable_python_value_is_a_parameter_error(
 )
 async def test_value_of_the_wrong_type_names_the_parameter_and_both_types(
     conn: fastpg.Connection,
-    pg_type: str,
+    pg_type: LiteralString,
     value: object,
     described: str,
 ) -> None:
@@ -143,7 +145,7 @@ async def test_value_of_the_wrong_type_names_the_parameter_and_both_types(
 @pytest.mark.parametrize("value", [True, False])
 async def test_bool_is_not_taken_for_a_number(
     conn: fastpg.Connection,
-    pg_type: str,
+    pg_type: LiteralString,
     value: bool,  # noqa: FBT001
 ) -> None:
     # bool is an int subclass in Python, but not a number to PostgreSQL.
@@ -184,7 +186,7 @@ async def test_none_compares_as_sql_null(conn: fastpg.Connection) -> None:
 )
 async def test_parameter_count_must_match(
     conn: fastpg.Connection,
-    query: str,
+    query: LiteralString,
     values: tuple[object, ...],
     expected: int,
     got: int,
@@ -203,7 +205,7 @@ async def test_parameter_count_must_match(
 )
 async def test_int_out_of_range_for_its_type(
     conn: fastpg.Connection,
-    pg_type: str,
+    pg_type: LiteralString,
     value: int,
 ) -> None:
     with pytest.raises(
@@ -225,7 +227,7 @@ async def test_int_out_of_range_for_its_type(
 )
 async def test_int_at_the_edge_of_its_type(
     conn: fastpg.Connection,
-    pg_type: str,
+    pg_type: LiteralString,
     value: int,
 ) -> None:
     assert await conn.select_one(f"SELECT $1::{pg_type}", value) == (value,)

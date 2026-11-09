@@ -13,6 +13,7 @@ import struct
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
+from typing import LiteralString
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -92,7 +93,7 @@ async def late_conn(dsn: str) -> AsyncIterator[fastpg.Connection]:
 
 
 @pytest.fixture
-async def table(conn: fastpg.Connection) -> AsyncIterator[str]:
+async def table(conn: fastpg.Connection) -> AsyncIterator[LiteralString]:
     await conn.execute_script(
         "DO $$ BEGIN CREATE TYPE split_mood AS ENUM ('sad', 'happy');"
         " EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
@@ -105,7 +106,7 @@ async def table(conn: fastpg.Connection) -> AsyncIterator[str]:
 
 async def test_insert_many_counts_a_single_full_statement(
     late_conn: fastpg.Connection,
-    table: str,
+    table: LiteralString,
 ) -> None:
     """64 rows: exactly one grouped INSERT, the only statement of its chunk."""
     assert await late_conn.insert_many(table, [(i,) for i in range(64)], columns=["id"]) == 64
@@ -113,7 +114,11 @@ async def test_insert_many_counts_a_single_full_statement(
 
 
 @pytest.mark.parametrize("count", [1, 2000])
-async def test_execute_many_counts(late_conn: fastpg.Connection, table: str, count: int) -> None:
+async def test_execute_many_counts(
+    late_conn: fastpg.Connection,
+    table: LiteralString,
+    count: int,
+) -> None:
     rows = [(i,) for i in range(count)]
     assert await late_conn.execute_many(f"INSERT INTO {table} (id) VALUES ($1)", rows) == count
     assert await late_conn.select_one(f"SELECT count(*) FROM {table}") == (count,)
@@ -121,7 +126,7 @@ async def test_execute_many_counts(late_conn: fastpg.Connection, table: str, cou
 
 async def test_user_defined_parameter_types_are_looked_up_first(
     late_conn: fastpg.Connection,
-    table: str,
+    table: LiteralString,
 ) -> None:
     """The enum's type lookups are response cycles of their own, before the write's."""
     rows = [(1, "sad"), (2, "happy")]

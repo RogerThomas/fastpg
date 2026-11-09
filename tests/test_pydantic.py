@@ -3,7 +3,7 @@
 import datetime as dt
 import uuid
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, LiteralString
 
 import msgspec
 import pytest
@@ -204,7 +204,7 @@ async def test_json_fields(conn: fastpg.Connection) -> None:
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_str_field_gets_json_as_raw_text(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, NULL::{json_type} AS meta"""
@@ -216,7 +216,7 @@ async def test_str_field_gets_json_as_raw_text(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_str_field_gets_json_as_raw_text_when_not_null(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '[1]'::{json_type} AS doc, '"a"'::{json_type} AS meta"""
@@ -228,7 +228,7 @@ async def test_str_field_gets_json_as_raw_text_when_not_null(
 @pytest.mark.parametrize("json_type", ["json", "jsonb"])
 async def test_dict_and_any_fields_get_decoded_json(
     conn: fastpg.Connection,
-    json_type: str,
+    json_type: LiteralString,
     strategy: fastpg.Strategy,
 ) -> None:
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""

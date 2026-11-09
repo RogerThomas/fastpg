@@ -7,6 +7,7 @@ whichever one runs it."""
 import asyncio
 import secrets
 from collections.abc import AsyncIterator
+from typing import LiteralString, cast
 
 import msgspec
 import pytest
@@ -20,10 +21,10 @@ class Item(msgspec.Struct):
 
 
 @pytest.fixture
-async def table(pgbouncer_dsn: str) -> AsyncIterator[str]:
+async def table(pgbouncer_dsn: str) -> AsyncIterator[LiteralString]:
     """A fresh `(id int PRIMARY KEY, name text)` table (not a temporary one: the session
     changes between transactions)."""
-    name = f"pgb_{secrets.token_hex(4)}"
+    name = cast("LiteralString", f"pgb_{secrets.token_hex(4)}")
     async with await fastpg.connect(pgbouncer_dsn) as conn:
         await conn.execute_script(f"CREATE TABLE {name} (id int PRIMARY KEY, name text)")
         yield name
@@ -46,7 +47,7 @@ async def test_connections_share_two_server_connections(pgbouncer_dsn: str) -> N
 
 
 async def test_queries_sent_together_on_one_connection(pgbouncer_dsn: str) -> None:
-    queries = ["SELECT $1::int + 1", "SELECT $1::int * 3", "SELECT $1::text"]
+    queries: list[LiteralString] = ["SELECT $1::int + 1", "SELECT $1::int * 3", "SELECT $1::text"]
     async with await fastpg.connect(pgbouncer_dsn) as conn:
         for start in range(0, 500, 100):
             ks = range(start, start + 64)
@@ -56,13 +57,13 @@ async def test_queries_sent_together_on_one_connection(pgbouncer_dsn: str) -> No
             assert got == [((k + 1,), (k * 3,), (str(k),))[k % 3] for k in ks]
 
 
-async def _insert_then_fail(conn: fastpg.Connection, table: str, row_id: int) -> None:
+async def _insert_then_fail(conn: fastpg.Connection, table: LiteralString, row_id: int) -> None:
     async with conn.transaction() as tx:
         await tx.execute(f"INSERT INTO {table} VALUES ($1, 'r')", row_id)
         await tx.select_one("SELECT 1 / 0")
 
 
-async def test_transactions(pgbouncer_dsn: str, table: str) -> None:
+async def test_transactions(pgbouncer_dsn: str, table: LiteralString) -> None:
     async def client(n: int) -> None:
         async with await fastpg.connect(pgbouncer_dsn) as conn:
             for i in range(10):
@@ -85,7 +86,7 @@ async def test_transactions(pgbouncer_dsn: str, table: str) -> None:
         ]
 
 
-async def test_bulk_writes(pgbouncer_dsn: str, table: str) -> None:
+async def test_bulk_writes(pgbouncer_dsn: str, table: LiteralString) -> None:
     async with await fastpg.connect(pgbouncer_dsn) as conn:
         rows = [(i, "e") for i in range(1000)]
         assert await conn.execute_many(f"INSERT INTO {table} VALUES ($1, $2)", rows) == 1000
@@ -122,7 +123,7 @@ async def test_evicted_statements(pgbouncer_dsn: str) -> None:
     await asyncio.gather(*(client(n) for n in range(6)))
 
 
-async def test_pool(pgbouncer_dsn: str, table: str) -> None:
+async def test_pool(pgbouncer_dsn: str, table: LiteralString) -> None:
     async with await fastpg.create_pool(pgbouncer_dsn, min_size=2, max_size=6) as pool:
         got = await asyncio.gather(
             *(
