@@ -80,13 +80,15 @@ class Connection:
         *,
         unix: bool,
         host: str,
+        port: int,
         add_writer: Callable[[], object],
         remove_writer: Callable[[], object],
         flush_soon: Callable[[], object],
         detach: Callable[[], object],
         connected: asyncio.Future[None],
         closed: asyncio.Future[None],
-    ) -> None: ...
+    ) -> str | None:
+        """Start the handshake; returns a warning to issue when the password file is ignored."""
     def on_readable(self) -> None: ...
     def on_writable(self) -> None: ...
     def flush(self) -> None: ...

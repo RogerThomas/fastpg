@@ -560,13 +560,15 @@ impl Connection {
     }
 
     /// Connect over `fd`, a connected non-blocking socket that Python keeps open: run TLS
-    /// negotiation and the PostgreSQL handshake on this thread. `host` is the DSN host the
-    /// socket connected to (the TLS server name). `add_writer` / `remove_writer` toggle the
-    /// loop's writer registration; `flush_soon` schedules `flush()` (`loop.call_soon`);
-    /// `detach` unregisters and closes the socket once the connection is over. Resolves
-    /// `connected` once ready and `closed` when the connection ends.
+    /// negotiation and the PostgreSQL handshake on this thread. `host` and `port` are the DSN
+    /// host and port the socket connected to (the TLS server name, and the password file
+    /// entry). `add_writer` / `remove_writer` toggle the loop's writer registration;
+    /// `flush_soon` schedules `flush()` (`loop.call_soon`); `detach` unregisters and closes
+    /// the socket once the connection is over. Resolves `connected` once ready and `closed`
+    /// when the connection ends. Returns a warning for Python to issue when the password file
+    /// is ignored.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (dsn, fd, *, unix, host, add_writer, remove_writer, flush_soon, detach, connected, closed))]
+    #[pyo3(signature = (dsn, fd, *, unix, host, port, add_writer, remove_writer, flush_soon, detach, connected, closed))]
     fn attach(
         &self,
         py: Python<'_>,
@@ -574,13 +576,14 @@ impl Connection {
         fd: i32,
         unix: bool,
         host: String,
+        port: u16,
         add_writer: Py<PyAny>,
         remove_writer: Py<PyAny>,
         flush_soon: Py<PyAny>,
         detach: Py<PyAny>,
         connected: Py<PyAny>,
         closed: Py<PyAny>,
-    ) {
+    ) -> Option<String> {
         *self
             .shared
             .hooks
@@ -596,10 +599,14 @@ impl Connection {
         let shared = self.shared.clone();
         let connected = request(connected, Target::None);
         let closed = request(closed, Target::None);
+        let (config, warning) = match net::config_for(&dsn, &host, port) {
+            Ok((cfg, options, warning)) => (Ok((cfg, options)), warning),
+            Err(e) => (Err(e), None),
+        };
         self.shared.spawn(async move {
             let host = (!unix).then_some(host.as_str());
             let handshake = async {
-                let (cfg, options) = net::config(&dsn)?;
+                let (cfg, options) = config?;
                 let connection = net::handshake(socket, cfg, &options.tls, host).await?;
                 if let Some(host) = host
                     && connection.2.encrypted()
@@ -616,6 +623,7 @@ impl Connection {
             serve(shared, connection, connected, closed).await;
         });
         self.shared.pump(py);
+        warning
     }
 
     /// The socket is readable (`loop.add_reader` callback).
