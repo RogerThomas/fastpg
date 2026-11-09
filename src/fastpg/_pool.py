@@ -245,8 +245,9 @@ class Pool:
     statement_cache_size: int = field(kw_only=True, default=256)
     max_lifetime: float | None = field(kw_only=True, default=3600.0)
     max_idle: float | None = field(kw_only=True, default=300.0)
-    connections: InitVar[Sequence[Connection]] = field(kw_only=True, default=())
-    """Already open connections (on the running loop) that become the pool's own."""
+    # Already open connections (on the running loop) that become the pool's own. Only
+    # create_pool() passes them: without them, direct construction is refused.
+    _connections: InitVar[Sequence[Connection] | None] = field(kw_only=True, default=None)
 
     _loop: asyncio.AbstractEventLoop = field(init=False, repr=False)
     _max_lifetime_ns: int = field(init=False, repr=False)
@@ -291,7 +292,10 @@ class Pool:
     _wakeup: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _maintainer: asyncio.Task[None] = field(init=False, repr=False)
 
-    def __post_init__(self, connections: Sequence[Connection]) -> None:
+    def __post_init__(self, _connections: Sequence[Connection] | None) -> None:
+        if _connections is None:
+            msg = "use `await fastpg.create_pool(dsn, ...)` to create a Pool"
+            raise TypeError(msg)
         _check_config(
             self.min_size,
             self.max_size,
@@ -306,7 +310,7 @@ class Pool:
         limits = [s / 4 for s in (self.max_lifetime, self.max_idle) if s]
         self._tidy_interval = max(0.01, min([10.0, *limits]))
         self._router = Router(self._DEFAULT_COST_NS, self._MAX_COSTS)
-        for conn in connections:
+        for conn in _connections:
             self._add(conn)
         self._maintainer = self._loop.create_task(self._maintain())
 
@@ -1125,7 +1129,7 @@ class Pool:
                 isolation=isolation,
                 readonly=readonly,
                 deferrable=deferrable,
-                pre_commit=self._RESET,
+                _pre_commit=self._RESET,
             ) as tx:
                 yield tx
             clean = True
@@ -1197,5 +1201,5 @@ async def create_pool(
         statement_cache_size=statement_cache_size,
         max_lifetime=max_lifetime,
         max_idle=max_idle,
-        connections=await _connect_all(dsn, min_size, statement_cache_size),
+        _connections=await _connect_all(dsn, min_size, statement_cache_size),
     )

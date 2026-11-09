@@ -143,7 +143,7 @@ class DatabaseError(FastPGError):
         return "\n".join(parts)
 
     @classmethod
-    def from_server(
+    def _from_server(
         cls,
         sqlstate: str,
         message: str,
@@ -158,7 +158,7 @@ class DatabaseError(FastPGError):
         constraint_name: str | None,
     ) -> "DatabaseError":
         """Build the most specific subclass for a server ErrorResponse (called from Rust)."""
-        return SQLStateRegistry.error_class(sqlstate)(
+        return _SQLStateRegistry.error_class(sqlstate)(
             message,
             sqlstate=sqlstate,
             severity=severity,
@@ -257,7 +257,7 @@ class NotSupportedError(DatabaseError):
     """SQLSTATE class 0A: feature not supported by the server."""
 
 
-class SQLStateRegistry:
+class _SQLStateRegistry:
     """Which DatabaseError subclass represents a SQLSTATE code."""
 
     BY_CODE: ClassVar[dict[str, type[DatabaseError]]] = {
