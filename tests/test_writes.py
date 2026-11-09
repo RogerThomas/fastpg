@@ -313,7 +313,7 @@ async def test_json_values_are_stored_alike_by_parameters_and_bulk_writes(
     conn: fastpg.Connection,
     make_table: TableMaker,
     tier: str,
-    pg_type: str,
+    pg_type: LiteralString,
     value: object,
 ) -> None:
     table = await make_table(f"i int, v {pg_type}")
