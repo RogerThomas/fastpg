@@ -149,8 +149,9 @@ async def test_target_session_attrs_from_the_environment(
 ) -> None:
     monkeypatch.setenv("PGPASSWORD", server.password)
     monkeypatch.setenv("PGTARGETSESSIONATTRS", "read-only")
-    with pytest.raises(fastpg.InterfaceError, match="session is not read-only"):
+    with pytest.raises(fastpg.ConnectError, match="session is not read-only") as exc:
         await fastpg.connect(server.dsn())
+    assert isinstance(exc.value, fastpg.OperationalError)
 
 
 async def test_create_pool_reads_the_environment(
