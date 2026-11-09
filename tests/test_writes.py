@@ -278,7 +278,7 @@ class Blob:
 
 def json_case_id(value: object) -> str:
     # A memoryview's repr holds its address, which differs between xdist workers.
-    return case_id(value) if isinstance(value, memoryview) else repr(value)
+    return "memoryview" if isinstance(value, memoryview) else repr(value)
 
 
 # Bytes have no JSON form: msgspec writes them as base64 text, on every path alike.

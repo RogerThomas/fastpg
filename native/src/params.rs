@@ -259,9 +259,15 @@ fn param_error(py: Python<'_>, index: usize, msg: impl fmt::Display) -> PyErr {
 }
 
 /// `ty`: the parameter's type, when the statement is already prepared (see [`convert`]).
-pub fn from_py(obj: &Bound<'_, PyAny>, index: usize, ty: Option<&Type>) -> PyResult<Param> {
+/// `json`: the statement may take a value as JSON (see [`convert_param`]).
+fn from_py(obj: &Bound<'_, PyAny>, index: usize, ty: Option<&Type>, json: bool) -> PyResult<Param> {
     let py = obj.py();
-    convert_param(obj, ty).map_err(|e| match e {
+    let param = if json {
+        convert_param(obj, ty)
+    } else {
+        convert(obj, ty)
+    };
+    param.map_err(|e| match e {
         // As in bulk writes: a ParameterError naming the parameter, caused by the Python
         // exception (an unencodable str, a value msgspec can't serialise as JSON, ...).
         ConvertError::Py(e) => {
@@ -435,7 +441,7 @@ fn element_type(ty: &Type) -> Option<&Type> {
     }
 }
 
-fn is_json(ty: &Type) -> bool {
+pub(crate) fn is_json(ty: &Type) -> bool {
     matches!(*base_type(ty), Type::JSON | Type::JSONB)
 }
 
@@ -689,8 +695,13 @@ fn non_finite(types: &PyTypes, obj: &Bound<'_, PyAny>) -> PyResult<Option<(Strin
 /// prepare the statement but describe its parameters with a wrapped-around count.
 const MAX_PARAMS: usize = u16::MAX as usize;
 
-/// `types`: the parameter types of the statement, when it is already prepared.
-pub fn from_py_tuple(params: &Bound<'_, PyTuple>, types: Option<&[Type]>) -> PyResult<Vec<Param>> {
+/// `types`: the parameter types of the statement, when it is already prepared, and whether
+/// one of them is json or jsonb. A prepared statement without one converts its values as
+/// `convert` does, with nothing to check per value.
+pub fn from_py_tuple(
+    params: &Bound<'_, PyTuple>,
+    types: Option<(&[Type], bool)>,
+) -> PyResult<Vec<Param>> {
     if params.len() > MAX_PARAMS {
         return Err(py_err(
             params.py(),
@@ -701,10 +712,11 @@ pub fn from_py_tuple(params: &Bound<'_, PyTuple>, types: Option<&[Type]>) -> PyR
             ),
         ));
     }
+    let json = types.is_none_or(|(_, json)| json);
     params
         .iter()
         .enumerate()
-        .map(|(i, p)| from_py(&p, i, types.and_then(|types| types.get(i))))
+        .map(|(i, p)| from_py(&p, i, types.and_then(|(types, _)| types.get(i)), json))
         .collect()
 }
 

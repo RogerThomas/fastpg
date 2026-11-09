@@ -944,7 +944,9 @@ impl Connection {
             return Err(py_err(py, "InterfaceError", copy_check::REFUSED));
         }
         // A prepared statement's parameter types decide what lists become (see `convert`).
-        let types = cached.as_ref().map(|stmt| stmt.statement().params());
+        let types = cached
+            .as_ref()
+            .map(|stmt| (stmt.statement().params(), stmt.takes_json()));
         let params = params::from_py_tuple(params, types)?;
         let source = match cached {
             Some(stmt) => StmtSource::Cached(stmt),
