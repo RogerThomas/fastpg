@@ -33,10 +33,12 @@ use std::task::{Context, Poll};
 
 use tokio::sync::Notify;
 use xitca_io::io::{AsyncIo, Interest, Ready};
+use xitca_postgres::error::DriverIoErrorMulti;
 use xitca_postgres::{Client, Config, Driver, Postgres};
 
 use crate::auth;
 use crate::errors::QueryError;
+use crate::pgenv::{self, Env, Passfile};
 use crate::tls::{self, ChannelBinding, DsnOptions, SocketOptions, TlsOptions};
 
 /// One response cycle (the server's messages up to and including a `ReadyForQuery`, i.e. the
@@ -498,9 +500,14 @@ enum Target {
     Unix(PathBuf),
 }
 
-/// Parse `dsn` into xitca's config and the settings xitca never sees (TLS, socket options).
+/// Parse `dsn` into xitca's config and the settings xitca never sees (TLS, socket options),
+/// with libpq's environment variables for the keys it leaves out.
 pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
-    let (rest, options) = tls::split_dsn(dsn)?;
+    config_with(dsn, &pgenv::process_env)
+}
+
+fn config_with(dsn: &str, env: Env) -> Result<(Config, DsnOptions), QueryError> {
+    let (rest, options) = tls::split_dsn(dsn, env)?;
     // Every key is known by now (`split_dsn` names an unknown one), and xitca's parse errors
     // carry no detail at all ("WIP error type ...").
     let cfg = Config::try_from(rest.as_ref()).map_err(|_| {
@@ -508,7 +515,122 @@ pub fn config(dsn: &str) -> Result<(Config, DsnOptions), QueryError> {
             "invalid connection string: malformed, or an invalid port value".to_owned(),
         )
     })?;
+    let cfg = fill_from(cfg, options.port_set, env)?;
     Ok((cfg, options))
+}
+
+/// libpq's environment variables ("Environment Variables" in the libpq docs) for the keys
+/// xitca parses, where the DSN leaves them out (or gives them empty).
+fn fill_from(mut cfg: Config, port_set: bool, env: Env) -> Result<Config, QueryError> {
+    let unset = |value: Option<&str>| value.is_none_or(str::is_empty);
+    if unset(cfg.get_user())
+        && let Some(user) = env("PGUSER")
+    {
+        cfg.user(&user);
+    }
+    if cfg.get_password().is_none_or(<[u8]>::is_empty)
+        && let Some(password) = env("PGPASSWORD")
+    {
+        cfg.password(password);
+    }
+    if unset(cfg.get_dbname())
+        && let Some(dbname) = env("PGDATABASE")
+    {
+        cfg.dbname(&dbname);
+    }
+    if unset(cfg.get_options())
+        && let Some(options) = env("PGOPTIONS")
+    {
+        cfg.options(&options);
+    }
+    if unset(cfg.get_application_name())
+        && let Some(name) = env("PGAPPNAME")
+    {
+        cfg.application_name(&name);
+    }
+    if cfg.get_hosts().is_empty()
+        && let Some(hosts) = env("PGHOST")
+    {
+        for host in hosts.split(',') {
+            cfg.host(host);
+        }
+    }
+    if !port_set && let Some(value) = env("PGPORT") {
+        // As xitca reads the `port` key: a list, an empty entry meaning 5432.
+        let ports = value
+            .split(',')
+            .map(|port| match port {
+                "" => Ok(5432),
+                _ => port.parse::<u16>(),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| QueryError::Interface(format!("invalid PGPORT value {value:?}")))?;
+        cfg = with_ports(&cfg, &ports)?;
+    }
+    Ok(cfg)
+}
+
+/// `cfg` with `ports` instead of its own: a URL host without a port still gets 5432 from
+/// xitca's parser, and xitca can only add ports.
+fn with_ports(cfg: &Config, ports: &[u16]) -> Result<Config, QueryError> {
+    let mut out = Config::new();
+    if let Some(user) = cfg.get_user() {
+        out.user(user);
+    }
+    if let Some(password) = cfg.get_password() {
+        out.password(password);
+    }
+    if let Some(dbname) = cfg.get_dbname() {
+        out.dbname(dbname);
+    }
+    if let Some(options) = cfg.get_options() {
+        out.options(options);
+    }
+    if let Some(name) = cfg.get_application_name() {
+        out.application_name(name);
+    }
+    // The other settings xitca keeps are never given to it (`split_dsn` takes their keys).
+    for host in cfg.get_hosts() {
+        match parse_host(&format!("{host:?}")) {
+            Some(Target::Tcp(name)) => out.host(&name),
+            Some(Target::Unix(path)) => out.host_path(path),
+            None => return Err(QueryError::Interface(format!("unsupported host {host:?}"))),
+        };
+    }
+    for &port in ports {
+        out.port(port);
+    }
+    Ok(out)
+}
+
+/// [`config`] for a connection to `host` (as the DSN gives it: a name, an address or a
+/// socket directory) and `port`, with the password from the password file if neither the
+/// DSN nor `PGPASSWORD` gives one. Also returns a warning when the password file is ignored
+/// (its permissions are too open, or it is not a file).
+pub fn config_for(
+    dsn: &str,
+    host: &str,
+    port: u16,
+) -> Result<(Config, DsnOptions, Option<String>), QueryError> {
+    let (mut cfg, options) = config(dsn)?;
+    if cfg.get_password().is_some_and(|p| !p.is_empty()) {
+        return Ok((cfg, options, None));
+    }
+    let Some(path) = options.passfile.clone().or_else(pgenv::default_passfile) else {
+        return Ok((cfg, options, None));
+    };
+    let user = cfg.get_user().unwrap_or_default();
+    // The server's default database is the user's name, as is libpq's.
+    let dbname = cfg.get_dbname().filter(|d| !d.is_empty()).unwrap_or(user);
+    let warning = match pgenv::lookup(&path, host, port, dbname, user) {
+        Passfile::Password(password) => {
+            cfg.password(password);
+            None
+        }
+        Passfile::Nothing => None,
+        Passfile::Ignored(warning) => Some(warning),
+    };
+    Ok((cfg, options, warning))
 }
 
 /// libpq's keys of `dsn` applied in Python (after checking the whole DSN).
@@ -520,7 +642,10 @@ pub fn socket_options(dsn: &str) -> Result<SocketOptions, QueryError> {
 /// order, for Python to connect the socket to. As in libpq, host N goes with port N; a single
 /// port goes with every host, and no port means 5432.
 pub fn targets(dsn: &str) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
-    let (cfg, _) = config(dsn)?;
+    targets_of(&config(dsn)?.0)
+}
+
+fn targets_of(cfg: &Config) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
     let (hosts, ports) = (cfg.get_hosts(), cfg.get_ports());
     if ports.len() > 1 && ports.len() != hosts.len() {
         return Err(QueryError::Interface(format!(
@@ -593,6 +718,18 @@ async fn login<Io: AsyncIo + Send + 'static>(
     startup(io, cfg, encrypted).await
 }
 
+/// A failed startup: the socket failing, or the server closing it, means the connection
+/// couldn't be established (`ConnectError`). A server error (e.g. a wrong password) is kept.
+fn startup_error(e: xitca_postgres::Error) -> QueryError {
+    if e.downcast_ref::<io::Error>().is_some() || e.downcast_ref::<DriverIoErrorMulti>().is_some() {
+        return QueryError::Connect(e.to_string());
+    }
+    if e.is_driver_down() {
+        return QueryError::Connect(format!("connection lost: {e}"));
+    }
+    QueryError::Pg(e)
+}
+
 async fn startup<Io: AsyncIo + Send + 'static>(
     io: Io,
     cfg: Config,
@@ -608,7 +745,10 @@ async fn startup<Io: AsyncIo + Send + 'static>(
         framer: Framer::default(),
         writes: Writes::default(),
     };
-    let (client, driver) = Postgres::new(cfg).connect_io(watched).await?;
+    let (client, driver) = Postgres::new(cfg)
+        .connect_io(watched)
+        .await
+        .map_err(startup_error)?;
     // The startup wrote each message in full: the next byte written starts a message.
     eof.started.store(true, Ordering::Release);
     Ok((client, driver, eof))
@@ -933,7 +1073,7 @@ mod tests {
     #[test]
     fn hosts_go_with_their_ports_as_in_libpq() {
         let tcp = |host: &str, port| ("tcp", host.to_owned(), port);
-        let pairs = |dsn| targets(dsn).unwrap_or_else(|_| panic!("{dsn}"));
+        let pairs = |dsn| targets_with(dsn, &[]).unwrap_or_else(|_| panic!("{dsn}"));
         let paired = vec![tcp("h1", 1111), tcp("h2", 2222)];
         assert_eq!(pairs("postgresql://u@h1:1111,h2:2222/db"), paired);
         assert_eq!(pairs("host=h1,h2 port=1111,2222 user=u"), paired);
@@ -965,9 +1105,108 @@ mod tests {
                 "could not match 2 port numbers to 1 hosts",
             ),
         ] {
-            match targets(dsn) {
+            match targets_with(dsn, &[]) {
                 Err(QueryError::Interface(m)) => assert_eq!(m, message),
                 _ => panic!("expected an InterfaceError for {dsn:?}"),
+            }
+        }
+    }
+
+    fn config_env(dsn: &str, vars: &[(&str, &str)]) -> Result<Config, QueryError> {
+        let env = |name: &str| {
+            vars.iter()
+                .find(|(var, _)| *var == name)
+                .map(|(_, value)| (*value).to_owned())
+        };
+        Ok(config_with(dsn, &env)?.0)
+    }
+
+    /// [`targets`] with the environment variables `vars` only.
+    fn targets_with(
+        dsn: &str,
+        vars: &[(&str, &str)],
+    ) -> Result<Vec<(&'static str, String, u16)>, QueryError> {
+        targets_of(&config_env(dsn, vars)?)
+    }
+
+    const ENV: &[(&str, &str)] = &[
+        ("PGHOST", "envhost,/run/env"),
+        ("PGPORT", "6001,6002"),
+        ("PGUSER", "envuser"),
+        ("PGPASSWORD", "envpass"),
+        ("PGDATABASE", "envdb"),
+        ("PGOPTIONS", "-c work_mem=7MB"),
+        ("PGAPPNAME", "envapp"),
+    ];
+
+    #[test]
+    fn an_empty_dsn_takes_everything_from_the_environment() {
+        for dsn in ["", "postgresql://", "postgres:///"] {
+            let cfg = config_env(dsn, ENV).unwrap_or_else(|_| panic!("{dsn}"));
+            assert_eq!(cfg.get_user(), Some("envuser"));
+            assert_eq!(cfg.get_password(), Some(&b"envpass"[..]));
+            assert_eq!(cfg.get_dbname(), Some("envdb"));
+            assert_eq!(cfg.get_options(), Some("-c work_mem=7MB"));
+            assert_eq!(cfg.get_application_name(), Some("envapp"));
+            assert_eq!(
+                targets_of(&cfg).unwrap_or_default(),
+                vec![
+                    ("tcp", "envhost".to_owned(), 6001),
+                    ("unix", "/run/env".to_owned(), 6002)
+                ],
+                "{dsn}"
+            );
+        }
+        let cfg = config_env("", &[]).unwrap_or_else(|_| panic!("no environment"));
+        assert_eq!(cfg, Config::new(), "no environment: nothing set, as before");
+    }
+
+    #[test]
+    fn the_dsn_wins_over_the_environment() {
+        for dsn in [
+            "host=h port=1 user=u password=p dbname=d options=-cx=y application_name=a",
+            "postgresql://u:p@h:1/d?options=-cx=y&application_name=a",
+        ] {
+            let cfg = config_env(dsn, ENV).unwrap_or_else(|_| panic!("{dsn}"));
+            assert_eq!(cfg.get_user(), Some("u"));
+            assert_eq!(cfg.get_password(), Some(&b"p"[..]));
+            assert_eq!(cfg.get_dbname(), Some("d"));
+            assert_eq!(cfg.get_options(), Some("-cx=y"));
+            assert_eq!(cfg.get_application_name(), Some("a"));
+            assert_eq!(
+                targets_of(&cfg).unwrap_or_default(),
+                vec![("tcp", "h".to_owned(), 1)]
+            );
+        }
+    }
+
+    #[test]
+    fn pgport_goes_with_hosts_the_dsn_gives_no_port() {
+        let env = [("PGPORT", "6001")];
+        let tcp = |host: &str, port| ("tcp", host.to_owned(), port);
+        let pairs = |dsn| targets_with(dsn, &env).unwrap_or_else(|_| panic!("{dsn}"));
+        assert_eq!(pairs("host=h"), vec![tcp("h", 6001)]);
+        assert_eq!(pairs("postgresql://u:p@h/d"), vec![tcp("h", 6001)]);
+        assert_eq!(pairs("postgresql://u:p@h:5432/d"), vec![tcp("h", 5432)]);
+        assert_eq!(pairs("host=h port=1"), vec![tcp("h", 1)]);
+        // A URL with several hosts gives a port list (libpq): 5432 for each here.
+        assert_eq!(
+            pairs("postgresql://h1,h2/d"),
+            vec![tcp("h1", 5432), tcp("h2", 5432)]
+        );
+        // The rest of the URL is kept.
+        let cfg = config_env("postgresql://u:p@h/d?application_name=a", &env)
+            .unwrap_or_else(|_| panic!("url"));
+        assert_eq!(cfg.get_user(), Some("u"));
+        assert_eq!(cfg.get_password(), Some(&b"p"[..]));
+        assert_eq!(cfg.get_dbname(), Some("d"));
+        assert_eq!(cfg.get_application_name(), Some("a"));
+        for value in ["x", "70000", "1,x"] {
+            match config_env("host=h", &[("PGPORT", value)]) {
+                Err(QueryError::Interface(m)) => {
+                    assert_eq!(m, format!("invalid PGPORT value {value:?}"));
+                }
+                _ => panic!("expected an InterfaceError for PGPORT={value:?}"),
             }
         }
     }

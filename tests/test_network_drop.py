@@ -54,8 +54,9 @@ async def test_cut_in_the_middle_of_a_streamed_result(
         assert len(await conn.select_many(_BIG)) == 20_000  # prepared, and the size is right
         fault_proxy.to_client.cut_after(1_000_000, rst=rst)  # mid-way through the next one
         async with asyncio.timeout(5):
-            with pytest.raises(fastpg.ConnectionClosedError, match=_LOST):
+            with pytest.raises(fastpg.ConnectionClosedError, match=_LOST) as exc:
                 await conn.select_many(_BIG)
+        assert isinstance(exc.value, fastpg.OperationalError)
         assert conn.closed
         with pytest.raises(fastpg.ConnectionClosedError, match=_LOST):
             await conn.select_one("SELECT 1")

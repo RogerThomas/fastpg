@@ -69,6 +69,9 @@ class Faults:
     """Seconds each read is held before it's forwarded: latency, not a throughput limit."""
     fragment: int = 0
     """Forward at most this many bytes per write, each sent on its own (0: as read)."""
+    replace: tuple[bytes, bytes] | None = None
+    """``(old, new)``: forward ``new`` in place of each ``old`` (within one read: an ``old``
+    split across two reads goes through as it is)."""
     forwarded: int = 0
     """Bytes forwarded in this direction so far, over every connection."""
     ended: int = 0
@@ -171,6 +174,8 @@ class FaultProxy:
                 if faults is self.to_server and link.answered:
                     link.answered = False
                     self.round_trips += 1
+                if faults.replace is not None:
+                    data = data.replace(*faults.replace)
                 queue.put_nowait((loop.time() + faults.delay, data))
         faults.ended += 1
         queue.put_nowait((loop.time() + faults.delay, b""))  # EOF

@@ -36,6 +36,9 @@ pub enum QueryError {
     Lost,
     Parameter(String),
     Interface(String),
+    /// The connection couldn't be established: the socket failed, or the server closed it,
+    /// before the session started.
+    Connect(String),
     /// A bulk write failed at this (0-based) row of the caller's input.
     AtRow(usize, Box<QueryError>),
     /// A multi-row statement covering rows `first..first + count` failed (which row is
@@ -66,6 +69,7 @@ impl QueryError {
             ),
             Self::Parameter(msg) => py_err(py, "ParameterError", msg),
             Self::Interface(msg) => py_err(py, "InterfaceError", msg),
+            Self::Connect(msg) => py_err(py, "ConnectError", msg),
             Self::Pg(e) => pg_error(py, &e),
             Self::AtRow(index, e) => {
                 let err = e.into_pyerr(py);
