@@ -10,6 +10,18 @@
 # it's built, and tests them in the same job (.github/scripts/test-wheel.sh: tests/smoke.py, then
 # the test suite against the installed wheel), each wheel on the Python it's for, every Python at
 # once, each serially against a server of its own; then the `timing` tests alone, on Python 3.14.
+#
+# Every set of wheels is built with profile-guided optimisation (PGO), in its own job, from a
+# profile of its own (a profile from another OS or libc loses most of the gain): first a wheel
+# for Python 3.14 instrumented to count what runs (-Cprofile-generate), which runs the training
+# against a server of its own (.github/scripts/pgo-train.sh: the benchmark suite in benchmarks/
+# and bench/writes.py, which between them use every feature: a new feature needs a benchmark
+# there, or PGO can make it slower; musl's in Alpine). Its counts are
+# merged into one profile (pgo-merge.sh), which the wheels for every Python are then built with
+# (-Cprofile-use). The instrumented wheel is thrown away. rustc only warns when a profile doesn't
+# fit, so the build fails instead (rustc-pgo.sh, pgo-check.sh) if the profile is missing, empty or
+# unreadable, or doesn't match the 3.14 wheel's code; no wheel is uploaded then.
+#
 # When a release was created, once every build and test passed,
 # it publishes them all to PyPI with trusted publishing, checking first that each SHA-256 still
 # matches: what's published is exactly what was tested.
@@ -169,6 +181,11 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false # no caches in a workflow that publishes
+      # A server and a TLS-only one for each Python (docker-compose.yml's; set N on ports
+      # 55432+N and 55532+N), which each set of wheels below is tested against in turn, and one
+      # more (set 5) for the PGO training. First: the training runs between the builds.
+      - name: Start PostgreSQL
+        run: sh .github/scripts/test-servers.sh default default default default default default
       # The sdist and the wheel built from it first, on the host: the wheel builds below run in
       # containers, as root. Each build has a directory of its own, uploaded as its own artifact.
       # maturin reads the crate's metadata with cargo.
@@ -194,10 +211,18 @@ jobs:
         id: sdist-wheel
         if: ${{ !cancelled() && steps.sdist.outcome == 'success' }}
         run: uv build --python 3.14 --wheel --out-dir wheel dist/sdist/*.tar.gz
-      - name: Build manylinux
-        id: manylinux
+      # PGO (see the top of this file): the instrumented wheel, for 3.14 only, in pgo/ (never
+      # uploaded); the training on the host, against server set 5; then the wheels. The
+      # directories are made here first: the builds' containers would make them root's.
+      - name: Make the PGO directories
+        if: ${{ !cancelled() }}
+        run: mkdir -p pgo/gnu/raw pgo/musl/raw
+      - name: Build manylinux for PGO training (3.14, instrumented)
+        id: manylinux-instrumented
         if: ${{ !cancelled() }}
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: -Cprofile-generate=/tmp/pgo
         with:
           maturin-version: ${{ env.MATURIN_VERSION }}
           target: ${{ matrix.platform.arch }}-unknown-linux-gnu
@@ -206,10 +231,60 @@ jobs:
           # Caches compiled crates between runs, on pull requests only: no caches in a build that
           # may be published.
           sccache: ${{ github.event_name == 'pull_request' }}
+          args: --release --locked --out pgo/gnu/wheel --interpreter python3.14
+      - name: Train the manylinux PGO profile
+        id: manylinux-training
+        if: ${{ !cancelled() && steps.manylinux-instrumented.outcome == 'success' }}
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: |
+          sh .github/scripts/pgo-train.sh pgo/gnu/wheel pgo/gnu/raw 5
+          rm -r pgo/gnu/wheel
+      # The wheel for 3.14 first, on its own: the one the check below can hold to the profile
+      # exactly (the build for any other Python finds some code changed, e.g. PyO3's). The
+      # profile is merged in its container (by the before-script), with the toolchain's
+      # llvm-profdata. rustc runs through rustc-pgo.sh, which logs what it says about the
+      # profile; not through sccache, which would reuse what it compiled with another profile.
+      - name: Build manylinux for 3.14
+        id: manylinux-314
+        if: ${{ !cancelled() && steps.manylinux-training.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/gnu/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/gnu/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-gnu
+          manylinux: "2_28"
+          container: ${{ matrix.platform.manylinux }}
+          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/gnu/raw pgo/gnu/fastpg.profdata
+          args: --release --locked --out dist/manylinux --interpreter python3.14
+      - name: Check the manylinux wheel for 3.14 was built with its profile
+        id: manylinux-pgo
+        if: ${{ !cancelled() && steps.manylinux-314.outcome == 'success' }}
+        run: sh .github/scripts/pgo-check.sh pgo/gnu/rustc-3.14.log
+      - name: Build manylinux
+        id: manylinux
+        if: ${{ !cancelled() && steps.manylinux-pgo.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/gnu/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/gnu/rustc.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-gnu
+          manylinux: "2_28"
+          container: ${{ matrix.platform.manylinux }}
           # Listed rather than --find-interpreter, which would also take the images' PyPy.
           args: >-
             --release --locked --out dist/manylinux
-            --interpreter python3.13 python3.14 python3.14t python3.15 python3.15t
+            --interpreter python3.13 python3.14t python3.15 python3.15t
       - name: Record the manylinux wheels' SHA-256
         id: manylinux-sha256
         if: ${{ !cancelled() && steps.manylinux.outcome == 'success' }}
@@ -220,19 +295,76 @@ jobs:
           name: dist-${{ matrix.platform.arch }}-unknown-linux-gnu
           path: dist/manylinux/
           if-no-files-found: error
-      - name: Build musllinux
-        id: musllinux
+      # musl has a profile of its own, as manylinux.
+      - name: Build musllinux for PGO training (3.14, instrumented)
+        id: musllinux-instrumented
         if: ${{ !cancelled() }}
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: -Cprofile-generate=/tmp/pgo
         with:
           maturin-version: ${{ env.MATURIN_VERSION }}
           target: ${{ matrix.platform.arch }}-unknown-linux-musl
           manylinux: musllinux_1_2
           container: ${{ matrix.platform.musllinux }}
           sccache: ${{ github.event_name == 'pull_request' }}
+          args: --release --locked --out pgo/musl/wheel --interpreter python3.14
+      - name: Train the musllinux PGO profile (in Alpine)
+        id: musllinux-training
+        if: ${{ !cancelled() && steps.musllinux-instrumented.outcome == 'success' }}
+        # As the musllinux tests below, on the Alpine image's Python 3.14, with libgcc (which
+        # their build-base brings). Without psqlpy, which has no musl wheel. As root: the venv in
+        # the container, and no bytecode files in the checkout.
+        run: |
+          docker run --rm --network host --volume "$PWD:$PWD" --workdir "$PWD" \
+            --env UV_VERSION --env UV_PROJECT_ENVIRONMENT=/tmp/venv-pgo --env PYTHONDONTWRITEBYTECODE=1 \
+            "$ALPINE_PYTHON_314" sh -euxc '
+              apk add --no-cache libgcc
+              pip install --root-user-action=ignore --disable-pip-version-check "uv==$UV_VERSION"
+              sh .github/scripts/pgo-train.sh pgo/musl/wheel pgo/musl/raw 5 --no-install-package psqlpy
+            '
+          rm -r pgo/musl/wheel
+      # As manylinux's: 3.14 first, checked, then the rest.
+      - name: Build musllinux for 3.14
+        id: musllinux-314
+        if: ${{ !cancelled() && steps.musllinux-training.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/musl/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/musl/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-musl
+          manylinux: musllinux_1_2
+          container: ${{ matrix.platform.musllinux }}
+          before-script-linux: sh .github/scripts/pgo-merge.sh pgo/musl/raw pgo/musl/fastpg.profdata
+          args: --release --locked --out dist/musllinux --interpreter python3.14
+      - name: Check the musllinux wheel for 3.14 was built with its profile
+        id: musllinux-pgo
+        if: ${{ !cancelled() && steps.musllinux-314.outcome == 'success' }}
+        run: sh .github/scripts/pgo-check.sh pgo/musl/rustc-3.14.log
+      - name: Build musllinux
+        id: musllinux
+        if: ${{ !cancelled() && steps.musllinux-pgo.outcome == 'success' }}
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/musl/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/musl/rustc.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.arch }}-unknown-linux-musl
+          manylinux: musllinux_1_2
+          container: ${{ matrix.platform.musllinux }}
+          # Listed rather than --find-interpreter, which would also take the images' PyPy.
           args: >-
             --release --locked --out dist/musllinux
-            --interpreter python3.13 python3.14 python3.14t python3.15 python3.15t
+            --interpreter python3.13 python3.14t python3.15 python3.15t
       - name: Record the musllinux wheels' SHA-256
         id: musllinux-sha256
         if: ${{ !cancelled() && steps.musllinux.outcome == 'success' }}
@@ -243,11 +375,6 @@ jobs:
           name: dist-${{ matrix.platform.arch }}-unknown-linux-musl
           path: dist/musllinux/
           if-no-files-found: error
-      # A server and a TLS-only one for each Python (docker-compose.yml's; set N on ports
-      # 55432+N and 55532+N), which each set of wheels below is tested against in turn.
-      - name: Start PostgreSQL
-        if: ${{ !cancelled() }}
-        run: sh .github/scripts/test-servers.sh default default default default default
       - name: Test the wheel built from the sdist
         if: ${{ !cancelled() && steps.sdist-wheel.outcome == 'success' }}
         env:
@@ -290,7 +417,7 @@ jobs:
       - name: Show the servers' logs
         if: failure()
         run: |
-          for n in 0 1 2 3 4; do
+          for n in 0 1 2 3 4 5; do
             docker compose --project-name "fastpg-test-$n" --profile tls logs postgres postgres-tls
           done
 
@@ -349,18 +476,69 @@ jobs:
         id: python315t
         with:
           python-version: "3.15t"
-      - name: Build
-        id: build
+      # One for each Python, on ports 55432 to 55436, and one for the PGO training on 55437.
+      - name: Start PostgreSQL 18
+        run: |
+          brew install postgresql@18
+          PATH="$(brew --prefix postgresql@18)/bin:$PATH"
+          for n in 0 1 2 3 4 5; do
+            sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres-$n" $((55432 + n))
+          done
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false # no caches in a workflow that publishes
+      # PGO, as on Linux.
+      - name: Build for PGO training (3.14, instrumented)
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: -Cprofile-generate=/tmp/pgo
         with:
           maturin-version: ${{ env.MATURIN_VERSION }}
           target: ${{ matrix.platform.target }}
           # As the Linux builds: pull requests only.
           sccache: ${{ github.event_name == 'pull_request' }}
           args: >-
+            --release --locked --out pgo/wheel --interpreter
+            ${{ steps.python314.outputs.python-path }}
+      - name: Train the PGO profile
+        env:
+          UV_PYTHON_PREFERENCE: only-managed
+        run: |
+          sh .github/scripts/pgo-train.sh pgo/wheel pgo/raw 5
+          rm -r pgo/wheel
+          sh .github/scripts/pgo-merge.sh pgo/raw pgo/fastpg.profdata
+      - name: Build for 3.14
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/rustc-3.14.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.target }}
+          args: >-
+            --release --locked --out dist --interpreter
+            ${{ steps.python314.outputs.python-path }}
+      - name: Check the wheel for 3.14 was built with its profile
+        run: sh .github/scripts/pgo-check.sh pgo/rustc-3.14.log
+      - name: Build
+        id: build
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          RUSTFLAGS: >-
+            -Cprofile-use=${{ github.workspace }}/pgo/fastpg.profdata
+            -Cllvm-args=-pgo-warn-missing-function
+          RUSTC_WRAPPER: ${{ github.workspace }}/.github/scripts/rustc-pgo.sh
+          RUSTC_PGO_LOG: ${{ github.workspace }}/pgo/rustc.log
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.platform.target }}
+          args: >-
             --release --locked --out dist --interpreter
             ${{ steps.python313.outputs.python-path }}
-            ${{ steps.python314.outputs.python-path }}
             ${{ steps.python314t.outputs.python-path }}
             ${{ steps.python315.outputs.python-path }}
             ${{ steps.python315t.outputs.python-path }}
@@ -374,20 +552,6 @@ jobs:
           name: dist-${{ matrix.platform.target }}
           path: dist/
           if-no-files-found: error
-      # One for each Python, on ports 55432 to 55436.
-      - name: Start PostgreSQL 18
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: |
-          brew install postgresql@18
-          PATH="$(brew --prefix postgresql@18)/bin:$PATH"
-          for n in 0 1 2 3 4; do
-            sh .github/scripts/native-postgres.sh "$RUNNER_TEMP/postgres-$n" $((55432 + n))
-          done
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: false # no caches in a workflow that publishes
       - name: Test
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # On the Pythons uv downloads (python-build-standalone's), as on Linux: with setup-python's,
@@ -398,7 +562,7 @@ jobs:
       - name: Show the servers' logs
         if: failure()
         run: |
-          for n in 0 1 2 3 4; do
+          for n in 0 1 2 3 4 5; do
             echo "::group::Server $n"
             cat "$RUNNER_TEMP/postgres-$n/server.log"
             echo "::endgroup::"

@@ -15,6 +15,9 @@ The [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflow
 runs it in GitHub Actions: on pushes to `main` that change the library or the benchmarks,
 weekly, on pull requests labelled `benchmark`, and on demand.
 Each run writes its results to the run's summary page, with the raw JSON as an artifact.
+The published results come from a released wheel, installed from PyPI:
+`gh workflow run benchmarks.yml -f fastpg-version=0.1.4`.
+Other runs build fastpg from source, without the release wheels' profile-guided optimisation.
 
 ## Running it
 
