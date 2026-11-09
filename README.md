@@ -112,7 +112,7 @@ A `list[Item]` field of Structs reads columns named `items__sku`, `items__qty`, 
 | Single-row INSERT, 16 tasks | 35,860/s | 16,087/s (asyncpg) | **2.23x** |
 | Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s (psycopg) | **1.41x** |
 
-Measured in CI on one shared x86_64 GitHub runner; an arm64 runner gives similar ratios.
+Measured in CI on one shared x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
 The smallest lead, a transaction, is 1.13x
 ([details](https://rogerthomas.github.io/fastpg/performance/)).
 

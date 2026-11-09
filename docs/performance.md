@@ -11,8 +11,8 @@ on `main`, on 2026-10-21.
 ## How to read them
 
 * They come from one shared x86_64 GitHub runner, with PostgreSQL on the same machine.
-  An [arm64 run](https://github.com/RogerThomas/fastpg/actions/runs/42530219819) gives
-  similar ratios.
+  GitHub's arm64 runner gives similar ratios
+  ([run 42530219819](https://github.com/RogerThomas/fastpg/actions/runs/42530219819)).
 * Every driver uses its own pool, with its recommended settings, and returns the same msgspec
   Structs.
 * asyncpg runs with its pool's session reset turned off, because fastpg's pool doesn't reset
