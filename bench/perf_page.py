@@ -131,7 +131,7 @@ def _row(workload: _Workload, config: str, label: str) -> str:
     )
 
 
-def _chart(chart: list[_Workload]) -> list[str]:
+def _chart(chart: list[_Workload], pool_size: int) -> list[str]:
     leads = [w.lead() for w in chart]
     summary = (
         f"Bar chart of throughput relative to the fastest other driver: fastpg does"
@@ -140,7 +140,13 @@ def _chart(chart: list[_Workload]) -> list[str]:
     )
     lines = [
         f'<div class="bench-chart" role="img" aria-label="{summary}">',
-        '  <div class="bench-axis">Throughput, relative to the fastest other driver (1x)</div>',
+        '  <div class="bench-axis">',
+        "    Throughput, relative to the fastest other driver (1x).<br>",
+        (
+            "    A task is one asyncio task sending queries one after another. The tasks run at"
+            f" the same time, sharing one pool of {pool_size} connections per driver."
+        ),
+        "  </div>",
     ]
     for workload in chart:
         lines += [
@@ -187,7 +193,9 @@ def render(data: report.Report) -> str:
         "",
         f"Its smallest lead is {name}: {_ratio(smallest.lead())}.",
         "",
-        *_chart(chart),
+        *_chart(chart, data.settings.pool_size),
+        "",
+        "## The raw numbers",
         "",
         *_table(chart),
     ]

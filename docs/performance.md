@@ -11,7 +11,10 @@ fastpg is compared with [asyncpg](https://github.com/MagicStack/asyncpg),
 Its smallest lead is binary COPY of 5,000 rows: 1.23x.
 
 <div class="bench-chart" role="img" aria-label="Bar chart of throughput relative to the fastest other driver: fastpg does 2.18x to 2.97x on each of the six workloads in the table below.">
-  <div class="bench-axis">Throughput, relative to the fastest other driver (1x)</div>
+  <div class="bench-axis">
+    Throughput, relative to the fastest other driver (1x).<br>
+    A task is one asyncio task sending queries one after another. The tasks run at the same time, sharing one pool of 16 connections per driver.
+  </div>
   <div class="bench-group">
     <div class="bench-caption">Primary-key lookup, 64 tasks</div>
     <div class="bench-row bench-row--fastpg" title="fastpg: 188,227 queries/s (2.97x of asyncpg)"><span class="bench-name">fastpg</span><span class="bench-track"><span class="bench-bar" style="width: 99.06%"><span class="bench-value">2.97x</span></span></span></div>
@@ -55,6 +58,8 @@ Its smallest lead is binary COPY of 5,000 rows: 1.23x.
     <div class="bench-row bench-row--psqlpy" title="psqlpy: 23,568 queries/s (0.16x of fastpg)"><span class="bench-name">psqlpy</span><span class="bench-track"><span class="bench-bar" style="width: 11.45%"><span class="bench-value">0.34x</span></span></span></div>
   </div>
 </div>
+
+## The raw numbers
 
 | workload | speed-up | fastpg | fastest other driver |
 |---|---:|---:|---:|
