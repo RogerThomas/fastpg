@@ -96,6 +96,6 @@ Its smallest lead is binary COPY of 5,000 rows: 1.23x.<!-- home-speed:end -->
 Measured on an x86_64 AWS m8a.2xlarge, 8 vCPU, with PostgreSQL on the same machine.
 All workloads, the raw numbers and how they're measured: [Benchmarks](performance.md).
 
-fastpg is alpha software. See what it can't do yet in [Limitations](limitations.md).
+See what it doesn't do in [Limitations](limitations.md).
 
 fastpg follows Semantic Versioning. Names starting with `_` are internal and can change in any release.
