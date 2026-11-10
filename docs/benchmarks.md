@@ -15,8 +15,8 @@ The [Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflow
 runs it in GitHub Actions: on pushes to `main` that change the library or the benchmarks,
 weekly, on pull requests labelled `benchmark`, and on demand.
 Each run writes its results to the run's summary page, with the raw JSON as an artifact.
-The published results come from a released wheel, installed from PyPI:
-`gh workflow run benchmarks.yml -f fastpg-version=0.1.4`.
+To test a released wheel, installed from PyPI:
+`gh workflow run benchmarks.yml -f fastpg-version=0.2.1`.
 Other runs build fastpg from source, without the release wheels' profile-guided optimisation.
 
 ## Running it
@@ -47,6 +47,7 @@ as in CI.
 The workloads are split into pieces that run in parallel, one instance each, and the results
 are merged into one report per architecture under `bench/results/aws-<run id>/`.
 Every instance it starts is terminated at the end, on Ctrl-C too.
+The published results come from it.
 
 ```sh
 task bench-aws -- --fastpg-version 0.2.1
@@ -54,14 +55,13 @@ task bench-aws -- --fastpg-version 0.2.1
 
 It needs the aws CLI with the `fastpg-benchmarks` profile.
 
-## The setup in CI
+## The setup
 
-* A GitHub-hosted `ubuntu-24.04` runner: AMD EPYC 9V74, 4 vCPUs, 16 GB.
-  GitHub's arm64 runner (`ubuntu-24.04-arm`, 4 vCPUs, 16 GB) gives similar ratios
-  ([run 42530219819](https://github.com/RogerThomas/fastpg/actions/runs/42530219819)).
-* PostgreSQL 18.6 on the same machine, with `synchronous_commit=off`.
+* An x86_64 AWS m8a.2xlarge, 8 vCPU.
+  An arm64 AWS m9g.2xlarge, also 8 vCPU, gives similar ratios.
+* PostgreSQL 18.6 in Docker on the same machine, with `synchronous_commit=off`.
 * CPython 3.14.7 and uvloop.
-* fastpg 0.1.0, asyncpg 0.32.0, psycopg 3.3.6 and psqlpy 0.12.1.
+* fastpg 0.2.1, asyncpg 0.32.0, psycopg 3.3.6 and psqlpy 0.13.1.
 * 3 trials of 3 seconds for each workload and driver. The tables show the median.
 
 ## Drivers
@@ -91,7 +91,7 @@ Why each driver is set up this way:
   So `asyncpg-noreset` is the like-for-like comparison.
   It's safe here because no workload changes session state.
   fastpg's `pool.transaction()` does reset, inside the `COMMIT`'s round trip, so on the
-  transaction workload default `asyncpg` is like for like: there fastpg leads it by 1.27x.
+  transaction workload default `asyncpg` is like for like: there fastpg leads it by 1.58x.
 * **Queueing on busy connections (fastpg).**
   fastpg's pool sends a query to an idle connection first.
   Only when all are busy does it send several queries to one connection.
@@ -172,10 +172,8 @@ No workload reads or sends arrays.
 
 ## Limits
 
-* **Shared, noisy machines.** The runners are shared VMs, with PostgreSQL on the same
-  machine. Compare drivers within one run, not across runs. Treat a few percent as a tie.
-  An [earlier run](https://github.com/RogerThomas/fastpg/actions/runs/39667991922), on a
-  different CPU, was 25-45% slower overall, with ratios within 0.3x of these.
+* **Spot instances.** Each piece of a run gets its own 8-vCPU spot instance, which still
+  varies a little from run to run. Read the ratios, and treat a few percent as a tie.
 * **No network.** Client and server talk over loopback, so round trips are short.
   Over a real network, the round trip adds the same time to every driver.
 * **Client-side only.** The server's CPU isn't measured.
@@ -188,37 +186,37 @@ No workload reads or sends arrays.
 
 ## Full results
 
-From [run 39671855945](https://github.com/RogerThomas/fastpg/actions/runs/39671855945).
+From the x86_64 AWS run of fastpg 0.2.1 on 2026-11-10.
 "vs default asyncpg" compares with asyncpg's default pool, which resets the session after
 every query.
 CPU is the client's CPU time per operation.
 
 | workload | fastpg | fastest other | vs fastest other | vs default asyncpg | CPU/op: fastpg / fastest other |
 |---|---:|---|---:|---:|---:|
-| `point-c1` | 9,284/s | 6,310/s `asyncpg-noreset` | 1.47x | 2.65x | 39 / 85 µs |
-| `point-c16` | 38,402/s | 17,262/s `asyncpg-noreset` | 2.22x | 3.41x | 23 / 56 µs |
-| `point-c64` | 54,019/s | 17,577/s `asyncpg-noreset` | 3.07x | 4.83x | 17 / 55 µs |
-| `point-c16-typed` | 39,774/s | 17,144/s `asyncpg-noreset` | 2.32x | 3.60x | 23 / 57 µs |
-| `page-20-c16` | 19,270/s | 9,480/s `asyncpg-noreset` | 2.03x | 2.65x | 45 / 99 µs |
-| `page-20-c16-typed` | 19,002/s | 9,094/s `asyncpg-noreset` | 2.09x | 2.70x | 48 / 106 µs |
-| `fetch-1000-c4` | 1.14M rows/s | 545k rows/s `asyncpg-noreset` | 2.08x | 2.17x | 0.86 / 1.82 ms |
-| `fetch-1000-c4-typed` | 1.03M rows/s | 476k rows/s `asyncpg` | 2.15x | 2.15x | 0.96 / 2.09 ms |
-| `wide-50-c16` | 7,806/s | 4,889/s `asyncpg-noreset` | 1.60x | 1.84x | 122 / 200 µs |
-| `wide-50-c16-typed` | 6,522/s | 4,668/s `asyncpg-noreset` | 1.40x | 1.65x | 146 / 212 µs |
-| `insert-c16` | 35,860/s | 16,087/s `asyncpg-noreset` | 2.23x | 3.38x | 23 / 60 µs |
-| `update-c16` | 35,766/s | 17,718/s `asyncpg-noreset` | 2.02x | 2.99x | 22 / 52 µs |
-| `transaction-c16` | 5,893/s | 5,205/s `asyncpg-noreset` | 1.13x | 1.27x | 138 / 175 µs |
-| `executemany-1000` | 256k rows/s | 177k rows/s `asyncpg-noreset` | 1.44x | 1.48x | 0.62 / 2.42 ms |
-| `copy-5000` | 1.16M rows/s | 823k rows/s `psycopg` | 1.41x | 2.65x | 1.30 / 5.19 ms |
+| `point-c1` | 49,994/s | 35,562/s `asyncpg-noreset` | 1.41x | 2.41x | 7.7 / 15.9 µs |
+| `point-c16` | 154,049/s | 69,483/s `asyncpg-noreset` | 2.22x | 3.06x | 6.4 / 14.4 µs |
+| `point-c64` | 188,227/s | 63,340/s `asyncpg-noreset` | 2.97x | 4.05x | 5.3 / 15.8 µs |
+| `point-c16-typed` | 149,250/s | 68,617/s `asyncpg-noreset` | 2.18x | 3.00x | 6.7 / 14.6 µs |
+| `page-20-c16` | 72,070/s | 28,748/s `asyncpg-noreset` | 2.51x | 2.96x | 13.8 / 34.8 µs |
+| `page-20-c16-typed` | 66,242/s | 26,936/s `asyncpg-noreset` | 2.46x | 2.87x | 15.0 / 37.1 µs |
+| `fetch-1000-c4` | 2.57M rows/s | 884k rows/s `psycopg` | 2.91x | 3.02x | 0.39 / 1.13 ms |
+| `fetch-1000-c4-typed` | 2.31M rows/s | 823k rows/s `psycopg` | 2.81x | 3.01x | 0.43 / 1.22 ms |
+| `wide-50-c16` | 17,168/s | 10,600/s `asyncpg-noreset` | 1.62x | 1.74x | 58.1 / 94.3 µs |
+| `wide-50-c16-typed` | 14,884/s | 10,044/s `asyncpg-noreset` | 1.48x | 1.60x | 67.1 / 99.6 µs |
+| `insert-c16` | 153,807/s | 67,990/s `asyncpg-noreset` | 2.26x | 3.16x | 6.5 / 14.7 µs |
+| `update-c16` | 167,282/s | 75,569/s `asyncpg-noreset` | 2.21x | 3.15x | 5.8 / 13.2 µs |
+| `transaction-c16` | 29,204/s | 20,489/s `asyncpg-noreset` | 1.43x | 1.58x | 33.2 / 48.8 µs |
+| `executemany-1000` | 407k rows/s | 254k rows/s `asyncpg` | 1.60x | 1.60x | 0.25 / 1.72 ms |
+| `copy-5000` | 1.37M rows/s | 1.11M rows/s `psycopg` | 1.23x | 2.40x | 0.52 / 3.31 ms |
 
 Latency at a steady rate, with every configuration:
 
 | | fastpg | asyncpg | asyncpg-noreset | psycopg | psqlpy |
 |---|---:|---:|---:|---:|---:|
-| p99 at 1,000/s | 855 µs | 1,355 µs | 961 µs | 1,071 µs | 1,458 µs |
-| p99.9 at 1,000/s | 1,092 µs | 2,461 µs | 1,364 µs | 1,566 µs | 2,473 µs |
-| p99 at 4,000/s | 1,034 µs | 2,881 µs | 1,270 µs | 1,368 µs | 2,980 µs |
-| p99.9 at 4,000/s | 2,917 µs | 4,161 µs | 3,114 µs | 2,946 µs | 5,386 µs |
-| event loop busy at 4,000/s | 55% | 67% | 61% | 68% | 66% |
+| p99 at 1,000/s | 617 µs | 702 µs | 636 µs | 678 µs | 747 µs |
+| p99.9 at 1,000/s | 652 µs | 787 µs | 672 µs | 732 µs | 807 µs |
+| p99 at 4,000/s | 598 µs | 688 µs | 633 µs | 656 µs | 817 µs |
+| p99.9 at 4,000/s | 624 µs | 759 µs | 690 µs | 713 µs | 961 µs |
+| event loop busy at 4,000/s | 51% | 52% | 52% | 54% | 52% |
 
 All 297 runs passed the result checks.
