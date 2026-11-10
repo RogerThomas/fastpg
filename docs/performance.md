@@ -16,8 +16,8 @@ It tested fastpg 0.2.1, installed from PyPI.
   ([run 42794789116](https://github.com/RogerThomas/fastpg/actions/runs/42794789116)).
 * Every driver uses its own pool, with its recommended settings, and returns the same msgspec
   Structs.
-* asyncpg runs with its pool's session reset turned off, because fastpg's pool doesn't reset
-  sessions either.
+* asyncpg runs with its pool's session reset turned off, because fastpg's pool only resets a
+  session after a transaction.
 * The smallest lead is `execute_many` of 1,000 rows: 1.44x.
 * Over a real network, the gaps on single queries get smaller.
 
