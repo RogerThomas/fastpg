@@ -1,0 +1,26 @@
+Third-party licences
+====================
+
+fastpg's compiled extension (fastpg/_native) includes the Rust crates below. This file
+lists each crate and the full text of the licence it is used under.
+
+Generated from native/Cargo.lock by cargo-about (`task licences`); do not edit by hand.
+
+Overview
+--------
+{{#each overview}}
+- {{{name}}} ({{id}})
+{{/each}}
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}} ({{id}})
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

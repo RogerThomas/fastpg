@@ -9,8 +9,9 @@
 #   quick; CI runs both.
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
-# Archived measurements, kept byte for byte next to the notes that cite them.
-exclude: ^(bench/results|notes/eval)/
+# Archived measurements, kept byte for byte next to the notes that cite them, and
+# THIRD_PARTY_LICENSES, kept exactly as `task licences` writes it.
+exclude: ^((bench/results|notes/eval)/|THIRD_PARTY_LICENSES$)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
