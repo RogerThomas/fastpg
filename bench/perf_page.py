@@ -50,7 +50,7 @@ CHART = (
 )
 CHART_SUMMARY = "primary-key lookups, pages of rows, 1,000-row fetches and single-row writes"
 # The home page's smaller chart: its workloads, ordered by fastpg's lead like the chart above.
-HOME_CHART = ("point-c16-typed", "fetch-1000-c4-typed", "insert-c16")
+HOME_CHART = ("point-c16-typed", "page-20-c16-typed", "fetch-1000-c4-typed", "insert-c16")
 # Each chart group's rows, top to bottom: configuration and label.
 ROWS = (
     ("fastpg", "fastpg"),

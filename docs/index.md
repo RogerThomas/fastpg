@@ -57,7 +57,7 @@ New here? Start with [Getting started](guide/getting-started.md).
 
 **On primary-key lookups, pages of rows, 1,000-row fetches and single-row writes, fastpg does 2.2–3.0x the work of the fastest other driver.**
 
-<div class="bench-chart" role="img" aria-label="Bar chart of throughput relative to the fastest other driver: fastpg does 2.18x to 2.81x on each of the three workloads.">
+<div class="bench-chart" role="img" aria-label="Bar chart of throughput relative to the fastest other driver: fastpg does 2.18x to 2.81x on each of the four workloads.">
   <div class="bench-axis">
     Throughput, relative to the fastest other driver (1x).<br>
     A task is one asyncio task sending queries one after another. The tasks run at the same time, sharing one pool of 16 connections per driver.
@@ -68,6 +68,13 @@ New here? Start with [Getting started](guide/getting-started.md).
     <div class="bench-row bench-row--psycopg" title="psycopg: 823k rows/s (0.36x of fastpg)"><span class="bench-name">psycopg</span><span class="bench-track"><span class="bench-bar" style="width: 33.33%"><span class="bench-value">1.00x</span></span></span></div>
     <div class="bench-row bench-row--asyncpg" title="asyncpg: 761k rows/s (0.33x of fastpg)"><span class="bench-name">asyncpg</span><span class="bench-track"><span class="bench-bar" style="width: 30.82%"><span class="bench-value">0.92x</span></span></span></div>
     <div class="bench-row bench-row--psqlpy" title="psqlpy: 518k rows/s (0.22x of fastpg)"><span class="bench-name">psqlpy</span><span class="bench-track"><span class="bench-bar" style="width: 20.97%"><span class="bench-value">0.63x</span></span></span></div>
+  </div>
+  <div class="bench-group">
+    <div class="bench-caption">Page of 20 rows into Structs, 16 tasks</div>
+    <div class="bench-row bench-row--fastpg" title="fastpg: 66,242 queries/s (2.46x of asyncpg)"><span class="bench-name">fastpg</span><span class="bench-track"><span class="bench-bar" style="width: 81.98%"><span class="bench-value">2.46x</span></span></span></div>
+    <div class="bench-row bench-row--asyncpg" title="asyncpg: 26,936 queries/s (0.41x of fastpg)"><span class="bench-name">asyncpg</span><span class="bench-track"><span class="bench-bar" style="width: 33.33%"><span class="bench-value">1.00x</span></span></span></div>
+    <div class="bench-row bench-row--psycopg" title="psycopg: 22,316 queries/s (0.34x of fastpg)"><span class="bench-name">psycopg</span><span class="bench-track"><span class="bench-bar" style="width: 27.62%"><span class="bench-value">0.83x</span></span></span></div>
+    <div class="bench-row bench-row--psqlpy" title="psqlpy: 12,644 queries/s (0.19x of fastpg)"><span class="bench-name">psqlpy</span><span class="bench-track"><span class="bench-bar" style="width: 15.65%"><span class="bench-value">0.47x</span></span></span></div>
   </div>
   <div class="bench-group">
     <div class="bench-caption">Single-row INSERT, 16 tasks</div>
