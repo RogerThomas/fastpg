@@ -146,7 +146,11 @@ def _chart(chart: list[_Workload]) -> list[str]:
         lines += [
             '  <div class="bench-group">',
             f'    <div class="bench-caption">{workload.title}</div>',
-            *(_row(workload, config, label) for config, label in ROWS),
+            # Fastest first: each group reads as a ranking, its winner under the heading.
+            *(
+                _row(workload, config, label)
+                for config, label in sorted(ROWS, key=lambda row: -workload.ops[row[0]])
+            ),
             "  </div>",
         ]
     return [*lines, "</div>"]

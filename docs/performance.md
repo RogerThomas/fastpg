@@ -36,8 +36,8 @@ Its smallest lead is binary COPY of 5,000 rows: 1.23x.
   <div class="bench-group">
     <div class="bench-caption">1,000 rows into Structs, 4 tasks</div>
     <div class="bench-row bench-row--fastpg" title="fastpg: 2.31M rows/s (2.81x of psycopg)"><span class="bench-name">fastpg</span><span class="bench-track"><span class="bench-bar" style="width: 93.72%"><span class="bench-value">2.81x</span></span></span></div>
-    <div class="bench-row bench-row--asyncpg" title="asyncpg: 761k rows/s (0.33x of fastpg)"><span class="bench-name">asyncpg</span><span class="bench-track"><span class="bench-bar" style="width: 30.82%"><span class="bench-value">0.92x</span></span></span></div>
     <div class="bench-row bench-row--psycopg" title="psycopg: 823k rows/s (0.36x of fastpg)"><span class="bench-name">psycopg</span><span class="bench-track"><span class="bench-bar" style="width: 33.33%"><span class="bench-value">1.00x</span></span></span></div>
+    <div class="bench-row bench-row--asyncpg" title="asyncpg: 761k rows/s (0.33x of fastpg)"><span class="bench-name">asyncpg</span><span class="bench-track"><span class="bench-bar" style="width: 30.82%"><span class="bench-value">0.92x</span></span></span></div>
     <div class="bench-row bench-row--psqlpy" title="psqlpy: 518k rows/s (0.22x of fastpg)"><span class="bench-name">psqlpy</span><span class="bench-track"><span class="bench-bar" style="width: 20.97%"><span class="bench-value">0.63x</span></span></span></div>
   </div>
   <div class="bench-group">
