@@ -1,10 +1,12 @@
 #!yeet
-"""Rebuild the Benchmarks page's chart and table (``docs/performance.md``) from a compare JSON.
+"""Rebuild the speed charts on the Benchmarks page and the home page from a compare JSON.
 
-Rewrites only what sits between the page's ``bench-chart:start`` and ``bench-chart:end``
-markers: the headline, the smallest lead, the bar chart and the table under it. The chart's
-bars are each driver's median throughput over the fastest other driver's, on one scale from
-0 to ``SCALE``; its colours are in ``docs/stylesheets/extra.css``.
+On the Benchmarks page (``docs/performance.md``) it rewrites only what sits between the
+``bench-chart:start`` and ``bench-chart:end`` markers: the headline, the smallest lead, the bar
+chart and the table under it. On the home page (``docs/index.md``) it rewrites what sits
+between ``home-speed:start`` and ``home-speed:end``: the same headline, a smaller chart and
+the smallest lead. The chart's bars are each driver's median throughput over the fastest other
+driver's, on one scale from 0 to ``SCALE``; its colours are in ``docs/stylesheets/extra.css``.
 
     uv run yeet ./bench/perf_page.py bench/results/aws-<run id>/x86_64/compare-<timestamp>.json
 """
@@ -17,9 +19,7 @@ import msgspec
 from comparison import report
 from yeetr import Arg
 
-PAGE = Path(__file__).resolve().parent.parent / "docs" / "performance.md"
-START = "<!-- bench-chart:start -->"
-END = "<!-- bench-chart:end -->"
+DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 # Every workload's name on the page.
 NAMES: dict[str, str] = {
@@ -49,6 +49,8 @@ CHART = (
     "update-c16",
 )
 CHART_SUMMARY = "primary-key lookups, pages of rows, 1,000-row fetches and single-row writes"
+# The home page's smaller chart: its workloads, ordered by fastpg's lead like the chart above.
+HOME_CHART = ("point-c16-typed", "page-20-c16-typed", "fetch-1000-c4-typed", "insert-c16")
 # Each chart group's rows, top to bottom: configuration and label.
 ROWS = (
     ("fastpg", "fastpg"),
@@ -131,12 +133,13 @@ def _row(workload: _Workload, config: str, label: str) -> str:
     )
 
 
-def _chart(chart: list[_Workload], pool_size: int) -> list[str]:
+def _chart(chart: list[_Workload], pool_size: int, *, table: bool) -> list[str]:
     leads = [w.lead() for w in chart]
+    count = ("zero", "one", "two", "three", "four", "five", "six")[len(chart)]
+    where = " in the table below" if table else ""
     summary = (
         f"Bar chart of throughput relative to the fastest other driver: fastpg does"
-        f" {_ratio(min(leads))} to {_ratio(max(leads))} on each of the six workloads in the"
-        " table below."
+        f" {_ratio(min(leads))} to {_ratio(max(leads))} on each of the {count} workloads{where}."
     )
     lines = [
         f'<div class="bench-chart" role="img" aria-label="{summary}">',
@@ -175,42 +178,81 @@ def _table(chart: list[_Workload]) -> list[str]:
     return lines
 
 
-def render(data: report.Report) -> str:
-    """The page's text between the markers."""
-    workloads = _workloads(data)
-    # Biggest lead first, in the chart and the table alike.
-    chart = sorted((workloads[name] for name in CHART), key=lambda w: -w.lead())
+def _sorted(workloads: dict[str, _Workload], names: tuple[str, ...]) -> list[_Workload]:
+    """``names``' workloads, biggest lead first."""
+    chart = sorted((workloads[name] for name in names), key=lambda w: -w.lead())
     for workload in chart:
         if workload.lead() > SCALE:
             msg = f"fastpg leads {workload.name} by more than {SCALE}x: raise SCALE"
             raise SystemExit(msg)
-    leads = [w.lead() for w in chart]
+    return chart
+
+
+def _headline(workloads: dict[str, _Workload]) -> str:
+    """The bold line over both pages' charts: fastpg's lead across the Benchmarks chart."""
+    leads = [w.lead() for w in _sorted(workloads, CHART)]
+    span = f"{min(leads):.1f}\N{EN DASH}{max(leads):.1f}x"
+    return f"**On {CHART_SUMMARY}, fastpg does {span} the work of the fastest other driver.**"
+
+
+def _smallest(workloads: dict[str, _Workload]) -> str:
     smallest = min(workloads.values(), key=_Workload.lead)
     name = smallest.title[0].lower() + smallest.title[1:]
-    span = f"{min(leads):.1f}\N{EN DASH}{max(leads):.1f}x"
+    return f"Its smallest lead is {name}: {_ratio(smallest.lead())}."
+
+
+def render(data: report.Report) -> str:
+    """The Benchmarks page's text between its markers."""
+    workloads = _workloads(data)
+    chart = _sorted(workloads, CHART)
     lines = [
-        f"**On {CHART_SUMMARY}, fastpg does {span} the work of the fastest other driver.**",
+        _headline(workloads),
         "",
-        f"Its smallest lead is {name}: {_ratio(smallest.lead())}.",
+        _smallest(workloads),
         "",
-        *_chart(chart, data.settings.pool_size),
+        *_chart(chart, data.settings.pool_size, table=True),
         "",
         "## The raw numbers",
         "",
         *_table(chart),
+        "",
+        "",
     ]
     return "\n".join(lines)
+
+
+def render_home(data: report.Report) -> str:
+    """The home page's text between its markers.
+
+    It ends on the smallest lead with no blank line, so the page's next lines (the machine
+    and the link to the Benchmarks page) carry on in the same paragraph.
+    """
+    workloads = _workloads(data)
+    lines = [
+        _headline(workloads),
+        "",
+        *_chart(_sorted(workloads, HOME_CHART), data.settings.pool_size, table=False),
+        "",
+        _smallest(workloads),
+    ]
+    return "\n".join(lines)
+
+
+def _rewrite(page: Path, region: str, text: str) -> None:
+    """Replace what sits between ``page``'s ``region`` markers with ``text``."""
+    start, end = f"<!-- {region}:start -->", f"<!-- {region}:end -->"
+    head, found_start, rest = page.read_text().partition(start)
+    _, found_end, tail = rest.partition(end)
+    if not found_start or not found_end:
+        msg = f"{page} has no {start} ... {end} region"
+        raise SystemExit(msg)
+    page.write_text(f"{head}{start}\n\n{text}{end}{tail}")
 
 
 def main(
     compare_json: Annotated[Path, Arg(help="A compare-<timestamp>.json", exists=True)],
 ) -> None:
-    """Rewrite the Benchmarks page's chart and table from ``compare_json``."""
+    """Rewrite the Benchmarks page's and the home page's speed charts from ``compare_json``."""
     data = msgspec.json.decode(compare_json.read_bytes(), type=report.Report)
-    page = PAGE.read_text()
-    head, start, rest = page.partition(START)
-    _, end, tail = rest.partition(END)
-    if not start or not end:
-        msg = f"{PAGE} has no {START} ... {END} region"
-        raise SystemExit(msg)
-    PAGE.write_text(f"{head}{START}\n\n{render(data)}\n\n{END}{tail}")
+    _rewrite(DOCS / "performance.md", "bench-chart", render(data))
+    _rewrite(DOCS / "index.md", "home-speed", render_home(data))

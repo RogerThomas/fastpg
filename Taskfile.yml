@@ -191,7 +191,7 @@ tasks:
 
   bench-page:
     desc: >-
-      Rebuild the Benchmarks page's chart and table from a compare JSON
+      Rebuild the speed charts on the Benchmarks page and the home page from a compare JSON
       (`task bench-page -- <path>`)
     cmd: uv run yeet ./bench/perf_page.py {{.CLI_ARGS}}
 
