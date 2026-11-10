@@ -172,7 +172,8 @@ def _table(chart: list[_Workload]) -> list[str]:
 def render(data: report.Report) -> str:
     """The page's text between the markers."""
     workloads = _workloads(data)
-    chart = [workloads[name] for name in CHART]
+    # Biggest lead first, in the chart and the table alike.
+    chart = sorted((workloads[name] for name in CHART), key=lambda w: -w.lead())
     for workload in chart:
         if workload.lead() > SCALE:
             msg = f"fastpg leads {workload.name} by more than {SCALE}x: raise SCALE"
