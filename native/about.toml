@@ -1,0 +1,33 @@
+# cargo-about (https://embarkstudios.github.io/cargo-about/): `task licences` writes
+# THIRD_PARTY_LICENSES (shipped in the wheels and the sdist) from this file and about.hbs, and
+# the CI job "Dependencies (cargo-deny, cargo-about)" fails if the committed file is out of date.
+
+# The same list as deny.toml's [licenses] allow, in order of preference where a crate offers a
+# choice. A licence missing here fails cargo-about; one missing there fails cargo-deny.
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+]
+
+# The platforms release.yml builds wheels for: crates only other platforms use are left out.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+# Crates used only by build.rs or by tests aren't in the extension.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# fastpg-native itself: its licence is the top-level LICENSE.
+[private]
+ignore = true
