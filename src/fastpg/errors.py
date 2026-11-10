@@ -20,15 +20,19 @@ FastPGError (alias: Error)
 └── DatabaseError                 error reported by the server (has .sqlstate etc.)
     ├── DataError (22)
     ├── IntegrityError (23)  → UniqueViolationError, ForeignKeyViolationError, ...
-    ├── TransactionError (40) → SerializationError, DeadlockDetectedError
-    ├── ProgrammingError (42) → SQLSyntaxError, UndefinedTableError, UndefinedColumnError
-    ├── OperationalError (08, 53, 57) the database can't be reached or used
+    ├── ProgrammingError (10, 20, 21, 26, 34, 3D, 3F, 42, 44, P0)
+    │                         → SQLSyntaxError, UndefinedTableError, UndefinedColumnError
+    ├── OperationalError (08, 27, 2F, 38, 39, 3B, 40, 53, 54, 55, 57, 58, F0, HV)
+    │   ├── TransactionError (40) → SerializationError, DeadlockDetectedError
     │   ├── ConnectError          a connection couldn't be established (no .sqlstate)
     │   ├── ConnectionClosedError the connection is closed or was lost (no .sqlstate)
     │   ├── AuthenticationError (28)
     │   └── QueryCanceledError (57014)
-    ├── InternalError (XX)
+    ├── InternalError (24, 25, 2B, 2D, XX)
     └── NotSupportedError (0A)
+
+The SQLSTATE classes map as psycopg 3 maps them. A class not listed here raises
+a plain DatabaseError.
 """
 
 from typing import ClassVar
@@ -197,20 +201,10 @@ class CheckViolationError(IntegrityError):
     """23514."""
 
 
-class TransactionError(DatabaseError):
-    """SQLSTATE class 40: transaction rollback."""
-
-
-class SerializationError(TransactionError):
-    """40001."""
-
-
-class DeadlockDetectedError(TransactionError):
-    """40P01."""
-
-
 class ProgrammingError(DatabaseError):
-    """SQLSTATE class 42: syntax error or access rule violation."""
+    """A mistake in the SQL or in what it refers to: SQLSTATE classes 10, 20, 21, 26, 34,
+    3D, 3F, 42, 44 and P0 (e.g. a syntax error, a missing table, schema or database, or a
+    PL/pgSQL ``RAISE EXCEPTION``)."""
 
 
 class SQLSyntaxError(ProgrammingError):
@@ -227,8 +221,20 @@ class UndefinedTableError(ProgrammingError):
 
 class OperationalError(DatabaseError):
     """The database can't be reached or used: connecting failed, the connection was lost,
-    or SQLSTATE classes 08, 28, 53, 57 (connection, authentication, resources, operator
-    intervention)."""
+    or SQLSTATE classes 08, 27, 28, 2F, 38, 39, 3B, 40, 53, 54, 55, 57, 58, F0 and HV (e.g.
+    authentication, out of resources, a lock not available, a server shutting down)."""
+
+
+class TransactionError(OperationalError):
+    """SQLSTATE class 40: transaction rollback."""
+
+
+class SerializationError(TransactionError):
+    """40001."""
+
+
+class DeadlockDetectedError(TransactionError):
+    """40P01."""
 
 
 class ConnectError(OperationalError):
@@ -250,7 +256,8 @@ class QueryCanceledError(OperationalError):
 
 
 class InternalError(DatabaseError):
-    """SQLSTATE class XX: internal error."""
+    """SQLSTATE classes 24, 25, 2B, 2D and XX: e.g. a query in a transaction that an
+    earlier error aborted (25P02), or an internal server error."""
 
 
 class NotSupportedError(DatabaseError):
@@ -273,16 +280,41 @@ class _SQLStateRegistry:
         "57014": QueryCanceledError,
     }
     BY_CLASS: ClassVar[dict[str, type[DatabaseError]]] = {
-        "08": OperationalError,
-        "0A": NotSupportedError,
-        "22": DataError,
-        "23": IntegrityError,
-        "28": AuthenticationError,
-        "40": TransactionError,
-        "42": ProgrammingError,
-        "53": OperationalError,
-        "57": OperationalError,
-        "XX": InternalError,
+        # The PEP 249 mapping psycopg 3 uses, with subclasses of OperationalError for 28
+        # (AuthenticationError) and 40 (TransactionError).
+        "08": OperationalError,  # connection exception
+        "0A": NotSupportedError,  # feature not supported
+        "10": ProgrammingError,  # XQuery error
+        "20": ProgrammingError,  # case not found
+        "21": ProgrammingError,  # cardinality violation
+        "22": DataError,  # data exception
+        "23": IntegrityError,  # integrity constraint violation
+        "24": InternalError,  # invalid cursor state
+        "25": InternalError,  # invalid transaction state
+        "26": ProgrammingError,  # invalid SQL statement name
+        "27": OperationalError,  # triggered data change violation
+        "28": AuthenticationError,  # invalid authorization specification
+        "2B": InternalError,  # dependent privilege descriptors still exist
+        "2D": InternalError,  # invalid transaction termination
+        "2F": OperationalError,  # SQL routine exception
+        "34": ProgrammingError,  # invalid cursor name
+        "38": OperationalError,  # external routine exception
+        "39": OperationalError,  # external routine invocation exception
+        "3B": OperationalError,  # savepoint exception
+        "3D": ProgrammingError,  # invalid catalog name
+        "3F": ProgrammingError,  # invalid schema name
+        "40": TransactionError,  # transaction rollback
+        "42": ProgrammingError,  # syntax error or access rule violation
+        "44": ProgrammingError,  # WITH CHECK OPTION violation
+        "53": OperationalError,  # insufficient resources
+        "54": OperationalError,  # program limit exceeded
+        "55": OperationalError,  # object not in prerequisite state
+        "57": OperationalError,  # operator intervention
+        "58": OperationalError,  # system error
+        "F0": OperationalError,  # configuration file error
+        "HV": OperationalError,  # foreign data wrapper error
+        "P0": ProgrammingError,  # PL/pgSQL error
+        "XX": InternalError,  # internal error
     }
 
     @classmethod

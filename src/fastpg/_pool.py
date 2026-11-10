@@ -60,7 +60,7 @@ from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import Template, TemplateCompiler
 from fastpg._writes import Table
-from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError
+from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError, InterfaceError
 
 
 @dataclass(slots=True, eq=False)
@@ -181,6 +181,12 @@ async def _connect_all(dsn: str, count: int, statement_cache_size: int) -> list[
         raise
 
 
+_OTHER_LOOP = (
+    "this pool belongs to a different event loop (the one that created it): create it inside"
+    " the loop that uses it"
+)
+
+
 def _is_fatal(error: BaseException) -> bool:
     """Whether ``error`` means the session is gone (it may not be ``closed`` just yet)."""
     if isinstance(error, ConnectionClosedError):
@@ -290,7 +296,7 @@ class Pool:
         default_factory=deque[asyncio.Future[_Entry]],
     )
     _tasks: set[asyncio.Task[Any]] = field(init=False, repr=False, default_factory=set[Any])
-    _closing: asyncio.Task[None] | None = field(init=False, repr=False, default=None)
+    _closing: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _wakeup: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _maintainer: asyncio.Task[None] = field(init=False, repr=False)
 
@@ -735,6 +741,10 @@ class Pool:
         into: type[Any] | None,
         strategy: Strategy,
     ) -> Any:  # noqa: ANN401 - typed by the public overloads
+        # First: from another loop, awaiting the result (a future of the pool's loop) would
+        # fail only once the statement was sent, or queued to be sent later.
+        if asyncio.get_running_loop() is not self._loop:
+            raise InterfaceError(_OTHER_LOOP)
         if isinstance(query, Template):
             # Compile once here: routing learns per SQL text, and the connection gets plain SQL.
             query, params = self._templates.bind(query, params)
@@ -787,6 +797,8 @@ class Pool:
 
     async def _take(self) -> _Entry:
         """Check out an idle connection, waiting (FIFO) for one if needed."""
+        if asyncio.get_running_loop() is not self._loop:  # as in _query
+            raise InterfaceError(_OTHER_LOOP)
         if self._closing is not None:
             msg = "pool is closed"
             raise ConnectionClosedError(msg)
@@ -869,7 +881,24 @@ class Pool:
         for entry in self._entries:
             entry.conn.terminate()
 
+    async def _abandon_all(self) -> None:
+        """Close every connection at once, for a pool whose event loop is closed: none of its
+        tasks (upkeep, connects, closes) will run again."""
+        if self._closing is None:
+            self._closing = self._loop.create_future()
+            self._closing.set_result(None)
+        for entry in self._entries:
+            await entry.conn.close()  # from another loop, with its own closed: closes at once
+            self._set_state(entry, _Entry.GONE)
+            self._free_slot(entry)
+        self._entries.clear()
+
     async def _close(self) -> None:
+        if asyncio.get_running_loop() is not self._loop:  # its tasks run on the pool's loop
+            if not self._loop.is_closed():
+                raise InterfaceError(_OTHER_LOOP)
+            await self._abandon_all()
+            return
         if self._closing is None:
             self._closing = self._loop.create_task(self._shutdown())
         try:

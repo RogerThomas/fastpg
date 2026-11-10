@@ -67,6 +67,26 @@ So for queries you know are slow:
 * set a `statement_timeout`;
 * or pass `max_inflight_per_conn=1` so queries never queue on a busy connection.
 
+## One event loop
+
+A pool belongs to the event loop that created it.
+Used from another loop, it raises `InterfaceError` and sends nothing.
+
+With pytest-asyncio, give a pool fixture a `loop_scope` that matches its `scope`, and run
+the tests that use it in that loop too:
+
+```python
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def pool():
+    async with await fastpg.create_pool("postgresql://user:pw@localhost/db") as pool:
+        yield pool
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_count(pool):
+    assert await pool.select_one("SELECT 1") == (1,)
+```
+
 ## Good to know
 
 * Put `connect_timeout` (in seconds) in the DSN, e.g. `?connect_timeout=10`.
@@ -78,5 +98,5 @@ So for queries you know are slow:
 * `pool.close()` lets running queries finish.
   To limit how long it waits, wrap it in `asyncio.timeout()`.
 * `pool.stats()` shows how many connections are open, idle and busy.
-* A pool belongs to one event loop. Each process needs its own, so allow
-  `processes × max_size` connections on the server.
+* Each process needs its own pool, so allow `processes × max_size` connections on the
+  server.
