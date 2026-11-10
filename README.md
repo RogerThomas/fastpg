@@ -106,14 +106,15 @@ A `list[Item]` field of Structs reads columns named `items__sku`, `items__qty`, 
 
 | workload | fastpg | fastest other driver | speed-up |
 |---|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 23,889/s | 10,231/s (asyncpg) | **2.33x** |
-| Page of 20 rows into Structs, 16 tasks | 12,181/s | 5,981/s (asyncpg) | **2.04x** |
-| 1,000 rows into Structs, 4 tasks | 813k rows/s | 358k rows/s (asyncpg) | **2.27x** |
-| Single-row INSERT, 16 tasks | 23,817/s | 9,584/s (asyncpg) | **2.48x** |
-| Binary COPY, 5,000 rows | 932k rows/s | 632k rows/s (psycopg) | **1.48x** |
+| Primary-key lookup into a Struct, 16 tasks | 149,250/s | 68,617/s (asyncpg) | **2.18x** |
+| Page of 20 rows into Structs, 16 tasks | 66,242/s | 26,936/s (asyncpg) | **2.46x** |
+| 1,000 rows into Structs, 4 tasks | 2.31M rows/s | 823k rows/s (psycopg) | **2.81x** |
+| Single-row INSERT, 16 tasks | 153,807/s | 67,990/s (asyncpg) | **2.26x** |
+| Binary COPY, 5,000 rows | 1.37M rows/s | 1.11M rows/s (psycopg) | **1.23x** |
 
-Measured in CI on one shared x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
-The smallest lead, `executemany` of 1,000 rows, is 1.44x
+Measured on an x86_64 AWS m8a.2xlarge, 8 vCPU, with PostgreSQL on the same machine.
+An arm64 AWS m9g.2xlarge, also 8 vCPU, gives similar ratios.
+The smallest lead, binary COPY of 5,000 rows, is 1.23x
 ([details](https://rogerthomas.github.io/fastpg/performance/)).
 
 ## Documentation
