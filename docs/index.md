@@ -59,7 +59,7 @@ New here? Start with [Getting started](guide/getting-started.md).
 | Page of 20 rows into Structs, 16 tasks | 12,181/s | 5,981/s (asyncpg) | 2.04x |
 | 1,000 rows into Structs, 4 tasks | 813k rows/s | 358k rows/s (asyncpg) | 2.27x |
 | Single-row INSERT, 16 tasks | 23,817/s | 9,584/s (asyncpg) | 2.48x |
-| Binary COPY, 5,000 rows | 930k rows/s | 630k rows/s (psycopg) | 1.48x |
+| Binary COPY, 5,000 rows | 932k rows/s | 632k rows/s (psycopg) | 1.48x |
 
 Measured on an x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
 All workloads and how they're measured: [Benchmarks](performance.md).
