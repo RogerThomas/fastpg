@@ -59,6 +59,7 @@ keeps the traceback's frames alive.
 | 3 | nested savepoints, inner ones rolled back | correct | no | | `tx::test_nested_savepoints_with_the_inner_one_rolled_back` |
 | 3 | second transaction while one is active; re-entering one | `InterfaceError` | no | | `tx::test_a_second_transaction_while_one_is_active_is_refused`, `tx::test_a_transaction_object_is_entered_once` |
 | 3 | queries through a `Transaction` after its block, or never entered | ran silently outside the transaction (autocommit); after `pool.transaction()`, inside another caller's transaction on the same pooled connection | **yes** | `4903cdc` | `tx::test_queries_through_a_*`, `tx::test_a_finished_pool_transaction_cannot_reach_its_connection_again` |
+| 3 | a connection from `pool.acquire()` kept and used after its block | ran on the pooled session, inside whatever the pool's next caller was doing (a write landed in another caller's transaction) | **yes** | #91 | `test_pool.py::test_a_connection_kept_after_acquire_*`, `test_pool.py::test_a_transaction_on_an_acquired_connection_ends_with_its_block` |
 | 3 | `pool.transaction()` raising | rolled back, session reset (settings) on release | no | | `tx::test_pool_transaction_that_raises_leaves_the_session_clean` |
 | 3 | other tasks' queries through the connection during a transaction | run inside it, as `Connection.transaction`'s docstring says | no (documented) | | `tx::test_other_tasks_queries_on_the_connection_run_inside_its_transaction` |
 | 4 | `asyncio.run()` ends with connections and a pool open | `ResourceWarning`, but 4 descriptors and the native state leaked per connection for good | **yes** | `8ac641d` | `loop::test_connections_left_open_when_the_loop_closes_release_everything` |
@@ -108,6 +109,15 @@ they ran in autocommit. The native `Connection` can now hand out a *transaction 
 BEGIN succeeds and deactivated as the block exits (before COMMIT / ROLLBACK, which, like
 SAVEPOINTs, go through the session handle). Cost: one atomic load per operation, on views
 only.
+
+**A connection kept after `pool.acquire()` refuses to run** (#91). `acquire()` yielded
+the pool's own `Connection`, so a reference kept past the block still reached the session
+once the pool had handed it on. It now yields a `Checkout`, a `Connection` on an *acquire
+view* (`acquire_view()`), switched off as the block ends, before the session reset. Views
+now hold a gate (the flag plus the error it raises) and the gate of the view they were made
+from, so a transaction begun on the checkout is refused too once the block ends. `close()`
+and `terminate()` check the gates as well: a kept checkout can't close the pool's
+connection. Cost: one more atomic load per operation, on checkouts only.
 
 **Pool options validated before connecting** (`4d7d025`): `max_lifetime` / `max_idle` must
 be `None` or positive and finite, `statement_cache_size >= 0`. `0` used to mean "never";
@@ -209,13 +219,6 @@ refuse at submission. The cheap half is in Rust: an operation submitted from a t
 than the loop's raises `InterfaceError` (the thread key is already compared in `pump`).
 Another loop on the same thread needs `asyncio.get_running_loop() is self._loop` per call
 (~50 ns), which could sit behind a debug flag.
-
-### A connection from `pool.acquire()` still works after its block
-
-Documented ("don't keep using `conn` after the block"), but it's the same hazard the
-transaction view fixed: statements land on a connection the pool has handed to someone
-else. Proposed: yield a `Connection` built on a view of the native handle (the
-`transaction_view` mechanism, generalised) and deactivate it on release.
 
 ### Minor
 
