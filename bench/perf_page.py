@@ -122,13 +122,12 @@ def _row(workload: _Workload, config: str, label: str) -> str:
     else:
         versus = f"{_ratio(workload.ops[config] / workload.ops['fastpg'])} of fastpg"
     width = workload.lead(config) / SCALE * 100
-    value = f'<span class="bench-value">{_ratio(workload.lead())}</span>'
+    value = f'<span class="bench-value">{_ratio(workload.lead(config))}</span>'
     return (
-        f'    <div class="bench-row{" bench-row--fastpg" if config == "fastpg" else ""}"'
-        f' title="{label}: {amount} ({versus})">'
+        f'    <div class="bench-row bench-row--{label}" title="{label}: {amount} ({versus})">'
         f'<span class="bench-name">{label}</span>'
         f'<span class="bench-track"><span class="bench-bar" style="width: {width:.2f}%">'
-        f"{value if config == 'fastpg' else ''}</span></span></div>"
+        f"{value}</span></span></div>"
     )
 
 
