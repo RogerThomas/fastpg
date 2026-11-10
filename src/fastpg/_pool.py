@@ -37,7 +37,7 @@ import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
 from dataclasses import InitVar, dataclass, field
 from types import TracebackType
 from typing import Any, ClassVar, Concatenate, LiteralString, Self, overload
@@ -45,6 +45,7 @@ from typing import Any, ClassVar, Concatenate, LiteralString, Self, overload
 import msgspec
 
 from fastpg._connection import (
+    Checkout,
     Connection,
     Fetcher,
     IsolationLevel,
@@ -53,6 +54,7 @@ from fastpg._connection import (
     cancelling,
     check_statement_cache_size,
     connect,
+    context_manager,
 )
 from fastpg._group import grouping_for
 from fastpg._named import NamedBinder, NamedParams
@@ -1179,23 +1181,24 @@ class Pool:
         """
         return await self._bulk(Connection.copy_in, table, rows, columns=columns)
 
-    @asynccontextmanager
+    @context_manager
     async def acquire(self) -> AsyncGenerator[Connection]:
         """Check out a connection for exclusive use: ``async with pool.acquire() as conn``.
 
         Waits (FIFO) for an idle connection, up to ``max_wait`` seconds; busy ones are drained
         of shared statements if the pool can't grow. On exit the session is reset (settings,
         role, advisory locks, cursors, LISTENs, temp tables; a transaction left open is rolled
-        back; prepared statements are kept) and the connection rejoins shared rotation. Don't
-        keep using ``conn`` after the block.
+        back; prepared statements are kept) and the connection rejoins shared rotation.
+        ``conn`` works only inside the block: after it, its methods raise ``InterfaceError``.
         """
         entry = await self._take()
         try:
-            yield entry.conn
+            with Checkout.of(entry.conn) as conn:
+                yield conn
         finally:
             await self._give_back(entry, reset=True)
 
-    @asynccontextmanager
+    @context_manager
     async def transaction(
         self,
         *,

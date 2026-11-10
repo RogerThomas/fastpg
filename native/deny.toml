@@ -1,5 +1,7 @@
-# cargo-deny (https://embarkstudios.github.io/cargo-deny/): the CI job "Dependencies (cargo-deny)"
-# runs `cargo deny check` against native/Cargo.toml with this file.
+# cargo-deny (https://embarkstudios.github.io/cargo-deny/): the CI job "Dependencies (cargo-deny,
+# cargo-about)" runs `cargo deny check` against native/Cargo.toml with this file.
+#
+# [licenses] allow is also about.toml's `accepted` list: keep the two the same.
 
 [graph]
 all-features = true

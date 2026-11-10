@@ -494,12 +494,20 @@ async fn serve(
     shared.post(closed, Outcome::Done);
 }
 
+/// A view's switch (see `transaction_view`, `acquire_view`): while it is off, every
+/// operation through the view, or through a view made from it, is refused with `refused`.
+struct Gate {
+    open: AtomicBool,
+    refused: &'static str,
+    /// The gate of the view this one was made from, if any: it must be open too.
+    outer: Option<Arc<Gate>>,
+}
+
 #[pyclass(frozen, module = "fastpg._native")]
 pub struct Connection {
     shared: Arc<Shared>,
-    /// Only for a transaction's view of the session (see `transaction_view`): its
-    /// operations are refused while this is false. `None` for the connection's own handle.
-    active: Option<AtomicBool>,
+    /// A view's gate; `None` for the connection's own handle.
+    gate: Option<Arc<Gate>>,
 }
 
 #[pymethods]
@@ -532,7 +540,7 @@ impl Connection {
                 event_loop,
                 cancels: Cancels::default(),
             }),
-            active: None,
+            gate: None,
         })
     }
 
@@ -541,16 +549,27 @@ impl Connection {
     /// it would run outside the transaction (on a pooled connection, maybe inside someone
     /// else's).
     fn transaction_view(&self) -> Self {
-        Self {
-            shared: self.shared.clone(),
-            active: Some(AtomicBool::new(false)),
-        }
+        self.view(
+            false,
+            "the transaction is not active: use it inside its `async with` block",
+        )
     }
 
-    /// Allow or refuse a transaction view's operations (no-op on the connection's own handle).
+    /// A handle on the same session for a pool's `acquire()` block, refused
+    /// (`InterfaceError`) once `set_active(False)`: the block has ended and the pool may have
+    /// handed the session to another caller. Also refused through `close()` and
+    /// `terminate()`, and through transaction views made from it.
+    fn acquire_view(&self) -> Self {
+        self.view(
+            true,
+            "this connection was released back to the pool when its acquire() block ended",
+        )
+    }
+
+    /// Allow or refuse a view's operations (no-op on the connection's own handle).
     fn set_active(&self, active: bool) {
-        if let Some(flag) = &self.active {
-            flag.store(active, Ordering::Release);
+        if let Some(gate) = &self.gate {
+            gate.open.store(active, Ordering::Release);
         }
     }
 
@@ -664,29 +683,33 @@ impl Connection {
     /// socket closed without waiting for the server. A connect still in progress is
     /// abandoned, and its socket closed.
     /// In a fork()ed child it only stops accepting work: the session is the parent's.
-    fn close(&self, py: Python<'_>) {
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
+        self.check_gates(py)?;
         self.shared.closing.store(true, Ordering::SeqCst);
         if self.shared.inherited() {
-            return;
+            return Ok(());
         }
         // A permit for the handshake if it is still running; never looked at otherwise.
         self.shared.abort_connect.notify_one();
         self.shared.shutdown();
         self.shared.pump(py);
+        Ok(())
     }
 
     /// Close at once: pending and in-flight operations fail with `ConnectionClosedError`, and
     /// the socket is closed (no Terminate: the server notices the closed socket). Does
     /// nothing more on a closed connection. In a fork()ed child it only stops accepting work.
-    fn terminate(&self, py: Python<'_>) {
+    fn terminate(&self, py: Python<'_>) -> PyResult<()> {
+        self.check_gates(py)?;
         self.shared.closing.store(true, Ordering::SeqCst);
         if self.shared.inherited() {
-            return;
+            return Ok(());
         }
         // Permits, looked at by the handshake if it is still running, and by `serve` after.
         self.shared.abort_connect.notify_one();
         self.shared.abort.notify_one();
         self.shared.pump(py);
+        Ok(())
     }
 
     /// Close at once, for a connection whose event loop is closed (`__del__` after the loop
@@ -917,6 +940,29 @@ impl Connection {
 }
 
 impl Connection {
+    fn view(&self, open: bool, refused: &'static str) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            gate: Some(Arc::new(Gate {
+                open: AtomicBool::new(open),
+                refused,
+                outer: self.gate.clone(),
+            })),
+        }
+    }
+
+    /// Refuse (`InterfaceError`) unless every gate of this view is open.
+    fn check_gates(&self, py: Python<'_>) -> PyResult<()> {
+        let mut gate = self.gate.as_deref();
+        while let Some(g) = gate {
+            if !g.open.load(Ordering::Acquire) {
+                return Err(py_err(py, "InterfaceError", g.refused));
+            }
+            gate = g.outer.as_deref();
+        }
+        Ok(())
+    }
+
     fn require_client(&self, py: Python<'_>) -> PyResult<Arc<Client>> {
         if self.shared.inherited() {
             return Err(py_err(
@@ -931,15 +977,7 @@ impl Connection {
         if !self.on_own_loop(py)? {
             return Err(py_err(py, "InterfaceError", OTHER_LOOP));
         }
-        if let Some(active) = &self.active
-            && !active.load(Ordering::Acquire)
-        {
-            return Err(py_err(
-                py,
-                "InterfaceError",
-                "the transaction is not active: use it inside its `async with` block",
-            ));
-        }
+        self.check_gates(py)?;
         self.shared
             .client()
             .ok_or_else(|| self.shared.closed_error().into_pyerr(py))

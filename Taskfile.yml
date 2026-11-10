@@ -26,6 +26,19 @@ tasks:
 
   # --- fastpg -------------------------------------------------------------------
 
+  licences:
+    desc: >-
+      Regenerate THIRD_PARTY_LICENSES (the licences of the Rust crates in the extension, shipped
+      in the wheels and the sdist) after native/Cargo.lock changes. Needs cargo-about 0.9.2, as CI
+      pins it (`cargo install --locked --features cli cargo-about@0.9.2`)
+    preconditions:
+      # Another version can word the same licences differently, which CI would flag.
+      - sh: cargo about --version | grep -qx 'cargo-about 0.9.2'
+        msg: Needs cargo-about 0.9.2 (`cargo install --locked --features cli cargo-about@0.9.2`)
+    cmds:
+      - cargo fetch --manifest-path native/Cargo.toml --locked
+      - cargo about generate --manifest-path native/Cargo.toml --frozen --fail native/about.hbs -o THIRD_PARTY_LICENSES
+
   db-up:
     desc: Start PostgreSQL (fresh schema + seed on every start; data on tmpfs)
     cmd: docker compose up -d --wait postgres

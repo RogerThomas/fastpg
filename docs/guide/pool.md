@@ -53,6 +53,9 @@ async with await fastpg.create_pool(dsn) as pool:
 When the block ends, the pool rolls back any open transaction and resets the session, so
 the `SET` is gone.
 
+Use `conn` only inside the block.
+After the block, its methods raise `InterfaceError`.
+
 ## Slow queries
 
 The pool sends each query to an idle connection when it has one.
