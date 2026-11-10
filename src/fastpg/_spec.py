@@ -109,9 +109,10 @@ class Plan[T]:
     field_columns: tuple[str, ...]
     """The column of every field: the msgpack/json routes refuse a result naming one twice,
     as direct construction does (a decoder would keep one value and drop the other)."""
-    uuid_columns: tuple[str, ...] = ()
-    """PROTOTYPE (idea E): columns feeding `uuid.UUID` fields (or `UUID | None`): the msgpack
-    route writes a uuid there as 16-byte bin, which msgspec decodes faster than text."""
+    uuid_columns: tuple[str, ...]
+    """Columns feeding `uuid.UUID` fields: the msgpack route encodes a uuid value there as
+    16-byte bin, which msgspec decodes faster than the 36-character text. Other fields (a
+    `str` one, ...) get the text."""
 
 
 class StructPlanner:
@@ -150,6 +151,18 @@ class StructPlanner:
             members = [m for m in t.types if not isinstance(m, mi.NoneType)]
             return len(members) == 1 and isinstance(members[0], mi.StrType)
         return isinstance(t, mi.StrType)
+
+    @staticmethod
+    def _is_uuid(t: mi.Type) -> bool:
+        """Whether a field type is `uuid.UUID` or `uuid.UUID | None`, `Annotated` or not."""
+        if isinstance(t, mi.Metadata):
+            t = t.type
+        if isinstance(t, mi.UnionType):
+            members = [m for m in t.types if not isinstance(m, mi.NoneType)]
+            if len(members) != 1:
+                return False
+            t = members[0].type if isinstance(members[0], mi.Metadata) else members[0]
+        return isinstance(t, mi.UUIDType)
 
     @classmethod
     def _classify(cls, t: mi.Type) -> tuple[Kind, bool]:
@@ -370,15 +383,7 @@ class StructPlanner:
             validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
             field_columns=tuple(f.encode_name for f in info.fields),
-            uuid_columns=tuple(
-                f.encode_name
-                for f in info.fields
-                if all(
-                    isinstance(p, (mi.UUIDType, mi.NoneType))
-                    for p in (f.type.types if isinstance(f.type, mi.UnionType) else (f.type,))
-                )
-                and not isinstance(f.type, mi.NoneType)
-            ),
+            uuid_columns=tuple(f.encode_name for f in info.fields if cls._is_uuid(f.type)),
         )
 
     @classmethod
@@ -425,6 +430,7 @@ class StructPlanner:
             validation_error=msgspec.ValidationError,
             text_columns=(),
             field_columns=(),
+            uuid_columns=(),
         )
 
 
@@ -458,6 +464,7 @@ class Planner:
             validation_error=msgspec.ValidationError,
             text_columns=(),
             field_columns=(),
+            uuid_columns=(),
         )
 
     @staticmethod

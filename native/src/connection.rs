@@ -108,8 +108,9 @@ struct EncodedFields {
     /// `TypeMismatchError`, as in direct construction: a decoder would keep one of the
     /// values and silently drop the other.
     field_columns: Vec<String>,
-    /// PROTOTYPE (idea E): the columns that feed `uuid.UUID` fields: msgpack writes a uuid
-    /// value there as 16-byte bin (msgspec decodes that faster than the 36-char text).
+    /// The columns that feed `uuid.UUID` fields: a uuid value there is encoded as 16-byte
+    /// bin, which msgspec decodes faster than the 36-character text. Msgpack route only
+    /// (JSON has no binary form).
     uuid_columns: Vec<String>,
 }
 
@@ -716,7 +717,8 @@ impl Connection {
     }
 
     /// `text_columns`: the columns feeding `str` fields; `field_columns`: every field's
-    /// column (see [`EncodedFields`]).
+    /// column; `uuid_columns`: the columns feeding `uuid.UUID` fields (see
+    /// [`EncodedFields`]).
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new(), uuid_columns = Vec::new()))]
     fn fetch_msgpack(
@@ -1310,23 +1312,24 @@ fn materialize_rows<'py>(
             let codecs = stmt
                 .codecs()
                 .map_err(|m| py_err(py, "UnsupportedTypeError", m))?;
-            let as_text: Vec<bool> = names
+            // Per column: encode values in the form their field takes (see
+            // `msgpack::encode_value`): json/jsonb as text, uuid as 16-byte bin.
+            let field_form: Vec<bool> = names
                 .iter()
                 .zip(codecs.iter())
                 .map(|(name, codec)| match codec {
                     decode::Codec::Json | decode::Codec::Jsonb => {
                         fields.text_columns.iter().any(|t| t == name)
                     }
-                    // PROTOTYPE (idea E): the flag means "as bin" for a uuid column.
                     decode::Codec::Uuid => fields.uuid_columns.iter().any(|t| t == name),
                     _ => false,
                 })
                 .collect();
             let encoded = match target {
                 Target::Json(_, non_finite) => {
-                    json::encode_rows(rows, &names, &codecs, &as_text, single, *non_finite)
+                    json::encode_rows(rows, &names, &codecs, &field_form, single, *non_finite)
                 }
-                _ => msgpack::encode_rows(rows, &names, &codecs, &as_text, single),
+                _ => msgpack::encode_rows(rows, &names, &codecs, &field_form, single),
             }
             .map_err(|m| py_err(py, "DecodeError", m))?;
             Ok(PyBytes::new(py, &encoded).into_any())

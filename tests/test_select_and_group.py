@@ -57,6 +57,36 @@ async def test_every_strategy(conn: fastpg.Connection, strategy: fastpg.Strategy
     assert orders == await conn.select_and_group(ORDERS, into=Order)
 
 
+class Tagged(msgspec.Struct):
+    id: uuid.UUID
+    tag: uuid.UUID | None
+
+
+class Owner(msgspec.Struct):
+    owner: uuid.UUID
+    ids: list[uuid.UUID]
+    tags: list[Tagged]
+
+
+@pytest.mark.parametrize("strategy", ["msgpack", "json"])
+async def test_uuid_list_fields_match_direct_construction(
+    conn: fastpg.Connection,
+    strategy: fastpg.Strategy,
+) -> None:
+    # `list[UUID]` and `list[Struct]` fields read their uuid columns as `UUID` fields.
+    query = """
+SELECT md5((n % 2)::text)::uuid AS owner, md5(n::text)::uuid AS ids, md5(n::text)::uuid AS tags__id,
+       CASE WHEN n % 3 = 0 THEN md5(n::text)::uuid END AS tags__tag
+FROM generate_series(1, 6) AS s(n)
+ORDER BY n % 2, n
+"""
+    direct = await conn.select_and_group(query, into=Owner, strategy="direct")
+    assert await conn.select_and_group(query, into=Owner, strategy=strategy) == direct
+    assert [len(o.ids) for o in direct] == [3, 3]
+    assert {type(i) for o in direct for i in o.ids} == {uuid.UUID}
+    assert [t.tag is None for t in direct[0].tags] == [True, True, False]
+
+
 async def test_empty_result(conn: fastpg.Connection) -> None:
     assert await conn.select_and_group(f"{CUSTOMERS} WHERE false", into=Customer) == []
 
