@@ -183,6 +183,12 @@ tasks:
       --warmup {{.WARMUP}} --output-dir {{shellQuote .OUT}}
       {{if .SUMMARY}}--summary {{shellQuote .SUMMARY}}{{end}} {{.CLI_ARGS}}
 
+  bench-aws:
+    desc: >-
+      `task bench-ci` for a fastpg release on AWS EC2 spot instances, x86_64 and arm64, in
+      pieces that run in parallel (`task bench-aws -- --fastpg-version 0.2.1`; see --help)
+    cmd: uv run yeet ./bench/aws.py {{.CLI_ARGS}}
+
   bench-docker:
     desc: Benchmark suite inside Linux next to postgres (e.g. `task bench-docker -- -t 3`)
     cmd: docker compose --profile bench run --rm --build bench ./bench/run.py {{.CLI_ARGS}}
