@@ -106,14 +106,14 @@ A `list[Item]` field of Structs reads columns named `items__sku`, `items__qty`, 
 
 | workload | fastpg | fastest other driver | speed-up |
 |---|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s (asyncpg) | **2.32x** |
-| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s (asyncpg) | **2.09x** |
-| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s (asyncpg) | **2.15x** |
-| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s (asyncpg) | **2.23x** |
-| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s (psycopg) | **1.41x** |
+| Primary-key lookup into a Struct, 16 tasks | 23,889/s | 10,231/s (asyncpg) | **2.33x** |
+| Page of 20 rows into Structs, 16 tasks | 12,181/s | 5,981/s (asyncpg) | **2.04x** |
+| 1,000 rows into Structs, 4 tasks | 813k rows/s | 358k rows/s (asyncpg) | **2.27x** |
+| Single-row INSERT, 16 tasks | 23,817/s | 9,584/s (asyncpg) | **2.48x** |
+| Binary COPY, 5,000 rows | 930k rows/s | 630k rows/s (psycopg) | **1.48x** |
 
 Measured in CI on one shared x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
-The smallest lead, a transaction, is 1.13x
+The smallest lead, `executemany` of 1,000 rows, is 1.44x
 ([details](https://rogerthomas.github.io/fastpg/performance/)).
 
 ## Documentation
