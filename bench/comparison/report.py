@@ -111,13 +111,14 @@ class ConfigInfo(msgspec.Struct, kw_only=True):
     resets_session: bool = False
 
 
-class Report(msgspec.Struct, kw_only=True):
+class Report(msgspec.Struct, kw_only=True, omit_defaults=True):
     environment: Environment
     settings: Settings
     workloads: list[WorkloadInfo]
     configs: list[ConfigInfo]
     aggregates: list[Aggregate]
     runs: list[Run]
+    note: str | None = None  # replaces the Markdown's note about shared CI runners
 
     @property
     def failures(self) -> list[Run]:
@@ -377,6 +378,8 @@ class Markdown:
         return [*lines, ""]
 
     def _note(self) -> str:
+        if self._report.note is not None:
+            return f"> {self._report.note}"
         env = self._report.environment
         if "GITHUB_REPOSITORY" in env.ci:
             repo = env.ci["GITHUB_REPOSITORY"]
@@ -664,11 +667,16 @@ def build(
     )
 
 
-def merge(reports: Sequence[Report], machine: str | None = None) -> Report:
+def merge(
+    reports: Sequence[Report],
+    machine: str | None = None,
+    note: str | None = None,
+) -> Report:
     """One report from runs of the suite split across machines (``bench/aws.py``'s pieces).
 
     Workloads keep the order of ``reports``, and the aggregates are recomputed over every run.
-    ``machine`` replaces the CPU model, which on Graviton ``/proc/cpuinfo`` doesn't name.
+    ``machine`` replaces the CPU model, which on Graviton ``/proc/cpuinfo`` doesn't name;
+    ``note`` replaces the Markdown's note about shared CI runners.
     """
     first = min(reports, key=lambda r: r.environment.started_at)
     workloads = list({w.name: w for r in reports for w in r.workloads}.values())
@@ -686,6 +694,7 @@ def merge(reports: Sequence[Report], machine: str | None = None) -> Report:
         configs=configs,
         aggregates=aggregate(runs, names, config_names),
         runs=runs,
+        note=note,
     )
 
 

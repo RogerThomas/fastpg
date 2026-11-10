@@ -42,7 +42,7 @@ Use a Linux host, or a PostgreSQL that runs natively.
 ## Running it on AWS
 
 `task bench-aws` runs `task bench-ci` for a fastpg release on AWS EC2 spot instances:
-x86_64 on a c8a.2xlarge and arm64 on an m9g.2xlarge, with PostgreSQL on the same machine,
+x86_64 on an m8a.2xlarge and arm64 on an m9g.2xlarge, with PostgreSQL on the same machine,
 as in CI.
 The workloads are split into pieces that run in parallel, one instance each, and the results
 are merged into one report per architecture under `bench/results/aws-<run id>/`.

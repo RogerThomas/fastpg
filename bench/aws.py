@@ -3,7 +3,7 @@
 
 Runs it as .github/workflows/benchmarks.yml does with ``fastpg-version``: PostgreSQL 18.6 in
 Docker on the same machine, the bench code cloned at ``--ref``, fastpg's wheel from PyPI. One
-x86_64 (c8a.2xlarge) and one arm64 (m9g.2xlarge) run, each split by workload into pieces of
+x86_64 (m8a.2xlarge) and one arm64 (m9g.2xlarge) run, each split by workload into pieces of
 about ``--piece-minutes``. Every piece runs on a spot instance of its own, at most
 ``--max-instances`` at once, spread over the availability zones; a piece whose instance is
 reclaimed starts again on a new one. Each piece's results are copied back when it finishes,
@@ -66,7 +66,7 @@ class Machine:
 
 
 MACHINES: dict[Arch, Machine] = {
-    "x86_64": Machine("c8a.2xlarge", "AWS c8a.2xlarge (AMD EPYC, 8 vCPU)"),
+    "x86_64": Machine("m8a.2xlarge", "AWS m8a.2xlarge (AMD EPYC, 8 vCPU)"),
     "arm64": Machine("m9g.2xlarge", "AWS m9g.2xlarge (Graviton, 8 vCPU)"),
 }
 
@@ -735,7 +735,12 @@ class Fleet:
             if not paths:
                 continue
             reports = [msgspec.json.decode(path.read_bytes(), type=report.Report) for path in paths]
-            merged = report.merge(reports, machine=MACHINES[arch].label)
+            machine = MACHINES[arch]
+            note = (
+                f"One AWS {machine.instance_type} spot instance per piece,"
+                " PostgreSQL on the same machine."
+            )
+            merged = report.merge(reports, machine=machine.label, note=note)
             json_path, md_path = report.write(merged, self.output_dir / arch)
             logger.info("%s: %d pieces merged into %s and %s", arch, len(paths), json_path, md_path)
             if len(paths) < sum(p.arch == arch for p in pieces):
