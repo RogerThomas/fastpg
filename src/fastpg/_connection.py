@@ -84,6 +84,12 @@ _ONE = 0
 _ONE_OR_NONE = 1
 _ALL = 2
 
+_OTHER_LOOP = (
+    "this connection belongs to a different event loop (the one that opened it): open it, or"
+    " its pool, inside the loop that uses it"
+)
+"""The refusal of a connection used from another event loop (the native one says the same)."""
+
 # In a fork()ed child, connections inherited from the parent share its sockets: they refuse
 # to run anything, and closing or dropping one leaves the parent's session alone.
 os.register_at_fork(after_in_child=after_fork_in_child)
@@ -528,6 +534,14 @@ class Connection(_Queries):
     async def _close(self) -> None:
         if self._native.inherited:  # a fork()ed child: the session is the parent's to close
             self._released = True
+            return
+        if asyncio.get_running_loop() is not self._loop:  # would close it, then fail to wait
+            if not self._loop.is_closed():
+                raise InterfaceError(_OTHER_LOOP)
+            # No callback of its loop will run again to finish a close: close at once, as
+            # __del__ does then (tasks dropped unpolled, the socket closed).
+            self._released = True
+            self._native.abandon()
             return
         self._native.close()
         try:
@@ -1239,7 +1253,7 @@ async def _connect_to(
     """
     timeout = options.connect_timeout
     deadline = None if timeout is None else loop.time() + timeout
-    native = NativeConnection(statement_cache_size)
+    native = NativeConnection(loop, statement_cache_size)
     # Wakes the loop for the rare task woken from another thread (e.g. by a `__del__` there).
     fd = native.fileno()
     loop.add_reader(fd, native.drain)
