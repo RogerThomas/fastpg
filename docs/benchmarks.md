@@ -39,6 +39,21 @@ It touches nothing else in the database.
 On macOS, Docker Desktop adds a few hundred microseconds to every round trip.
 Use a Linux host, or a PostgreSQL that runs natively.
 
+## Running it on AWS
+
+`task bench-aws` runs `task bench-ci` for a fastpg release on AWS EC2 spot instances:
+x86_64 on a c8a.2xlarge and arm64 on an m9g.2xlarge, with PostgreSQL on the same machine,
+as in CI.
+The workloads are split into pieces that run in parallel, one instance each, and the results
+are merged into one report per architecture under `bench/results/aws-<run id>/`.
+Every instance it starts is terminated at the end, on Ctrl-C too.
+
+```sh
+task bench-aws -- --fastpg-version 0.2.1
+```
+
+It needs the aws CLI with the `fastpg-benchmarks` profile.
+
 ## The setup in CI
 
 * A GitHub-hosted `ubuntu-24.04` runner: AMD EPYC 9V74, 4 vCPUs, 16 GB.

@@ -664,6 +664,31 @@ def build(
     )
 
 
+def merge(reports: Sequence[Report], machine: str | None = None) -> Report:
+    """One report from runs of the suite split across machines (``bench/aws.py``'s pieces).
+
+    Workloads keep the order of ``reports``, and the aggregates are recomputed over every run.
+    ``machine`` replaces the CPU model, which on Graviton ``/proc/cpuinfo`` doesn't name.
+    """
+    first = min(reports, key=lambda r: r.environment.started_at)
+    workloads = list({w.name: w for r in reports for w in r.workloads}.values())
+    configs = list({c.name: c for r in reports for c in r.configs}.values())
+    names = [w.name for w in workloads]
+    config_names = [c.name for c in configs]
+    runs = [run for r in reports for run in r.runs]
+    environment = first.environment
+    if machine is not None:
+        environment = msgspec.structs.replace(environment, cpu_model=machine)
+    return Report(
+        environment=environment,
+        settings=msgspec.structs.replace(first.settings, workloads=names, configs=config_names),
+        workloads=workloads,
+        configs=configs,
+        aggregates=aggregate(runs, names, config_names),
+        runs=runs,
+    )
+
+
 def write(report: Report, output_dir: Path) -> tuple[Path, Path]:
     """Write ``compare-<timestamp>.json`` and ``.md`` into ``output_dir``."""
     output_dir.mkdir(parents=True, exist_ok=True)
