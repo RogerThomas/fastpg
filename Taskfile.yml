@@ -189,6 +189,12 @@ tasks:
       pieces that run in parallel (`task bench-aws -- --fastpg-version 0.2.1`; see --help)
     cmd: uv run yeet ./bench/aws.py {{.CLI_ARGS}}
 
+  bench-page:
+    desc: >-
+      Rebuild the Benchmarks page's chart and table from a compare JSON
+      (`task bench-page -- <path>`)
+    cmd: uv run yeet ./bench/perf_page.py {{.CLI_ARGS}}
+
   bench-docker:
     desc: Benchmark suite inside Linux next to postgres (e.g. `task bench-docker -- -t 3`)
     cmd: docker compose --profile bench run --rm --build bench ./bench/run.py {{.CLI_ARGS}}
