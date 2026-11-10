@@ -27,6 +27,7 @@ Pass these to `create_pool()`:
 | `statement_cache_size` | 256 | prepared statements kept per connection (at least 1) |
 | `max_lifetime` | 3600.0 | seconds before an idle connection is replaced (`None`: never) |
 | `max_idle` | 300.0 | seconds before an idle connection above `min_size` closes (`None`: never) |
+| `max_wait` | 30.0 | seconds to wait for a free connection before `PoolTimeoutError` (`None`: forever) |
 
 !!! warning "Queries on the pool must not change the session"
 
@@ -89,8 +90,10 @@ async def test_count(pool):
 
 ## Good to know
 
-* Put `connect_timeout` (in seconds) in the DSN, e.g. `?connect_timeout=10`.
-  Without it, connecting to a server that doesn't answer waits forever.
+* Connecting gives up after 30 seconds with `ConnectError`.
+  To change that, put `connect_timeout` (in seconds) in the DSN, e.g. `?connect_timeout=10`.
+* When every connection is busy and the pool is at `max_size`, a query, `acquire()` or
+  `transaction()` waits up to `max_wait` seconds for one, then raises `PoolTimeoutError`.
 * If you cancel a query, for example with `asyncio.timeout()`, fastpg also cancels it on
   the server when nothing else is running on its connection.
 * A lost connection is dropped, and the pool opens new ones as needed.

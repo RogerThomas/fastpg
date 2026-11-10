@@ -510,8 +510,8 @@ pub struct DsnOptions {
 
 /// libpq's keys applied in Python: `connect_timeout` per address tried, the socket keys to
 /// each TCP socket before it connects (never to a unix socket), and `target_session_attrs`
-/// to each session started. `None` means no timeout for `connect_timeout`, and the OS default
-/// for the socket keys.
+/// to each session started. `None` means no timeout for `connect_timeout` (set to 0), and the
+/// OS default for the socket keys.
 #[pyclass(frozen, get_all, module = "fastpg._native")]
 pub struct SocketOptions {
     /// Seconds.
@@ -550,11 +550,15 @@ fn socket_option(key: &str, value: Option<&str>) -> Result<Option<u32>, QueryErr
     Ok(int_option(key, value)?.and_then(|n| u32::try_from(n).ok().filter(|&n| n > 0)))
 }
 
-/// libpq's `connect_timeout`: whole seconds; zero, negative or absent mean no timeout, and
-/// 1 means 2 (libpq's minimum).
+/// `connect_timeout` when neither the DSN nor `PGCONNECT_TIMEOUT` sets it (libpq waits
+/// forever then).
+const DEFAULT_CONNECT_TIMEOUT: u32 = 30;
+
+/// libpq's `connect_timeout`: whole seconds; zero or negative mean no timeout, and 1 means 2
+/// (libpq's minimum). Absent, it is [`DEFAULT_CONNECT_TIMEOUT`].
 fn connect_timeout(value: Option<&str>) -> Result<Option<u32>, QueryError> {
     let Some(value) = value else {
-        return Ok(None);
+        return Ok(Some(DEFAULT_CONNECT_TIMEOUT));
     };
     let seconds: i64 = value
         .trim()
@@ -1263,8 +1267,13 @@ mod tests {
         }
         assert_eq!(
             split_all("postgresql://db/x").1.socket.connect_timeout,
-            None
+            Some(30)
         );
+        // PGCONNECT_TIMEOUT=0 waits forever too; the DSN wins over it.
+        let vars = [("PGCONNECT_TIMEOUT", "0")];
+        assert_eq!(split_with("host=db", &vars).1.socket.connect_timeout, None);
+        let dsn = "host=db connect_timeout=5";
+        assert_eq!(split_with(dsn, &vars).1.socket.connect_timeout, Some(5));
         assert_eq!(
             error("postgresql://db/x?connect_timeout=1.5"),
             "invalid integer value \"1.5\" for connection option \"connect_timeout\""

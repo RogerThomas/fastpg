@@ -47,7 +47,7 @@ async def test_connect_timeout_bounds_a_startup_never_answered(
     server); libpq's minimum, 2 s, applies."""
     fault_proxy.stall()
     start = time.monotonic()
-    with pytest.raises(fastpg.ConnectError, match=r"startup .* timeout expired") as exc:
+    with pytest.raises(fastpg.ConnectError, match=r"startup .* timeout expired after 2 s") as exc:
         await fastpg.connect(with_params(proxied_dsn, connect_timeout="1"))
     assert isinstance(exc.value, fastpg.OperationalError)
     assert 1.9 < time.monotonic() - start < 3

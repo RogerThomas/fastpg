@@ -1021,6 +1021,14 @@ class _NextAddressError(Exception):
     which address and how."""
 
 
+def _timed_out(stage: str, address: _Address, options: SocketOptions) -> str:
+    """The message for an address that didn't connect within ``connect_timeout``."""
+    return (
+        f"{stage} {address!r} failed: timeout expired after {options.connect_timeout} s"
+        " (connect_timeout)"
+    )
+
+
 async def _candidates(
     loop: asyncio.AbstractEventLoop,
     kind: str,
@@ -1051,8 +1059,7 @@ async def _open_socket(
             return await _connect_candidate(loop, family, address, options)
     except OSError as e:  # TimeoutError too
         if limit.expired():
-            msg = f"connect to {address!r} failed: timeout expired (connect_timeout)"
-            raise _NextAddressError(msg) from None
+            raise _NextAddressError(_timed_out("connect to", address, options)) from None
         raise _NextAddressError(str(e)) from None
 
 
@@ -1060,6 +1067,7 @@ async def _started(
     connected: asyncio.Future[None],
     deadline: float | None,
     address: _Address,
+    options: SocketOptions,
 ) -> None:
     """Wait for the handshake (TLS, startup, authentication) until `deadline`."""
     limit = asyncio.timeout_at(deadline)
@@ -1069,13 +1077,12 @@ async def _started(
     except TimeoutError:
         if not limit.expired():
             raise
-        msg = f"startup with {address!r} failed: timeout expired (connect_timeout)"
-        raise _NextAddressError(msg) from None
+        raise _NextAddressError(_timed_out("startup with", address, options)) from None
 
 
 async def _check_session(
     conn: "Connection",
-    attrs: str,
+    options: SocketOptions,
     deadline: float | None,
     address: _Address,
 ) -> None:
@@ -1083,6 +1090,7 @@ async def _check_session(
 
     As libpq does: ``SHOW transaction_read_only``, within the attempt's deadline.
     """
+    attrs = options.target_session_attrs
     if attrs == "any":
         return
     limit = asyncio.timeout_at(deadline)
@@ -1093,8 +1101,7 @@ async def _check_session(
         conn.terminate()
         if not limit.expired():
             raise
-        msg = f"startup with {address!r} failed: timeout expired (connect_timeout)"
-        raise _NextAddressError(msg) from None
+        raise _NextAddressError(_timed_out("startup with", address, options)) from None
     except BaseException:
         conn.terminate()
         raise
@@ -1209,9 +1216,9 @@ async def connect(dsn: str, *, statement_cache_size: int = 256) -> Connection:
     ``sslcert``/``sslkey``, ``sslsni`` and ``channel_binding`` (``prefer`` (the default),
     ``require``, ``disable``). Unix sockets never use TLS. See the TLS guide in the docs.
 
-    ``connect_timeout`` (seconds, as in libpq: 0 or absent waits indefinitely, 1 means 2)
-    bounds each address tried, from its TCP connect to the end of the startup; when it
-    expires, ``ConnectError`` says so.
+    ``connect_timeout`` (seconds, as in libpq: 0 waits indefinitely, 1 means 2; 30 when
+    neither the DSN nor ``PGCONNECT_TIMEOUT`` sets it) bounds each address tried, from its TCP
+    connect to the end of the startup; when it expires, ``ConnectError`` says so.
 
     Several hosts (``host=a,b port=5432,5433``, or ``postgresql://a:5432,b:5433/db``) are
     tried in order, as in libpq: host N with port N, or one port for every host. An address
@@ -1303,11 +1310,11 @@ async def _connect_to(
         )
         if warning is not None:  # the password file is ignored (libpq warns too)
             warnings.warn(warning, UserWarning, stacklevel=1)
-        await _started(connected, deadline, address)
+        await _started(connected, deadline, address, options)
     except BaseException:
         native.close()  # once attached, the socket is detached and closed by native
         loop.remove_reader(fd)
         raise
     conn = Connection(native, loop, canceller, closed)
-    await _check_session(conn, options.target_session_attrs, deadline, address)
+    await _check_session(conn, options, deadline, address)
     return conn

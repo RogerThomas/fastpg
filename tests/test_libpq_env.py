@@ -2,19 +2,20 @@
 from the password file (``~/.pgpass``, ``PGPASSFILE`` or ``passfile=``), as in libpq. With no
 host, the local unix socket; with no user, the OS user's login name."""
 
+import asyncio
 import os
 import pwd
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import LiteralString, cast
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from faults import FaultProxy, with_params
+from faults import FaultProxy, skip_ahead, with_params
 
 import fastpg
 
@@ -168,6 +169,55 @@ async def test_create_pool_reads_the_environment(
     async with await fastpg.create_pool(server.dsn(), min_size=1, max_size=1) as pool:
         row = await pool.select_one("SELECT current_setting('application_name')")
     assert row == ("pool-from-env",)
+
+
+# --- connect_timeout's default -------------------------------------------------------------
+
+
+@pytest.fixture
+def silent_port() -> Iterator[int]:
+    """A port on 127.0.0.1 that takes TCP connections (the kernel completes them) and never
+    answers."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(8)
+        yield listener.getsockname()[1]
+
+
+async def test_connecting_times_out_after_30_seconds_by_default(
+    silent_port: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connecting = asyncio.create_task(fastpg.connect(f"postgresql://u@127.0.0.1:{silent_port}/db"))
+    await asyncio.sleep(0)  # its deadline is set
+    skip_ahead(monkeypatch, 30)
+    message = rf"'127\.0\.0\.1', {silent_port}\) failed: timeout expired after 30 s"
+    with pytest.raises(fastpg.ConnectError, match=message):
+        await connecting
+
+
+@pytest.mark.parametrize(
+    ("query", "variables"),
+    [("?connect_timeout=0", {}), ("", {"PGCONNECT_TIMEOUT": "0"})],
+)
+async def test_connect_timeout_zero_waits_forever(
+    silent_port: int,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    variables: dict[str, str],
+) -> None:
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value)
+    dsn = f"postgresql://u@127.0.0.1:{silent_port}/db{query}"
+    connecting = asyncio.create_task(fastpg.connect(dsn))
+    await asyncio.sleep(0)
+    skip_ahead(monkeypatch, 10**6)
+    for _ in range(3):  # a timer due by then would have fired and failed it
+        await asyncio.sleep(0)
+    assert not connecting.done()
+    connecting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await connecting
 
 
 # --- password file --------------------------------------------------------------------------
