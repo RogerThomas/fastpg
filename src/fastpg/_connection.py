@@ -13,8 +13,8 @@ import os
 import socket
 import sys
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -87,6 +87,14 @@ _ALL = 2
 # In a fork()ed child, connections inherited from the parent share its sockets: they refuse
 # to run anything, and closing or dropping one leaves the parent's session alone.
 os.register_at_fork(after_in_child=after_fork_in_child)
+
+
+def context_manager[**P, T](
+    func: Callable[P, AsyncGenerator[T]],
+) -> Callable[P, AbstractAsyncContextManager[T]]:
+    """``asynccontextmanager``, typed as returning ``AbstractAsyncContextManager``: type
+    checkers then show that, not contextlib's private ``_AsyncGeneratorContextManager``."""
+    return asynccontextmanager(func)
 
 
 def cancelling() -> bool:
@@ -641,6 +649,26 @@ class Connection(_Queries):
         await self._close()
 
 
+@dataclass(slots=True, eq=False)
+class Checkout(Connection):
+    """A `Connection` on a pooled session, for ``Pool.acquire()``'s block (not public API).
+
+    Once the block ends it refuses everything (``InterfaceError``): a reference kept after
+    the block can't reach the session, which the pool may have handed to another caller.
+    """
+
+    @classmethod
+    @contextmanager
+    def of(cls, conn: Connection) -> Generator[Connection]:
+        """A checkout of ``conn``'s session for the length of the ``with`` block."""
+        view = cls(conn._native.acquire_view(), conn._loop, conn._canceller, conn._closed)
+        view._released = True  # the pool owns the session: dropping the view closes nothing
+        try:
+            yield view
+        finally:
+            view._native.set_active(False)
+
+
 class Transaction(_Queries):
     """A transaction on one connection, with the connection's query methods run inside it.
 
@@ -748,7 +776,7 @@ class Transaction(_Queries):
         """True between BEGIN and COMMIT/ROLLBACK."""
         return self._state == self._ACTIVE
 
-    @asynccontextmanager
+    @context_manager
     async def savepoint(self) -> AsyncGenerator[Self]:
         """Nest a savepoint: released on normal exit, rolled back to if the block raises."""
         if self._state != self._ACTIVE:
