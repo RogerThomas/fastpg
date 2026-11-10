@@ -55,11 +55,11 @@ New here? Start with [Getting started](guide/getting-started.md).
 
 | workload | fastpg | fastest other driver | speed-up |
 |---|---:|---:|---:|
-| Primary-key lookup into a Struct, 16 tasks | 39,774/s | 17,144/s (asyncpg) | 2.32x |
-| Page of 20 rows into Structs, 16 tasks | 19,002/s | 9,094/s (asyncpg) | 2.09x |
-| 1,000 rows into Structs, 4 tasks | 1.03M rows/s | 476k rows/s (asyncpg) | 2.15x |
-| Single-row INSERT, 16 tasks | 35,860/s | 16,087/s (asyncpg) | 2.23x |
-| Binary COPY, 5,000 rows | 1.16M rows/s | 823k rows/s (psycopg) | 1.41x |
+| Primary-key lookup into a Struct, 16 tasks | 23,889/s | 10,231/s (asyncpg) | 2.33x |
+| Page of 20 rows into Structs, 16 tasks | 12,181/s | 5,981/s (asyncpg) | 2.04x |
+| 1,000 rows into Structs, 4 tasks | 813k rows/s | 358k rows/s (asyncpg) | 2.27x |
+| Single-row INSERT, 16 tasks | 23,817/s | 9,584/s (asyncpg) | 2.48x |
+| Binary COPY, 5,000 rows | 932k rows/s | 632k rows/s (psycopg) | 1.48x |
 
 Measured on an x86_64 GitHub runner; GitHub's arm64 runner gives similar ratios.
 All workloads and how they're measured: [Benchmarks](performance.md).
