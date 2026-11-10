@@ -36,11 +36,11 @@ FastPGError
     ├── IntegrityError            a constraint failed
     │   └── NotNullViolationError, ForeignKeyViolationError,
     │       UniqueViolationError, CheckViolationError
-    ├── TransactionError          the server rolled the transaction back
-    │   └── SerializationError, DeadlockDetectedError
     ├── ProgrammingError          bad SQL, e.g. a missing table
     │   └── SQLSyntaxError, UndefinedTableError, UndefinedColumnError
     ├── OperationalError          the database can't be reached or used
+    │   ├── TransactionError      the server rolled the transaction back
+    │   │   └── SerializationError, DeadlockDetectedError
     │   ├── ConnectError          connecting failed: refused, unreachable, timed out
     │   ├── ConnectionClosedError the connection is closed or was lost
     │   ├── AuthenticationError   e.g. a wrong password
@@ -54,7 +54,7 @@ All of them can be imported from `fastpg`.
 ## Which server errors raise which class
 
 A server error's class comes from the first two characters of its SQLSTATE,
-the same way psycopg 3 does it, except for class 40:
+the same way psycopg 3 does it:
 
 * `DataError`: 22
 * `IntegrityError`: 23

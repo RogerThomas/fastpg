@@ -160,6 +160,14 @@ def test_every_sqlstate_class_raises_its_class(
     assert _error_class(f"{sqlstate_class}P99") is expected
 
 
+def test_a_rolled_back_transaction_is_an_operational_error() -> None:
+    # As in psycopg: retry code catching OperationalError also catches serialization
+    # failures and deadlocks.
+    assert issubclass(fastpg.TransactionError, fastpg.OperationalError)
+    assert issubclass(fastpg.SerializationError, fastpg.OperationalError)
+    assert issubclass(fastpg.DeadlockDetectedError, fastpg.OperationalError)
+
+
 @pytest.mark.parametrize(
     ("sqlstate", "expected"),
     [

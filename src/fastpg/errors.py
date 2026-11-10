@@ -20,10 +20,10 @@ FastPGError (alias: Error)
 └── DatabaseError                 error reported by the server (has .sqlstate etc.)
     ├── DataError (22)
     ├── IntegrityError (23)  → UniqueViolationError, ForeignKeyViolationError, ...
-    ├── TransactionError (40) → SerializationError, DeadlockDetectedError
     ├── ProgrammingError (10, 20, 21, 26, 34, 3D, 3F, 42, 44, P0)
     │                         → SQLSyntaxError, UndefinedTableError, UndefinedColumnError
-    ├── OperationalError (08, 27, 2F, 38, 39, 3B, 53, 54, 55, 57, 58, F0, HV)
+    ├── OperationalError (08, 27, 2F, 38, 39, 3B, 40, 53, 54, 55, 57, 58, F0, HV)
+    │   ├── TransactionError (40) → SerializationError, DeadlockDetectedError
     │   ├── ConnectError          a connection couldn't be established (no .sqlstate)
     │   ├── ConnectionClosedError the connection is closed or was lost (no .sqlstate)
     │   ├── AuthenticationError (28)
@@ -31,7 +31,7 @@ FastPGError (alias: Error)
     ├── InternalError (24, 25, 2B, 2D, XX)
     └── NotSupportedError (0A)
 
-The SQLSTATE classes map as psycopg 3 maps them, except 40. A class not listed here raises
+The SQLSTATE classes map as psycopg 3 maps them. A class not listed here raises
 a plain DatabaseError.
 """
 
@@ -201,18 +201,6 @@ class CheckViolationError(IntegrityError):
     """23514."""
 
 
-class TransactionError(DatabaseError):
-    """SQLSTATE class 40: transaction rollback."""
-
-
-class SerializationError(TransactionError):
-    """40001."""
-
-
-class DeadlockDetectedError(TransactionError):
-    """40P01."""
-
-
 class ProgrammingError(DatabaseError):
     """A mistake in the SQL or in what it refers to: SQLSTATE classes 10, 20, 21, 26, 34,
     3D, 3F, 42, 44 and P0 (e.g. a syntax error, a missing table, schema or database, or a
@@ -233,8 +221,20 @@ class UndefinedTableError(ProgrammingError):
 
 class OperationalError(DatabaseError):
     """The database can't be reached or used: connecting failed, the connection was lost,
-    or SQLSTATE classes 08, 27, 28, 2F, 38, 39, 3B, 53, 54, 55, 57, 58, F0 and HV (e.g.
+    or SQLSTATE classes 08, 27, 28, 2F, 38, 39, 3B, 40, 53, 54, 55, 57, 58, F0 and HV (e.g.
     authentication, out of resources, a lock not available, a server shutting down)."""
+
+
+class TransactionError(OperationalError):
+    """SQLSTATE class 40: transaction rollback."""
+
+
+class SerializationError(TransactionError):
+    """40001."""
+
+
+class DeadlockDetectedError(TransactionError):
+    """40P01."""
 
 
 class ConnectError(OperationalError):
@@ -280,8 +280,8 @@ class _SQLStateRegistry:
         "57014": QueryCanceledError,
     }
     BY_CLASS: ClassVar[dict[str, type[DatabaseError]]] = {
-        # The PEP 249 mapping psycopg 3 uses, except 28 (a subclass of OperationalError) and
-        # 40 (TransactionError).
+        # The PEP 249 mapping psycopg 3 uses, with subclasses of OperationalError for 28
+        # (AuthenticationError) and 40 (TransactionError).
         "08": OperationalError,  # connection exception
         "0A": NotSupportedError,  # feature not supported
         "10": ProgrammingError,  # XQuery error
