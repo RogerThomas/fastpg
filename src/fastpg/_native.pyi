@@ -116,6 +116,7 @@ class Connection:
         shape: int,
         text_columns: tuple[str, ...] = (),
         field_columns: tuple[str, ...] = (),
+        uuid_columns: tuple[str, ...] = (),
     ) -> None: ...
     def fetch_json(
         self,

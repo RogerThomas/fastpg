@@ -17,7 +17,7 @@ pub fn encode_rows(
     rows: &RowBuffer,
     names: &[&str],
     codecs: &[Codec],
-    as_text: &[bool],
+    field_form: &[bool],
     single: bool,
 ) -> Result<Vec<u8>, String> {
     // Every row repeats the column names; values take about as many bytes as in binary.
@@ -35,7 +35,7 @@ pub fn encode_rows(
                 None => {
                     let _ = mp::write_nil(&mut out);
                 }
-                Some(raw) => encode_value(&mut out, &mut scratch, *codec, as_text[col], raw)
+                Some(raw) => encode_value(&mut out, &mut scratch, *codec, field_form[col], raw)
                     .map_err(|e| format!("column {name:?}: {e}"))?,
             }
         }
@@ -48,13 +48,15 @@ fn fixed<const N: usize>(raw: &[u8]) -> Result<[u8; N], String> {
         .map_err(|_| format!("malformed binary value ({} bytes)", raw.len()))
 }
 
-/// `as_text`: a json/jsonb value is written as a string holding its JSON text (it feeds a
-/// `str` field, ADR 0003) instead of as the MessagePack form of the JSON value.
+/// `field_form`: the value is written in the form of the field it feeds. A json/jsonb value
+/// as a string holding its JSON text (a `str` field, ADR 0003) instead of as the MessagePack
+/// form of the JSON value; a uuid as 16-byte bin (a `uuid.UUID` field, which msgspec decodes
+/// faster than the 36-character text that any other field gets).
 fn encode_value(
     out: &mut Vec<u8>,
     scratch: &mut String,
     codec: Codec,
-    as_text: bool,
+    field_form: bool,
     raw: &[u8],
 ) -> Result<(), String> {
     scratch.clear();
@@ -85,6 +87,9 @@ fn encode_value(
         }
         Codec::Bytea => {
             let _ = mp::write_bin(out, raw);
+        }
+        Codec::Uuid if field_form => {
+            let _ = mp::write_bin(out, &fixed::<16>(raw)?);
         }
         Codec::Uuid => {
             let text = pgtime::uuid_text(u128::from_be_bytes(fixed(raw)?));
@@ -132,7 +137,7 @@ fn encode_value(
                 (Codec::Jsonb, _) => return Err("malformed jsonb value".into()),
                 _ => raw,
             };
-            if as_text {
+            if field_form {
                 let s = std::str::from_utf8(text).map_err(|e| e.to_string())?;
                 let _ = mp::write_str(out, s);
             } else {
@@ -147,7 +152,7 @@ fn encode_value(
                     None => {
                         let _ = mp::write_nil(out);
                     }
-                    Some(value) => encode_value(out, scratch, elem.codec(), as_text, value)?,
+                    Some(value) => encode_value(out, scratch, elem.codec(), field_form, value)?,
                 }
             }
         }
@@ -450,6 +455,23 @@ mod tests {
         let mut v = Vec::new();
         mp::write_str(&mut v, s).unwrap();
         v
+    }
+
+    #[test]
+    fn uuid_is_bin_for_a_uuid_field_and_text_otherwise() {
+        let raw: Vec<u8> = (1..=16).collect();
+        let encode = |field_form| {
+            let mut out = Vec::new();
+            encode_value(&mut out, &mut String::new(), Codec::Uuid, field_form, &raw).unwrap();
+            out
+        };
+        let mut bin = vec![0xc4, 16];
+        bin.extend(&raw);
+        assert_eq!(encode(true), bin);
+        assert_eq!(
+            encode(false),
+            string("01020304-0506-0708-090a-0b0c0d0e0f10")
+        );
     }
 
     #[test]

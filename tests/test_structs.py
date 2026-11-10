@@ -5,12 +5,13 @@ import gc
 import random
 import uuid
 from decimal import Decimal
-from typing import Annotated, Any, Literal, LiteralString, cast
+from typing import Annotated, Any, Literal, LiteralString, Optional, cast
 
 import msgspec
 import pytest
 
 import fastpg
+from fastpg._spec import StructPlanner
 
 
 class Person(msgspec.Struct):
@@ -481,6 +482,116 @@ async def test_dict_and_any_fields_get_decoded_json(
     query = f"""SELECT '{{"k": 1}}'::{json_type} AS doc, '[1, "a"]'::{json_type} AS meta"""
     got = await conn.select_one(query, into=JSONDecoded, strategy=strategy)
     assert got == JSONDecoded({"k": 1}, [1, "a"])
+
+
+A: LiteralString = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+B: LiteralString = "28dd2c79-55ce-9264-5624-0b2ff0100bde"
+UUID_A, UUID_B = uuid.UUID(A), uuid.UUID(B)
+
+
+class UuidItem(msgspec.Struct):
+    id: uuid.UUID
+
+
+class UuidShapes(msgspec.Struct):
+    plain: uuid.UUID
+    nullable: uuid.UUID | None
+    null: uuid.UUID | None
+    optional: Optional[uuid.UUID]  # noqa: UP045 - the spelling under test
+    nested: UuidItem
+    array: list[uuid.UUID | None]
+
+
+UUID_SHAPES_QUERY = f"""
+SELECT '{A}'::uuid AS plain, '{B}'::uuid AS nullable, NULL::uuid AS null,
+       '{A}'::uuid AS optional, '{{"id": "{A}"}}'::jsonb AS nested,
+       ARRAY['{A}', NULL]::uuid[] AS array
+"""
+
+
+def test_only_uuid_fields_take_uuids_as_bin() -> None:
+    # The columns the msgpack route encodes as 16-byte bin: the rest get the text.
+    plan = StructPlanner.plan(UuidShapes)
+    assert plan.uuid_columns == ("plain", "nullable", "null", "optional")
+    assert StructPlanner.plan(UuidsAsText).uuid_columns == ()
+    assert StructPlanner.plan(AnnotatedUuids).uuid_columns == ("described", "described_or_null")
+
+
+@pytest.mark.parametrize("strategy", ["msgpack", "json"])
+async def test_uuid_fields_match_direct_construction(
+    conn: fastpg.Connection,
+    strategy: fastpg.Strategy,
+) -> None:
+    direct = await conn.select_one(UUID_SHAPES_QUERY, into=UuidShapes, strategy="direct")
+    got = await conn.select_one(UUID_SHAPES_QUERY, into=UuidShapes, strategy=strategy)
+    assert got == direct
+    assert direct == UuidShapes(
+        plain=UUID_A,
+        nullable=UUID_B,
+        null=None,
+        optional=UUID_A,
+        nested=UuidItem(UUID_A),
+        array=[UUID_A, None],
+    )
+    assert type(got.plain) is uuid.UUID
+    assert type(got.optional) is uuid.UUID
+    assert type(got.nested.id) is uuid.UUID
+
+
+@pytest.mark.parametrize("strategy", ["msgpack", "json"])
+async def test_uuid_fields_match_direct_construction_across_rows(
+    conn: fastpg.Connection,
+    strategy: fastpg.Strategy,
+) -> None:
+    query = """
+SELECT md5(n::text)::uuid AS plain, CASE WHEN n % 2 = 0 THEN md5(n::text)::uuid END AS nullable,
+       NULL::uuid AS null, md5(n::text)::uuid AS optional,
+       json_build_object('id', md5(n::text)::uuid) AS nested, ARRAY[md5(n::text)::uuid] AS array
+FROM generate_series(1, 50) AS s(n)
+"""
+    direct = await conn.select_many(query, into=UuidShapes, strategy="direct")
+    assert await conn.select_many(query, into=UuidShapes, strategy=strategy) == direct
+    assert sum(row.nullable is None for row in direct) == 25
+
+
+class UuidsAsText(msgspec.Struct):
+    text: str
+    text_or_null: str | None
+    anything: Any
+
+
+@pytest.mark.parametrize("strategy", ["msgpack", "json"])
+async def test_uuid_columns_keep_their_text_for_other_fields(
+    conn: fastpg.Connection,
+    strategy: fastpg.Strategy,
+) -> None:
+    # Direct construction refuses a uuid column for a `str` field; these routes give the text.
+    query = f"SELECT '{A}'::uuid AS text, NULL::uuid AS text_or_null, '{B}'::uuid AS anything"
+    got = await conn.select_one(query, into=UuidsAsText, strategy=strategy)
+    assert got == UuidsAsText(str(UUID_A), None, str(UUID_B))
+    query = f"SELECT '{A}'::uuid AS text, '{B}'::uuid AS text_or_null, NULL AS anything"
+    got = await conn.select_one(query, into=UuidsAsText, strategy=strategy)
+    assert got == UuidsAsText(str(UUID_A), str(UUID_B), None)
+
+
+class AnnotatedUuids(msgspec.Struct):
+    described: Annotated[uuid.UUID, msgspec.Meta(description="an id")]
+    described_or_null: Annotated[uuid.UUID | None, msgspec.Meta(title="maybe")]
+    text: Annotated[str, msgspec.Meta(description="an id as text")]
+
+
+@pytest.mark.parametrize("strategy", ["auto", "msgpack", "json"])
+async def test_annotated_uuid_fields(conn: fastpg.Connection, strategy: fastpg.Strategy) -> None:
+    # `Annotated` fields need msgspec validation: direct construction doesn't take them.
+    query = f"""
+SELECT '{A}'::uuid AS described, NULL::uuid AS described_or_null, '{B}'::uuid AS text
+"""
+    got = await conn.select_one(query, into=AnnotatedUuids, strategy=strategy)
+    assert got == AnnotatedUuids(UUID_A, None, str(UUID_B))
+    assert type(got.described) is uuid.UUID
+    query = f"SELECT '{A}'::uuid AS described, '{B}'::uuid AS described_or_null, 'x' AS text"
+    got = await conn.select_one(query, into=AnnotatedUuids, strategy=strategy)
+    assert got == AnnotatedUuids(UUID_A, UUID_B, "x")
 
 
 @pytest.mark.parametrize(("into", "strategy"), JSON_VALUE_TARGETS)

@@ -116,6 +116,10 @@ struct EncodedFields {
     /// `TypeMismatchError`, as in direct construction: a decoder would keep one of the
     /// values and silently drop the other.
     field_columns: Vec<String>,
+    /// The columns that feed `uuid.UUID` fields: a uuid value there is encoded as 16-byte
+    /// bin, which msgspec decodes faster than the 36-character text. Msgpack route only
+    /// (JSON has no binary form).
+    uuid_columns: Vec<String>,
 }
 
 impl EncodedFields {
@@ -749,8 +753,10 @@ impl Connection {
     }
 
     /// `text_columns`: the columns feeding `str` fields; `field_columns`: every field's
-    /// column (see [`EncodedFields`]).
-    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new()))]
+    /// column; `uuid_columns`: the columns feeding `uuid.UUID` fields (see
+    /// [`EncodedFields`]).
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (future, query, params, shape, text_columns = Vec::new(), field_columns = Vec::new(), uuid_columns = Vec::new()))]
     fn fetch_msgpack(
         &self,
         future: Py<PyAny>,
@@ -759,10 +765,12 @@ impl Connection {
         shape: u8,
         text_columns: Vec<String>,
         field_columns: Vec<String>,
+        uuid_columns: Vec<String>,
     ) -> PyResult<()> {
         let fields = EncodedFields {
             text_columns,
             field_columns,
+            uuid_columns,
         };
         self.submit(
             future,
@@ -790,6 +798,7 @@ impl Connection {
         let fields = EncodedFields {
             text_columns,
             field_columns,
+            uuid_columns: Vec::new(),
         };
         self.submit(
             future,
@@ -1367,19 +1376,24 @@ fn materialize_rows<'py>(
             let codecs = stmt
                 .codecs()
                 .map_err(|m| py_err(py, "UnsupportedTypeError", m))?;
-            let as_text: Vec<bool> = names
+            // Per column: encode values in the form their field takes (see
+            // `msgpack::encode_value`): json/jsonb as text, uuid as 16-byte bin.
+            let field_form: Vec<bool> = names
                 .iter()
                 .zip(codecs.iter())
-                .map(|(name, codec)| {
-                    matches!(codec, decode::Codec::Json | decode::Codec::Jsonb)
-                        && fields.text_columns.iter().any(|t| t == name)
+                .map(|(name, codec)| match codec {
+                    decode::Codec::Json | decode::Codec::Jsonb => {
+                        fields.text_columns.iter().any(|t| t == name)
+                    }
+                    decode::Codec::Uuid => fields.uuid_columns.iter().any(|t| t == name),
+                    _ => false,
                 })
                 .collect();
             let encoded = match target {
                 Target::Json(_, non_finite) => {
-                    json::encode_rows(rows, &names, &codecs, &as_text, single, *non_finite)
+                    json::encode_rows(rows, &names, &codecs, &field_form, single, *non_finite)
                 }
-                _ => msgpack::encode_rows(rows, &names, &codecs, &as_text, single),
+                _ => msgpack::encode_rows(rows, &names, &codecs, &field_form, single),
             }
             .map_err(|m| py_err(py, "DecodeError", m))?;
             Ok(PyBytes::new(py, &encoded).into_any())

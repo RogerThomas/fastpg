@@ -229,4 +229,5 @@ class ModelPlanner:
             validation_error=ValidationError,
             text_columns=text_columns,
             field_columns=field_columns,
+            uuid_columns=(),  # no msgpack route
         )

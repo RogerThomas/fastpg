@@ -191,6 +191,7 @@ class _Queries:
                 shape,
                 plan.text_columns,
                 plan.field_columns,
+                plan.uuid_columns,
             )
         else:
             self._native.fetch_json(
