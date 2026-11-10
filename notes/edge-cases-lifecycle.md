@@ -65,7 +65,7 @@ keeps the traceback's frames alive.
 | 4 | same, with a connection's query in flight | released (after the fix above) | no | | `loop::test_a_query_in_flight_when_the_loop_closes` |
 | 4 | same, with a pool's shared queries in flight | connection and descriptors leak | **yes, open** | | `loop::test_shared_queries_in_flight_when_the_loop_closes` (xfail, strict) |
 | 4 | the loop is run from another thread than the one it connected on | every query hung and the loop spun at 100% CPU | **yes** | `f139bf8` | `loop::test_a_loop_run_on_another_thread_keeps_serving_its_connection` |
-| 4 | used from another loop (same thread, or another thread): a connection's queries, transactions, bulk writes, `close()`; a pool's statements, `acquire()`, `close()` | asyncio's `RuntimeError` "attached to a different loop", raised only when awaiting: the statement had already run, so a write committed while its caller saw an error; `close()` closed the connection, then raised | **yes** | #92 | `loop::test_a_write_from_another_loop_*`, `loop::test_closing_a_connection_from_another_loop_is_refused`, `loop::test_a_connection_used_from_a_loop_on_another_thread_is_refused`, `loop::test_a_pool_used_from_another_loop_*` |
+| 4 | used from another loop (same thread, or another thread): a connection's queries, transactions, bulk writes, `close()`; a pool's statements, `acquire()`, `close()` | asyncio's `RuntimeError` "attached to a different loop", raised only when awaiting: the statement had already run, so a write committed while its caller saw an error; `close()` closed the connection, then raised | **yes** | #92 | `loop::test_a_write_from_another_loop_*`, `loop::test_closing_a_connection_from_another_loop_is_refused`, `loop::test_closing_a_*_whose_loop_has_closed_*`, `loop::test_a_connection_used_from_a_loop_on_another_thread_is_refused`, `loop::test_a_pool_used_from_another_loop_*` |
 | 4 | `fork()`: the child queries, closes or drops an inherited connection | the query went out on the shared socket and killed (or desynchronised) the parent's connection; dropping it sent Terminate and ended the parent's session | **yes** | `e6a2915` | `loop::test_a_forked_child_*` |
 | 5 | unclosed connection dropped on the loop thread | `ResourceWarning`, session closed | no | | `test_connection.py::test_unclosed_connection_warns_and_cleans_up` |
 | 5 | `__del__` on another thread (the Poker path) | session stayed open, descriptors leaked until the loop closed | **yes** | `d6f7037` | `loop::test_unclosed_connection_collected_on_another_thread_is_closed` |
@@ -171,7 +171,9 @@ connected on (`f139bf8`), and the usual case (pytest-asyncio's per-test loops) i
 loop on the same thread. `Connection.close()` makes the same check in Python, as do the
 pool's three entry points (`_query`, `_take`, `_close`): a statement queued, or a
 connection checked out, from another loop would otherwise change the pool's state before
-the await fails. Cost: ~10 ns per operation in Rust (one C call, one pointer compare), ~20 ns
+the await fails. When the object's own loop is already closed, `close()` from another loop
+closes at once instead, as `__del__` does then (`abandon()`), since nothing could finish a
+graceful close; a pool closes each connection that way and counts as closed. Cost: ~10 ns per operation in Rust (one C call, one pointer compare), ~20 ns
 per pool statement in Python; `select_one` CPU per call is unchanged within noise.
 
 ## Open issues and proposed designs

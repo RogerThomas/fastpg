@@ -294,7 +294,7 @@ class Pool:
         default_factory=deque[asyncio.Future[_Entry]],
     )
     _tasks: set[asyncio.Task[Any]] = field(init=False, repr=False, default_factory=set[Any])
-    _closing: asyncio.Task[None] | None = field(init=False, repr=False, default=None)
+    _closing: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _wakeup: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _maintainer: asyncio.Task[None] = field(init=False, repr=False)
 
@@ -879,9 +879,24 @@ class Pool:
         for entry in self._entries:
             entry.conn.terminate()
 
+    async def _abandon_all(self) -> None:
+        """Close every connection at once, for a pool whose event loop is closed: none of its
+        tasks (upkeep, connects, closes) will run again."""
+        if self._closing is None:
+            self._closing = self._loop.create_future()
+            self._closing.set_result(None)
+        for entry in self._entries:
+            await entry.conn.close()  # from another loop, with its own closed: closes at once
+            self._set_state(entry, _Entry.GONE)
+            self._free_slot(entry)
+        self._entries.clear()
+
     async def _close(self) -> None:
         if asyncio.get_running_loop() is not self._loop:  # its tasks run on the pool's loop
-            raise InterfaceError(_OTHER_LOOP)
+            if not self._loop.is_closed():
+                raise InterfaceError(_OTHER_LOOP)
+            await self._abandon_all()
+            return
         if self._closing is None:
             self._closing = self._loop.create_task(self._shutdown())
         try:

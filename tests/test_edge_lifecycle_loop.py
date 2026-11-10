@@ -113,6 +113,10 @@ async def _connect_into(dsn: str, holder: list[fastpg.Connection]) -> None:
     holder.append(await fastpg.connect(dsn))
 
 
+async def _open_pool_into(dsn: str, holder: list[object]) -> None:
+    holder.append(await fastpg.create_pool(dsn, min_size=2, max_size=2))
+
+
 async def _with_table(dsn: str, holder: list[object]) -> None:
     """Create the empty table `edge_other_loop` (v int); add a connection and a one-connection
     pool, both on the running loop, to ``holder``."""
@@ -365,6 +369,24 @@ def test_closing_a_connection_from_another_loop_is_refused(dsn: str) -> None:
         loop.close()
 
 
+def test_closing_a_connection_whose_loop_has_closed_abandons_it(dsn: str) -> None:
+    # Nothing on its closed loop could finish a graceful close: the session ends at once,
+    # and the connection, released, isn't reported as unclosed when dropped.
+    name = "edge_other_loop_closed"
+    fds = _open_fds()
+    holder: list[fastpg.Connection] = []
+    asyncio.run(_connect_into(_tagged(dsn, name), holder))
+    asyncio.run(holder[0].close())
+    assert holder[0].closed
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        holder.clear()
+        gc.collect()
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert _open_fds() == fds
+    asyncio.run(_wait_for_no_backends(dsn, name))
+
+
 async def test_a_connection_used_from_a_loop_on_another_thread_is_refused(
     conn: fastpg.Connection,
 ) -> None:
@@ -404,6 +426,23 @@ def test_a_pool_used_from_another_loop_is_refused_before_anything_is_sent(
         loop.run_until_complete(cast(fastpg.Connection, holder[0]).close())
     finally:
         loop.close()
+
+
+def test_closing_a_pool_whose_loop_has_closed_abandons_its_connections(dsn: str) -> None:
+    name = "edge_other_loop_closed_pool"
+    fds = _open_fds()
+    holder: list[object] = []
+    asyncio.run(_open_pool_into(_tagged(dsn, name), holder))
+    pool = cast(fastpg.Pool, holder[0])
+    asyncio.run(pool.close())
+    assert pool.closed
+    assert pool.stats().size == 0
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _drop_all(holder)
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert _open_fds() == fds
+    asyncio.run(_wait_for_no_backends(dsn, name))
 
 
 # --- garbage collection ---------------------------------------------------------------------

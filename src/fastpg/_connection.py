@@ -536,7 +536,13 @@ class Connection(_Queries):
             self._released = True
             return
         if asyncio.get_running_loop() is not self._loop:  # would close it, then fail to wait
-            raise InterfaceError(_OTHER_LOOP)
+            if not self._loop.is_closed():
+                raise InterfaceError(_OTHER_LOOP)
+            # No callback of its loop will run again to finish a close: close at once, as
+            # __del__ does then (tasks dropped unpolled, the socket closed).
+            self._released = True
+            self._native.abandon()
+            return
         self._native.close()
         try:
             # Shielded: every close() call awaits the one future, so its cancellation is
