@@ -2,11 +2,13 @@
 
 import asyncio
 import datetime as dt
+import gc
 import secrets
 import time
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any, LiteralString
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from typing import TYPE_CHECKING, Annotated, Any, LiteralString, assert_type
 from urllib.parse import urlsplit
 
 import msgspec
@@ -681,6 +683,134 @@ async def test_closed_connection_is_not_returned(dsn: str) -> None:
             await conn.close()
         assert pool.stats().size == 0
         assert await pool.select_one("SELECT pg_backend_pid()") != (pid,)
+
+
+_RELEASED = "released back to the pool when its acquire\\(\\) block ended"
+
+
+async def _keep(pool: fastpg.Pool) -> tuple[fastpg.Connection, int]:
+    """Acquire a connection and keep it past its block; returns it and its backend pid."""
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO pool_items VALUES (1, 'in the block')")
+        pid = (await conn.select_one("SELECT pg_backend_pid()"))[0]
+    return conn, pid
+
+
+async def _write_through_kept_inside_a_transaction(
+    pool: fastpg.Pool,
+    kept: fastpg.Connection,
+    pid: int,
+) -> None:
+    async with pool.transaction() as tx:
+        assert await tx.select_one("SELECT pg_backend_pid()") == (pid,)  # the same session
+        await tx.execute("INSERT INTO pool_items VALUES (10, 'transaction')")
+        with pytest.raises(fastpg.InterfaceError, match=_RELEASED):
+            await kept.execute("INSERT INTO pool_items VALUES (2, 'kept')")
+        await tx.execute("INSERT INTO pool_items VALUES (11, 'transaction')")
+
+
+async def _begin_through(kept: fastpg.Connection) -> None:
+    async with kept.transaction():
+        pass
+
+
+@pytest.mark.usefixtures("items")
+async def test_a_connection_kept_after_acquire_cannot_write_into_another_transaction(
+    dsn: str,
+) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        kept, pid = await _keep(pool)
+        # The pool hands the session to a transaction; the kept connection's INSERT must not
+        # land in it (it would commit or roll back with it).
+        await _write_through_kept_inside_a_transaction(pool, kept, pid)
+        rows = await pool.select_many("SELECT id, v FROM pool_items ORDER BY id")
+        assert rows == [(1, "in the block"), (10, "transaction"), (11, "transaction")]
+
+
+@pytest.mark.usefixtures("items")
+async def test_a_connection_kept_after_acquire_refuses_everything(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        kept, pid = await _keep(pool)
+        query = "SELECT 'kept after its block'::text"
+        calls: list[Awaitable[object]] = [
+            kept.select_one(query),
+            kept.select_one_or_none(query),
+            kept.select_many(query),
+            kept.execute(query),
+            kept.execute_script(query),
+            kept.execute_many("INSERT INTO pool_items VALUES ($1, $2)", [(2, "kept")]),
+            kept.insert_many("pool_items", [Item(3, "kept")]),
+            kept.copy_in("pool_items", [(4, "kept")]),
+            _begin_through(kept),
+            kept.close(),
+        ]
+        for call in calls:
+            with pytest.raises(fastpg.InterfaceError, match=_RELEASED):
+                await call
+        with pytest.raises(fastpg.InterfaceError, match=_RELEASED):
+            kept.terminate()
+        # Nothing reached the server, and the pool's connection is still open and in use.
+        assert not kept.closed
+        assert pool.stats().size == 1
+        async with pool.acquire() as conn:
+            assert await conn.select_one("SELECT pg_backend_pid()") == (pid,)
+            prepared = "SELECT count(*)::int FROM pg_prepared_statements WHERE statement = $1"
+            assert await conn.select_one(prepared, query) == (0,)
+        assert await pool.select_many("SELECT id FROM pool_items") == [(1,)]
+
+
+@pytest.mark.usefixtures("items")
+async def test_a_transaction_on_an_acquired_connection_ends_with_its_block(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        async with AsyncExitStack() as stack:
+            async with pool.acquire() as conn:
+                # Entered but not exited inside the block: the pool rolls it back on release.
+                tx = await stack.enter_async_context(conn.transaction())
+                await tx.execute("INSERT INTO pool_items VALUES (1, 'a')")
+            with pytest.raises(fastpg.InterfaceError, match=_RELEASED):
+                await tx.execute("INSERT INTO pool_items VALUES (2, 'b')")
+            with pytest.raises(fastpg.InterfaceError, match=_RELEASED):
+                await stack.aclose()  # its COMMIT
+        assert await pool.select_one("SELECT count(*)::int FROM pool_items") == (0,)
+
+
+@pytest.mark.usefixtures("items")
+async def test_an_acquired_connection_works_as_before_inside_its_block(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        async with pool.acquire() as conn:
+            assert not conn.closed
+            assert await conn.execute("INSERT INTO pool_items VALUES (1, 'a')") == 1
+            assert await conn.copy_in("pool_items", [(2, "b")]) == 1
+            assert await conn.insert_many("pool_items", [Item(3, "c")]) == 1
+            async with conn.transaction() as tx:
+                await tx.execute("INSERT INTO pool_items VALUES (4, 'd')")
+                async with tx.savepoint():
+                    await tx.execute("INSERT INTO pool_items VALUES (5, 'e')")
+            assert await conn.select_many("SELECT id FROM pool_items ORDER BY id") == [
+                (1,),
+                (2,),
+                (3,),
+                (4,),
+                (5,),
+            ]
+            pid = (await conn.select_one("SELECT pg_backend_pid()"))[0]
+        # Dropping the kept handle neither warns nor closes the pool's connection.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            del conn
+            gc.collect()
+        assert [w.message for w in caught if w.category is ResourceWarning] == []
+        async with pool.acquire() as conn:
+            assert await conn.select_one("SELECT pg_backend_pid()") == (pid,)
+
+
+async def test_checkouts_are_typed_as_async_context_managers(dsn: str) -> None:
+    # Checked by `task typecheck`: the public type, not contextlib's private one.
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        assert_type(pool.acquire(), AbstractAsyncContextManager[fastpg.Connection])
+        assert_type(pool.transaction(), AbstractAsyncContextManager[fastpg.Transaction])
+        async with pool.transaction() as tx:
+            assert_type(tx.savepoint(), AbstractAsyncContextManager[fastpg.Transaction])
 
 
 # --- transactions ---------------------------------------------------------------------------
