@@ -36,7 +36,7 @@ An empty DSN, `fastpg.connect("")`, takes every setting from the environment or 
 | `passfile` | `~/.pgpass` | the [password file](#the-password-file) |
 | `application_name` | none | a name for the connection, shown in `pg_stat_activity` |
 | `options` | none | server settings for the session, e.g. `-c statement_timeout=5s` |
-| `connect_timeout` | none: wait forever | seconds to wait for each server to connect and log in |
+| `connect_timeout` | `30` | seconds to wait for each server to connect and log in (`0`: wait forever) |
 | `target_session_attrs` | `any` | `read-write` or `read-only` to skip servers that aren't (see [Several hosts](#several-hosts)) |
 | `keepalives` | `1` | `0` turns TCP keepalives off |
 | `keepalives_idle` | the OS default | seconds idle before the first keepalive |

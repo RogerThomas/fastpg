@@ -20,9 +20,10 @@ Routing a shared statement (see ``notes/pool.md`` for the reasoning and measurem
    statement's expected work is a moving average of its SQL text's past service times. So
    a connection behind a known-slow statement is avoided from the moment it's sent, and
    one stuck behind an unexpectedly slow statement once that has run for a while;
-4. if every connection is at the cap, the statement waits (FIFO) for the first free slot.
-   It is sent by the code that frees the slot, so a busy connection is refilled at once
-   and its queries are still written together (see ``Pool._hand``).
+4. if every connection is at the cap, the statement waits (FIFO) for the first free slot,
+   for up to ``max_wait`` seconds. It is sent by the code that frees the slot, so a busy
+   connection is refilled at once and its queries are still written together (see
+   ``Pool._hand``).
 
 Everything runs on the event loop that created the pool (fastpg connections are bound to
 it), including every connection's protocol: there are no locks and no extra threads. The
@@ -58,7 +59,7 @@ from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import Template, TemplateCompiler
 from fastpg._writes import Table
-from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError
+from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError, PoolTimeoutError
 
 
 @dataclass(slots=True, eq=False)
@@ -107,6 +108,8 @@ class _Waiter:
     params: tuple[object, ...]
     into: type[Any] | None
     strategy: Strategy
+    # When it fails with PoolTimeoutError if still waiting (loop time; set by Pool._wait).
+    deadline: float = field(init=False, default=math.inf)
     # Set by Pool._hand once sent (token 0: not sent). `call` resolves to the result:
     # `future` itself, or a coroutine that decodes it (msgpack / json).
     entry: _Entry = field(init=False)
@@ -147,6 +150,7 @@ def _check_config(
     statement_cache_size: int,
     max_lifetime: float | None,
     max_idle: float | None,
+    max_wait: float | None,
 ) -> None:
     """Reject an invalid configuration (before any connection is opened)."""
     if max_size < 1 or not 0 <= min_size <= max_size:
@@ -158,6 +162,7 @@ def _check_config(
     check_statement_cache_size(statement_cache_size)
     _check_seconds("max_lifetime", max_lifetime)
     _check_seconds("max_idle", max_idle)
+    _check_seconds("max_wait", max_wait)
 
 
 async def _connect_all(dsn: str, count: int, statement_cache_size: int) -> list[Connection]:
@@ -245,6 +250,7 @@ class Pool:
     statement_cache_size: int = field(kw_only=True, default=256)
     max_lifetime: float | None = field(kw_only=True, default=3600.0)
     max_idle: float | None = field(kw_only=True, default=300.0)
+    max_wait: float | None = field(kw_only=True, default=30.0)
     # Already open connections (on the running loop) that become the pool's own. Only
     # create_pool() passes them: without them, direct construction is refused.
     _connections: InitVar[Sequence[Connection] | None] = field(kw_only=True, default=None)
@@ -279,6 +285,8 @@ class Pool:
     """Connections being opened (cancelled if the pool closes meanwhile)."""
     # Waiting shared statements, first come first served.
     _waiting: deque[_Waiter] = field(init=False, repr=False, default_factory=deque[_Waiter])
+    # Fails the waiting statements past their deadline (`_expire`); None when not armed.
+    _expiry: asyncio.TimerHandle | None = field(init=False, repr=False, default=None)
     # Shared statements in flight per connection, and the SQL texts' service times.
     _router: Router = field(init=False, repr=False)
     _slots: dict[int, _Entry] = field(init=False, repr=False, default_factory=dict[int, _Entry])
@@ -303,6 +311,7 @@ class Pool:
             self.statement_cache_size,
             self.max_lifetime,
             self.max_idle,
+            self.max_wait,
         )
         self._loop = asyncio.get_running_loop()
         self._max_lifetime_ns = int(self.max_lifetime * 1e9) if self.max_lifetime else 0
@@ -687,6 +696,37 @@ class Pool:
             entry.flushing = True
             self._spawn(self._flush_ghosts(entry))
 
+    def _timeout_error(self) -> PoolTimeoutError:
+        return PoolTimeoutError(f"no connection became free within max_wait ({self.max_wait:g} s)")
+
+    def _expire(self) -> None:
+        """Fail the shared statements still waiting at their deadline.
+
+        One timer for the whole queue: every waiter gets the same max_wait and joins at the
+        back, so the queue is in deadline order. The timer is armed for the first waiter's
+        deadline, and once it fires, for the next one still waiting.
+        """
+        self._expiry = None
+        waiting = self._waiting
+        now = self._loop.time()
+        while waiting and waiting[0].deadline <= now:
+            future = waiting.popleft().future
+            if not future.done():  # else its caller was cancelled
+                future.set_exception(self._timeout_error())
+        if waiting:
+            self._expiry = self._loop.call_at(waiting[0].deadline, self._expire)
+
+    def _expire_acquire(self, future: asyncio.Future[_Entry]) -> None:
+        """Fail an acquire() waiter that got no connection within max_wait."""
+        if future.done():
+            return
+        self._acquiring.remove(future)  # not done, so still waiting
+        future.set_exception(self._timeout_error())
+        # A connection drained for it rejoins shared rotation first, so that the shared
+        # statements queued behind the drain are sent on it now.
+        self._rebalance()
+        self._dispatch()
+
     def _cancel_waiter(self, waiter: _Waiter) -> None:
         """The caller of a waiting statement was cancelled: drop it, or release its slot."""
         future = waiter.future
@@ -708,8 +748,12 @@ class Pool:
         if self._closing is not None:
             msg = "pool is closed"
             raise ConnectionClosedError(msg)
+        if self.max_wait is not None:
+            waiter.deadline = self._loop.time() + self.max_wait
         self._waiting.append(waiter)
         self._dispatch()
+        if self._expiry is None and self._waiting and self.max_wait is not None:
+            self._expiry = self._loop.call_at(self._waiting[0].deadline, self._expire)
         future = waiter.future
         try:
             result = await future
@@ -796,6 +840,9 @@ class Pool:
         future: asyncio.Future[_Entry] = self._loop.create_future()
         self._acquiring.append(future)
         self._dispatch()
+        expiry = None
+        if self.max_wait is not None and not future.done():
+            expiry = self._loop.call_later(self.max_wait, self._expire_acquire, future)
         try:
             return await future
         except asyncio.CancelledError:
@@ -806,6 +853,9 @@ class Pool:
                 self._set_state(future.result(), _Entry.SHARED)  # unused, so no reset needed
             self._dispatch()
             raise
+        finally:
+            if expiry is not None:
+                expiry.cancel()
 
     async def _reset(self, conn: Connection) -> bool:
         """Reset session state in one round trip; False if the session can't be trusted."""
@@ -845,6 +895,8 @@ class Pool:
 
     async def _shutdown(self) -> None:
         self._fail_waiters(ConnectionClosedError("pool is closed"))
+        if self._expiry is not None:
+            self._expiry.cancel()
         for task in list(self._opening):  # unused now; one stalled by the server never ends
             task.cancel()
         self._maintainer.cancel()
@@ -1096,11 +1148,11 @@ class Pool:
     async def acquire(self) -> AsyncGenerator[Connection]:
         """Check out a connection for exclusive use: ``async with pool.acquire() as conn``.
 
-        Waits (FIFO) for an idle connection; busy ones are drained of shared statements if
-        the pool can't grow. On exit the session is reset (settings, role, advisory locks,
-        cursors, LISTENs, temp tables; a transaction left open is rolled back; prepared
-        statements are kept) and the connection rejoins shared rotation. Don't keep using
-        ``conn`` after the block.
+        Waits (FIFO) for an idle connection, up to ``max_wait`` seconds; busy ones are drained
+        of shared statements if the pool can't grow. On exit the session is reset (settings,
+        role, advisory locks, cursors, LISTENs, temp tables; a transaction left open is rolled
+        back; prepared statements are kept) and the connection rejoins shared rotation. Don't
+        keep using ``conn`` after the block.
         """
         entry = await self._take()
         try:
@@ -1167,6 +1219,7 @@ async def create_pool(
     statement_cache_size: int = 256,
     max_lifetime: float | None = 3600.0,
     max_idle: float | None = 300.0,
+    max_wait: float | None = 30.0,
 ) -> Pool:
     """Open a pool with ``min_size`` connections (it grows on demand up to ``max_size``).
 
@@ -1183,6 +1236,9 @@ async def create_pool(
             If closing it would leave fewer than ``min_size`` open, its replacement is opened
             first and it serves until then (unless the pool is at ``max_size``).
         max_idle: Seconds after which an idle connection above ``min_size`` is closed.
+        max_wait: Seconds anything waits for a connection before ``PoolTimeoutError`` (None:
+            forever): ``acquire()``, ``transaction()``, a bulk write, and a shared statement
+            while every connection is busy and the pool can't grow.
     """
     # Before connecting: a configuration Pool() rejects would leave the connections open.
     _check_config(
@@ -1192,6 +1248,7 @@ async def create_pool(
         statement_cache_size,
         max_lifetime,
         max_idle,
+        max_wait,
     )
     return Pool(
         dsn,
@@ -1201,5 +1258,6 @@ async def create_pool(
         statement_cache_size=statement_cache_size,
         max_lifetime=max_lifetime,
         max_idle=max_idle,
+        max_wait=max_wait,
         _connections=await _connect_all(dsn, min_size, statement_cache_size),
     )

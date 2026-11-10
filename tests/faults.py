@@ -4,6 +4,7 @@
   adds latency, stalls, drops connections (FIN or RST), delivers bytes in tiny fragments, and
   refuses new connections or leaves them hanging.
 * `DisposableServer`: a PostgreSQL container of the tests' own, to pause, kill and restart.
+* `skip_ahead`: moves the event loop's clock forward, to fire long timeouts at once.
 """
 
 import asyncio
@@ -12,10 +13,12 @@ import os
 import socket
 import struct
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from functools import partial
 from urllib.parse import urlsplit, urlunsplit
 
+import pytest
 from testcontainers.core.container import DockerContainer
 
 import fastpg
@@ -30,6 +33,17 @@ def with_params(dsn: str, **params: str) -> str:
     """URL `dsn` with extra query parameters."""
     query = "&".join(f"{key}={value}" for key, value in params.items())
     return f"{dsn}{'&' if '?' in dsn else '?'}{query}"
+
+
+def _later(clock: Callable[[], float], seconds: float) -> float:
+    return clock() + seconds
+
+
+def skip_ahead(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
+    """Move the running loop's clock `seconds` ahead (until the test ends): the timers due by
+    then fire on its next iteration, without waiting for them."""
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "time", partial(_later, loop.time, seconds))
 
 
 def at_address(dsn: str, host: str, port: int) -> str:

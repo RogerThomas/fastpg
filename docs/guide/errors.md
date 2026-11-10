@@ -43,6 +43,7 @@ FastPGError
     ├── OperationalError          the database can't be reached or used
     │   ├── ConnectError          connecting failed: refused, unreachable, timed out
     │   ├── ConnectionClosedError the connection is closed or was lost
+    │   ├── PoolTimeoutError      no pool connection was free within max_wait
     │   ├── AuthenticationError   e.g. a wrong password
     │   └── QueryCanceledError    cancelled, e.g. by statement_timeout
     ├── InternalError             an internal server error
@@ -58,7 +59,7 @@ To handle "the database is unreachable", catch `OperationalError`.
 A `DatabaseError` has the server's details: `sqlstate`, `detail`, `hint`, `table_name`,
 `column_name`, `constraint_name` and more.
 Each is `None` when the server doesn't send it.
-For `ConnectError` and `ConnectionClosedError` they are all `None`.
+For `ConnectError`, `ConnectionClosedError` and `PoolTimeoutError` they are all `None`.
 
 ## Good to know
 

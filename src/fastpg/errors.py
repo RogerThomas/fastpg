@@ -25,6 +25,7 @@ FastPGError (alias: Error)
     ├── OperationalError (08, 53, 57) the database can't be reached or used
     │   ├── ConnectError          a connection couldn't be established (no .sqlstate)
     │   ├── ConnectionClosedError the connection is closed or was lost (no .sqlstate)
+    │   ├── PoolTimeoutError      no pool connection became free within max_wait (no .sqlstate)
     │   ├── AuthenticationError (28)
     │   └── QueryCanceledError (57014)
     ├── InternalError (XX)
@@ -239,6 +240,12 @@ class ConnectError(OperationalError):
 
 class ConnectionClosedError(OperationalError):
     """The connection is closed or was lost."""
+
+
+class PoolTimeoutError(OperationalError):
+    """A pool had no connection free for ``max_wait`` seconds: for ``acquire()``,
+    ``transaction()``, a bulk write, or a shared statement while every connection was busy
+    and the pool couldn't grow."""
 
 
 class AuthenticationError(OperationalError):

@@ -4,13 +4,14 @@ import asyncio
 import datetime as dt
 import secrets
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any, LiteralString
 from urllib.parse import urlsplit
 
 import msgspec
 import pytest
+from faults import skip_ahead
 
 import fastpg
 from fastpg import errors
@@ -1132,3 +1133,117 @@ async def test_stats(dsn: str) -> None:
         async with pool.acquire():
             stats = pool.stats()
             assert (stats.idle, stats.acquired) == (1, 1)
+
+
+# --- max_wait -------------------------------------------------------------------------------
+
+
+async def test_a_waiting_query_times_out_after_max_wait(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1, max_wait=0.05) as pool:
+        async with pool.acquire():
+            with pytest.raises(fastpg.PoolTimeoutError, match=r"max_wait \(0\.05 s\)") as exc:
+                await pool.select_one("SELECT 1")
+            assert isinstance(exc.value, fastpg.OperationalError)
+            assert pool.stats().waiting == 0
+        assert await pool.select_one("SELECT 2") == (2,)
+        stats = pool.stats()
+        assert (stats.idle, stats.acquired, stats.in_flight, stats.waiting) == (1, 0, 0, 0)
+
+
+async def test_waiting_queries_time_out_in_order_around_a_cancelled_one(dsn: str) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1, max_wait=0.05) as pool:
+        async with pool.acquire():
+            queries = [asyncio.create_task(pool.select_one("SELECT $1::int", i)) for i in range(3)]
+            await asyncio.sleep(0)  # queued
+            assert pool.stats().waiting == 3
+            queries[1].cancel()
+            results = await asyncio.gather(*queries, return_exceptions=True)
+            assert [type(r) for r in results] == [
+                fastpg.PoolTimeoutError,
+                asyncio.CancelledError,
+                fastpg.PoolTimeoutError,
+            ]
+            assert pool.stats().waiting == 0
+        assert await pool.select_one("SELECT 3") == (3,)
+
+
+@pytest.mark.parametrize("checkout", [fastpg.Pool.acquire, fastpg.Pool.transaction])
+async def test_a_checkout_times_out_after_max_wait(
+    dsn: str,
+    checkout: Callable[[fastpg.Pool], AbstractAsyncContextManager[object]],
+) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1, max_wait=0.05) as pool:
+        async with pool.acquire() as held:
+            pid = (await held.select_one("SELECT pg_backend_pid()"))[0]
+            with pytest.raises(fastpg.PoolTimeoutError, match="max_wait"):
+                async with checkout(pool):
+                    pass
+            assert pool.stats().waiting_acquire == 0
+        # Released to the pool, not to the waiter that gave up.
+        stats = pool.stats()
+        assert (stats.idle, stats.acquired, stats.waiting_acquire) == (1, 0, 0)
+        assert await _acquired_pid(pool) == pid
+
+
+async def test_a_timed_out_checkout_undrains_the_connection(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
+    async with await fastpg.create_pool(
+        dsn,
+        min_size=1,
+        max_size=1,
+        max_inflight_per_conn=8,
+        max_wait=0.05,
+    ) as pool:
+        async with _gate(conn) as key:
+            gated = asyncio.create_task(_gated_pid(pool, key))
+            await asyncio.sleep(0)  # sent
+            with pytest.raises(fastpg.PoolTimeoutError):
+                await _acquired_pid(pool)  # drained the busy connection while it waited
+            # Back in shared rotation: a new statement is pipelined onto it, not queued.
+            shared = asyncio.create_task(pool.select_one("SELECT 1"))
+            await asyncio.sleep(0)
+            stats = pool.stats()
+            assert (stats.in_flight, stats.waiting, stats.waiting_acquire) == (2, 0, 0)
+        await gated
+        assert await shared == (1,)
+
+
+async def test_max_wait_is_30_seconds_by_default(
+    dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        async with pool.acquire():
+            query = asyncio.create_task(pool.select_one("SELECT 1"))
+            checkout = asyncio.create_task(_acquired_pid(pool))
+            await asyncio.sleep(0)  # both waiting
+            stats = pool.stats()
+            assert (stats.waiting, stats.waiting_acquire) == (1, 1)
+            skip_ahead(monkeypatch, 30)
+            for task in (query, checkout):
+                with pytest.raises(fastpg.PoolTimeoutError, match=r"max_wait \(30 s\)"):
+                    await task
+            stats = pool.stats()
+            assert (stats.waiting, stats.waiting_acquire) == (0, 0)
+        assert await pool.select_one("SELECT 2") == (2,)
+
+
+async def test_max_wait_none_waits_until_a_connection_is_free(
+    dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1, max_wait=None) as pool:
+        async with pool.acquire() as held:
+            pid = (await held.select_one("SELECT pg_backend_pid()"))[0]
+            query = asyncio.create_task(pool.select_one("SELECT pg_backend_pid()"))
+            checkout = asyncio.create_task(_acquired_pid(pool))
+            await asyncio.sleep(0)  # both waiting
+            skip_ahead(monkeypatch, 10**6)
+            for _ in range(3):  # a timer due by then would have fired and failed them
+                await asyncio.sleep(0)
+            assert not query.done()
+            assert not checkout.done()
+        assert await query == (pid,)
+        assert await checkout == pid

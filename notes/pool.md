@@ -17,6 +17,7 @@ pool = await fastpg.create_pool(
     statement_cache_size=256,  # per connection, as in connect()
     max_lifetime=3600.0,  # replace a connection once idle after this many seconds (None: never)
     max_idle=300.0,  # close idle connections above min_size after this (None: never)
+    max_wait=30.0,  # wait this long for a free connection, then PoolTimeoutError (None: forever)
 )
 
 # Shared mode: no checkout, each statement autocommits, routed + pipelined.

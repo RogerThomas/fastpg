@@ -25,7 +25,7 @@ class SocketOptions:
 
     @property
     def connect_timeout(self) -> int | None:
-        """Seconds."""
+        """Seconds: 30 if neither the DSN nor PGCONNECT_TIMEOUT sets it, None if set to 0."""
     @property
     def keepalives(self) -> bool:
         """`SO_KEEPALIVE`: on unless `keepalives=0`."""

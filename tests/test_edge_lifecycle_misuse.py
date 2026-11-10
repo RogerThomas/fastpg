@@ -254,6 +254,9 @@ async def test_an_unknown_strategy_is_refused_by_the_pool(dsn: str) -> None:
         ({"max_lifetime": float("inf")}, "max_lifetime must be a positive number of seconds"),
         ({"max_idle": -5.0}, "max_idle must be a positive number of seconds"),
         ({"max_idle": float("inf")}, "max_idle must be a positive number of seconds"),
+        ({"max_wait": 0.0}, "max_wait must be a positive number of seconds"),
+        ({"max_wait": -1.0}, "max_wait must be a positive number of seconds"),
+        ({"max_wait": float("nan")}, "max_wait must be a positive number of seconds"),
     ],
 )
 async def test_invalid_pool_configs_are_refused_before_connecting(
@@ -289,6 +292,7 @@ async def test_valid_edge_pool_configs(dsn: str) -> None:
         statement_cache_size=1,
         max_lifetime=None,
         max_idle=None,
+        max_wait=None,
     ) as pool:
         assert pool.stats().size == 0
         assert await asyncio.gather(pool.select_one("SELECT 1"), pool.select_one("SELECT 2")) == [
