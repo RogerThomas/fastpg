@@ -94,8 +94,11 @@ print(rows)  # [(52, 70), (53, 71)]
 
 ### SQL built at runtime
 
-The query must be a string literal or a t-string.
-A type checker such as pyright then flags an f-string query, where a value could change the SQL.
+A query is a string literal or a t-string.
+A literal with a value written into it, like `"SELECT name FROM people WHERE id = 3"`, is fine.
+A type checker such as pyright flags an f-string query, where a value could change the SQL.
+Python doesn't check this when the code runs, so an f-string query still runs.
+Each different value then makes a different query, prepared separately, which is slower.
 
 For a table or column name, use `Identifier` in a t-string, as above.
 If you do need to build the SQL yourself, say so with `cast`:
