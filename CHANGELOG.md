@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.2](https://github.com/RogerThomas/fastpg/compare/v0.2.1...v0.2.2) (2026-11-10)
+
+
+### Features
+
+* time out connecting and waiting for a pool connection after 30 seconds by default ([#90](https://github.com/RogerThomas/fastpg/issues/90)) ([438bf26](https://github.com/RogerThomas/fastpg/commit/438bf266939b9b26f070fbcef8de951f82cb9bd4))
+
+
+### Bug Fixes
+
+* **errors:** map every SQLSTATE class to an error class, as psycopg does ([#85](https://github.com/RogerThomas/fastpg/issues/85)) ([2b870d9](https://github.com/RogerThomas/fastpg/commit/2b870d9e3cfcaf2ec24c93760694bb7c5940bb31))
+* **pool:** refuse a connection used after its acquire() block ends ([#91](https://github.com/RogerThomas/fastpg/issues/91)) ([f5f668f](https://github.com/RogerThomas/fastpg/commit/f5f668f4c0cc19e63ebc3d68b4d0f6d5b3e7623d))
+* refuse to use a connection from another event loop, before sending anything ([#92](https://github.com/RogerThomas/fastpg/issues/92)) ([cf9360e](https://github.com/RogerThomas/fastpg/commit/cf9360e176d36fa408a478809b4400fa4275a1ba))
+
+
+### Performance Improvements
+
+* send uuid columns as 16-byte bin on the msgpack route when the field is a UUID ([#94](https://github.com/RogerThomas/fastpg/issues/94)) ([eb332da](https://github.com/RogerThomas/fastpg/commit/eb332da7adf13ca08eed0ef6903a4fe2d1dda01c))
+
 ## [0.2.1](https://github.com/RogerThomas/fastpg/compare/v0.2.0...v0.2.1) (2026-11-10)
 
 
