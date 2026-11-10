@@ -86,6 +86,10 @@ fn encode_value(
         Codec::Bytea => {
             let _ = mp::write_bin(out, raw);
         }
+        Codec::Uuid if as_text => {
+            // PROTOTYPE (idea E): the column feeds a `uuid.UUID` field: 16-byte bin.
+            let _ = mp::write_bin(out, &fixed::<16>(raw)?);
+        }
         Codec::Uuid => {
             let text = pgtime::uuid_text(u128::from_be_bytes(fixed(raw)?));
             let _ = mp::write_str_len(out, 36);

@@ -109,6 +109,9 @@ class Plan[T]:
     field_columns: tuple[str, ...]
     """The column of every field: the msgpack/json routes refuse a result naming one twice,
     as direct construction does (a decoder would keep one value and drop the other)."""
+    uuid_columns: tuple[str, ...] = ()
+    """PROTOTYPE (idea E): columns feeding `uuid.UUID` fields (or `UUID | None`): the msgpack
+    route writes a uuid there as 16-byte bin, which msgspec decodes faster than text."""
 
 
 class StructPlanner:
@@ -367,6 +370,15 @@ class StructPlanner:
             validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
             field_columns=tuple(f.encode_name for f in info.fields),
+            uuid_columns=tuple(
+                f.encode_name
+                for f in info.fields
+                if all(
+                    isinstance(p, (mi.UUIDType, mi.NoneType))
+                    for p in (f.type.types if isinstance(f.type, mi.UnionType) else (f.type,))
+                )
+                and not isinstance(f.type, mi.NoneType)
+            ),
         )
 
     @classmethod
