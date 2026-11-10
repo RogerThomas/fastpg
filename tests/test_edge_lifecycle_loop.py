@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Callable, Coroutine
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -111,6 +111,54 @@ async def _drop_pool(dsn: str, name: str) -> int:
 
 async def _connect_into(dsn: str, holder: list[fastpg.Connection]) -> None:
     holder.append(await fastpg.connect(dsn))
+
+
+async def _open_pool_into(dsn: str, holder: list[object]) -> None:
+    holder.append(await fastpg.create_pool(dsn, min_size=2, max_size=2))
+
+
+async def _with_table(dsn: str, holder: list[object]) -> None:
+    """Create the empty table `edge_other_loop` (v int); add a connection and a one-connection
+    pool, both on the running loop, to ``holder``."""
+    conn = await fastpg.connect(dsn)
+    await conn.execute_script(
+        "DROP TABLE IF EXISTS edge_other_loop; CREATE TABLE edge_other_loop (v int)",
+    )
+    holder.append(conn)
+    holder.append(await fastpg.create_pool(dsn, min_size=1, max_size=1))
+
+
+async def _count(target: fastpg.Connection | fastpg.Pool) -> int:
+    return (await target.select_one("SELECT count(*)::int FROM edge_other_loop"))[0]
+
+
+async def _execute(target: fastpg.Connection | fastpg.Pool) -> None:
+    await target.execute("INSERT INTO edge_other_loop VALUES ($1)", 1)
+
+
+async def _execute_script(target: fastpg.Connection | fastpg.Pool) -> None:
+    await target.execute_script("INSERT INTO edge_other_loop VALUES (1)")
+
+
+async def _in_transaction(target: fastpg.Connection | fastpg.Pool) -> None:
+    async with target.transaction() as tx:
+        await tx.execute("INSERT INTO edge_other_loop VALUES ($1)", 1)
+
+
+async def _execute_many(target: fastpg.Connection | fastpg.Pool) -> None:
+    await target.execute_many("INSERT INTO edge_other_loop VALUES ($1)", [(1,), (2,)])
+
+
+async def _copy_in(target: fastpg.Connection | fastpg.Pool) -> None:
+    await target.copy_in("edge_other_loop", [(1,), (2,)])
+
+
+async def _acquired(pool: fastpg.Pool) -> None:
+    async with pool.acquire() as conn:
+        await _execute(conn)
+
+
+_WRITES = [_execute, _execute_script, _in_transaction, _execute_many, _copy_in]
 
 
 def _run_and_collect[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -283,27 +331,118 @@ def test_a_loop_run_on_another_thread_keeps_serving_its_connection(dsn: str) -> 
         loop.close()
 
 
-def test_a_connection_awaited_from_another_loop_raises_and_stays_usable(dsn: str) -> None:
+@pytest.mark.parametrize("write", _WRITES, ids=lambda write: write.__name__.strip("_"))
+def test_a_write_from_another_loop_is_refused_before_it_is_sent(
+    dsn: str,
+    write: Callable[[fastpg.Connection], Coroutine[Any, Any, None]],
+) -> None:
+    # E.g. a connection from a session-scoped fixture used in a test's own loop: refused
+    # before anything is sent, so nothing is written behind the caller's back.
+    loop = asyncio.new_event_loop()
+    try:
+        holder: list[object] = []
+        loop.run_until_complete(_with_table(dsn, holder))
+        conn = cast(fastpg.Connection, holder[0])
+        with pytest.raises(fastpg.InterfaceError, match="belongs to a different event loop"):
+            asyncio.run(write(conn))
+        assert loop.run_until_complete(_count(conn)) == 0
+        loop.run_until_complete(write(conn))  # and on its own loop, it works
+        assert loop.run_until_complete(_count(conn)) > 0
+        loop.run_until_complete(conn.close())
+        loop.run_until_complete(cast(fastpg.Pool, holder[1]).close())
+    finally:
+        loop.close()
+
+
+def test_closing_a_connection_from_another_loop_is_refused(dsn: str) -> None:
     loop = asyncio.new_event_loop()
     try:
         holder: list[fastpg.Connection] = []
         loop.run_until_complete(_connect_into(dsn, holder))
         conn = holder[0]
-        with pytest.raises(RuntimeError, match="attached to a different loop"):
-            asyncio.run(_select(conn, 1))
+        with pytest.raises(fastpg.InterfaceError, match="belongs to a different event loop"):
+            asyncio.run(conn.close())
+        assert not conn.closed
         assert loop.run_until_complete(_select(conn, 2)) == (2,)
         loop.run_until_complete(conn.close())
     finally:
         loop.close()
 
 
-async def test_a_connection_awaited_from_a_loop_on_another_thread_raises(
+def test_closing_a_connection_whose_loop_has_closed_abandons_it(dsn: str) -> None:
+    # Nothing on its closed loop could finish a graceful close: the session ends at once,
+    # and the connection, released, isn't reported as unclosed when dropped.
+    name = "edge_other_loop_closed"
+    fds = _open_fds()
+    holder: list[fastpg.Connection] = []
+    asyncio.run(_connect_into(_tagged(dsn, name), holder))
+    asyncio.run(holder[0].close())
+    assert holder[0].closed
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        holder.clear()
+        gc.collect()
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert _open_fds() == fds
+    asyncio.run(_wait_for_no_backends(dsn, name))
+
+
+async def test_a_connection_used_from_a_loop_on_another_thread_is_refused(
     conn: fastpg.Connection,
 ) -> None:
-    outcome = await asyncio.to_thread(_run_in_thread, partial(asyncio.run, _select(conn, 1)))
-    assert isinstance(outcome, RuntimeError)
-    assert "attached to a different loop" in str(outcome)
+    await conn.execute_script("CREATE TEMP TABLE edge_other_thread (v int)")
+    insert = conn.execute("INSERT INTO edge_other_thread VALUES ($1)", 1)
+    outcome = await asyncio.to_thread(_run_in_thread, partial(asyncio.run, insert))
+    assert isinstance(outcome, fastpg.InterfaceError)
+    assert "belongs to a different event loop" in str(outcome)
+    assert await conn.select_one("SELECT count(*)::int FROM edge_other_thread") == (0,)
     assert [await _select(conn, i) for i in range(3)] == [(0,), (1,), (2,)]
+
+
+@pytest.mark.parametrize(
+    "use",
+    [*_WRITES, _acquired, fastpg.Pool.close],
+    ids=lambda use: use.__name__.strip("_"),
+)
+def test_a_pool_used_from_another_loop_is_refused_before_anything_is_sent(
+    dsn: str,
+    use: Callable[[fastpg.Pool], Coroutine[Any, Any, None]],
+) -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        holder: list[object] = []
+        loop.run_until_complete(_with_table(dsn, holder))
+        pool = cast(fastpg.Pool, holder[1])
+        stats = pool.stats()
+        with pytest.raises(fastpg.InterfaceError, match="pool belongs to a different event loop"):
+            asyncio.run(use(pool))
+        # Nothing sent, and the pool as it was: open, its connection idle, nothing queued.
+        assert pool.stats() == stats
+        assert not pool.closed
+        assert loop.run_until_complete(_count(pool)) == 0
+        loop.run_until_complete(_execute(pool))
+        assert loop.run_until_complete(_count(pool)) == 1
+        loop.run_until_complete(pool.close())
+        loop.run_until_complete(cast(fastpg.Connection, holder[0]).close())
+    finally:
+        loop.close()
+
+
+def test_closing_a_pool_whose_loop_has_closed_abandons_its_connections(dsn: str) -> None:
+    name = "edge_other_loop_closed_pool"
+    fds = _open_fds()
+    holder: list[object] = []
+    asyncio.run(_open_pool_into(_tagged(dsn, name), holder))
+    pool = cast(fastpg.Pool, holder[0])
+    asyncio.run(pool.close())
+    assert pool.closed
+    assert pool.stats().size == 0
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _drop_all(holder)
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert _open_fds() == fds
+    asyncio.run(_wait_for_no_backends(dsn, name))
 
 
 # --- garbage collection ---------------------------------------------------------------------
