@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/RogerThomas/fastpg/compare/v0.2.0...v0.2.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **release:** publish to PyPI again when a release is created ([#77](https://github.com/RogerThomas/fastpg/issues/77)) ([3bd2001](https://github.com/RogerThomas/fastpg/commit/3bd20018cb0fe5ba84e44d88b37f3c13d1af3726))
+
 ## [0.2.0](https://github.com/RogerThomas/fastpg/compare/v0.1.4...v0.2.0) (2026-11-09)
 
 
