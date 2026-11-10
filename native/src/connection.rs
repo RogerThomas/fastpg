@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 use xitca_postgres::error::{DbError, SqlState};
 use xitca_postgres::iter::AsyncLendingIterator;
@@ -52,6 +53,13 @@ const CHUNK_BYTES: usize = 1024 * 1024;
 /// 512-row chunk of rows of a few hundred bytes, or hundreds of point-lookup rows. A chunk
 /// of large values (up to [`CHUNK_BYTES`]) is freed instead: an idle connection would hold it.
 const SPARE_ROW_BYTES: usize = 256 * 1024;
+
+/// `asyncio._get_running_loop` (C, in `_asyncio`): the loop running on this thread, or None.
+static GET_RUNNING_LOOP: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+
+/// Refusal of an operation submitted outside the connection's event loop.
+const OTHER_LOOP: &str = "this connection belongs to a different event loop (the one that \
+                          opened it): open it, or its pool, inside the loop that uses it";
 
 /// Bumped in a child process right after `os.fork()` (see [`after_fork_in_child`]): the
 /// connections of an earlier generation were inherited from the parent process.
@@ -218,6 +226,9 @@ pub(crate) struct Shared {
     /// [`FORK_GENERATION`] when created: another one now means this is a fork()ed child,
     /// and the socket belongs to the parent.
     generation: u64,
+    /// The asyncio loop that opened the connection: operations submitted while another loop
+    /// runs (or none) are refused before anything is sent (see `require_client`).
+    event_loop: Py<PyAny>,
     /// Server-side cancel of an abandoned operation (see `cancel.rs`).
     pub(crate) cancels: Cancels,
 }
@@ -495,8 +506,9 @@ pub struct Connection {
 impl Connection {
     #[new]
     /// Create it on the event loop's thread: the connection's tasks only run there.
-    #[pyo3(signature = (statement_cache_size = 256))]
-    fn new(statement_cache_size: usize) -> PyResult<Self> {
+    /// `event_loop` is that loop: only it may submit operations.
+    #[pyo3(signature = (event_loop, statement_cache_size = 256))]
+    fn new(event_loop: Py<PyAny>, statement_cache_size: usize) -> PyResult<Self> {
         let mailbox = Mailbox::new()?;
         let exec = event_loop::Executor::new(mailbox.poker()?);
         Ok(Self {
@@ -517,6 +529,7 @@ impl Connection {
                 flush_pending: AtomicBool::new(false),
                 spare_rows: Mutex::new((Vec::new(), 0)),
                 generation: FORK_GENERATION.load(Ordering::Relaxed),
+                event_loop,
                 cancels: Cancels::default(),
             }),
             active: None,
@@ -913,6 +926,11 @@ impl Connection {
                  it, and shares its socket): open a new connection in this process",
             ));
         }
+        // Without this, the operation would run, and only awaiting its future (bound to the
+        // connection's loop) would fail: a write would commit while its caller sees an error.
+        if !self.on_own_loop(py)? {
+            return Err(py_err(py, "InterfaceError", OTHER_LOOP));
+        }
         if let Some(active) = &self.active
             && !active.load(Ordering::Acquire)
         {
@@ -925,6 +943,14 @@ impl Connection {
         self.shared
             .client()
             .ok_or_else(|| self.shared.closed_error().into_pyerr(py))
+    }
+
+    /// Whether the connection's event loop is the one running on this thread.
+    fn on_own_loop(&self, py: Python<'_>) -> PyResult<bool> {
+        let get = GET_RUNNING_LOOP.get_or_try_init(py, || {
+            Ok::<_, PyErr>(py.import("asyncio")?.getattr("_get_running_loop")?.unbind())
+        })?;
+        Ok(get.bind(py).call0()?.is(&self.shared.event_loop))
     }
 
     fn submit(

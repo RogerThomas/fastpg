@@ -58,7 +58,7 @@ from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import Template, TemplateCompiler
 from fastpg._writes import Table
-from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError
+from fastpg.errors import ConnectionClosedError, DatabaseError, FastPGError, InterfaceError
 
 
 @dataclass(slots=True, eq=False)
@@ -177,6 +177,12 @@ async def _connect_all(dsn: str, count: int, statement_cache_size: int) -> list[
             if not task.cancelled() and task.exception() is None:
                 await task.result().close()
         raise
+
+
+_OTHER_LOOP = (
+    "this pool belongs to a different event loop (the one that created it): create it inside"
+    " the loop that uses it"
+)
 
 
 def _is_fatal(error: BaseException) -> bool:
@@ -733,6 +739,10 @@ class Pool:
         into: type[Any] | None,
         strategy: Strategy,
     ) -> Any:  # noqa: ANN401 - typed by the public overloads
+        # First: from another loop, awaiting the result (a future of the pool's loop) would
+        # fail only once the statement was sent, or queued to be sent later.
+        if asyncio.get_running_loop() is not self._loop:
+            raise InterfaceError(_OTHER_LOOP)
         if isinstance(query, Template):
             # Compile once here: routing learns per SQL text, and the connection gets plain SQL.
             query, params = self._templates.bind(query, params)
@@ -785,6 +795,8 @@ class Pool:
 
     async def _take(self) -> _Entry:
         """Check out an idle connection, waiting (FIFO) for one if needed."""
+        if asyncio.get_running_loop() is not self._loop:  # as in _query
+            raise InterfaceError(_OTHER_LOOP)
         if self._closing is not None:
             msg = "pool is closed"
             raise ConnectionClosedError(msg)
@@ -868,6 +880,8 @@ class Pool:
             entry.conn.terminate()
 
     async def _close(self) -> None:
+        if asyncio.get_running_loop() is not self._loop:  # its tasks run on the pool's loop
+            raise InterfaceError(_OTHER_LOOP)
         if self._closing is None:
             self._closing = self._loop.create_task(self._shutdown())
         try:
