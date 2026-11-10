@@ -16,7 +16,7 @@ runs it in GitHub Actions: on pushes to `main` that change the library or the be
 weekly, on pull requests labelled `benchmark`, and on demand.
 Each run writes its results to the run's summary page, with the raw JSON as an artifact.
 To test a released wheel, installed from PyPI:
-`gh workflow run benchmarks.yml -f fastpg-version=0.1.4`.
+`gh workflow run benchmarks.yml -f fastpg-version=0.2.1`.
 Other runs build fastpg from source, without the release wheels' profile-guided optimisation.
 
 ## Running it
