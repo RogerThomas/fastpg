@@ -570,7 +570,11 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    if: needs.release-please.outputs.release_created == 'true'
+    # !cancelled(): without it, `if` also needs every job further up to have succeeded, and the
+    # pull-request-only `packaging` job is skipped on a push, so the publish would be too.
+    if: >-
+      ${{ !cancelled() && needs.release-please.outputs.release_created == 'true' &&
+      needs.linux.result == 'success' && needs.macos.result == 'success' }}
     needs:
       - release-please
       - linux
