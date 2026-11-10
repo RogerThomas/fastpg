@@ -3,22 +3,18 @@
 fastpg is compared with [asyncpg](https://github.com/MagicStack/asyncpg),
 [psycopg 3](https://www.psycopg.org/psycopg3/) and
 [psqlpy](https://github.com/psqlpy-python/psqlpy).
-These numbers are from
-[run 42791890769](https://github.com/RogerThomas/fastpg/actions/runs/42791890769) of the
-[Benchmarks workflow](https://github.com/RogerThomas/fastpg/actions/workflows/benchmarks.yml)
-on `main`, on 2026-11-10.
-It tested fastpg 0.2.1, installed from PyPI.
+These numbers are from 2026-11-10.
+They tested fastpg 0.2.1, installed from PyPI.
 
 ## How to read them
 
-* They come from one shared x86_64 GitHub runner, with PostgreSQL on the same machine.
-  GitHub's arm64 runner gives similar ratios
-  ([run 42794789116](https://github.com/RogerThomas/fastpg/actions/runs/42794789116)).
+* They come from an x86_64 AWS m8a.2xlarge, 8 vCPU, with PostgreSQL on the same machine.
+  An arm64 AWS m9g.2xlarge, also 8 vCPU, gives similar ratios.
 * Every driver uses its own pool, with its recommended settings, and returns the same msgspec
   Structs.
 * asyncpg runs with its pool's session reset turned off, because fastpg's pool only resets a
   session after a transaction.
-* The smallest lead is `execute_many` of 1,000 rows: 1.44x.
+* The smallest lead is binary COPY of 5,000 rows: 1.23x.
 * Over a real network, the gaps on single queries get smaller.
 
 ## Throughput
@@ -28,25 +24,25 @@ Higher is better.
 
 | workload | fastpg | fastest other driver | speed-up |
 |---|---:|---:|---:|
-| Primary-key lookup, 1 task | 5,825/s | 4,157/s (asyncpg) | 1.40x |
-| Primary-key lookup, 16 tasks | 24,867/s | 10,341/s (asyncpg) | 2.40x |
-| Primary-key lookup, 64 tasks | 34,124/s | 10,485/s (asyncpg) | 3.25x |
-| Primary-key lookup into a Struct, 16 tasks | 23,889/s | 10,231/s (asyncpg) | 2.33x |
-| Page of 20 rows, 16 tasks | 12,653/s | 6,242/s (asyncpg) | 2.03x |
-| Page of 20 rows into Structs, 16 tasks | 12,181/s | 5,981/s (asyncpg) | 2.04x |
-| 1,000 rows, 4 tasks | 890k rows/s | 409k rows/s (asyncpg) | 2.17x |
-| 1,000 rows into Structs, 4 tasks | 813k rows/s | 358k rows/s (asyncpg) | 2.27x |
-| 50 wide rows (13 columns), 16 tasks | 5,683/s | 3,402/s (asyncpg) | 1.67x |
-| 50 wide rows into Structs, 16 tasks | 4,955/s | 3,248/s (asyncpg) | 1.53x |
-| Single-row INSERT, 16 tasks | 23,817/s | 9,584/s (asyncpg) | 2.48x |
-| Single-row UPDATE, 16 tasks | 22,924/s | 10,491/s (asyncpg) | 2.19x |
-| Transaction of 4 statements, 16 tasks | 4,004/s | 2,763/s (asyncpg) | 1.45x |
-| `execute_many`, 1,000 rows | 180k rows/s | 125k rows/s (asyncpg) | 1.44x |
-| Binary COPY, 5,000 rows | 932k rows/s | 632k rows/s (psycopg) | 1.48x |
+| Primary-key lookup, 1 task | 49,994/s | 35,562/s (asyncpg) | 1.41x |
+| Primary-key lookup, 16 tasks | 154,049/s | 69,483/s (asyncpg) | 2.22x |
+| Primary-key lookup, 64 tasks | 188,227/s | 63,340/s (asyncpg) | 2.97x |
+| Primary-key lookup into a Struct, 16 tasks | 149,250/s | 68,617/s (asyncpg) | 2.18x |
+| Page of 20 rows, 16 tasks | 72,070/s | 28,748/s (asyncpg) | 2.51x |
+| Page of 20 rows into Structs, 16 tasks | 66,242/s | 26,936/s (asyncpg) | 2.46x |
+| 1,000 rows, 4 tasks | 2.57M rows/s | 884k rows/s (psycopg) | 2.91x |
+| 1,000 rows into Structs, 4 tasks | 2.31M rows/s | 823k rows/s (psycopg) | 2.81x |
+| 50 wide rows (13 columns), 16 tasks | 17,168/s | 10,600/s (asyncpg) | 1.62x |
+| 50 wide rows into Structs, 16 tasks | 14,884/s | 10,044/s (asyncpg) | 1.48x |
+| Single-row INSERT, 16 tasks | 153,807/s | 67,990/s (asyncpg) | 2.26x |
+| Single-row UPDATE, 16 tasks | 167,282/s | 75,569/s (asyncpg) | 2.21x |
+| Transaction of 4 statements, 16 tasks | 29,204/s | 20,489/s (asyncpg) | 1.43x |
+| `execute_many`, 1,000 rows | 407k rows/s | 254k rows/s (asyncpg) | 1.60x |
+| Binary COPY, 5,000 rows | 1.37M rows/s | 1.11M rows/s (psycopg) | 1.23x |
 
 The pool has 16 connections.
 With 64 tasks, fastpg sends several queries to each connection.
-With that turned off (`max_inflight_per_conn=1`), it does 22,182/s, still 2.12x.
+With that turned off (`max_inflight_per_conn=1`), it does 136,171/s, still 2.15x.
 
 ## Latency
 
@@ -55,12 +51,12 @@ Lower is better.
 
 | | fastpg | asyncpg | psycopg | psqlpy |
 |---|---:|---:|---:|---:|
-| p99 at 1,000/s | 1,952 µs | 2,109 µs | 2,082 µs | 2,410 µs |
-| p99.9 at 1,000/s | 2,176 µs | 2,446 µs | 2,412 µs | 3,335 µs |
-| p99 at 4,000/s | 1,471 µs | 2,265 µs | 2,615 µs | 8,374 µs |
-| p99.9 at 4,000/s | 2,627 µs | 3,706 µs | 3,879 µs | 10,853 µs |
+| p99 at 1,000/s | 617 µs | 636 µs | 678 µs | 747 µs |
+| p99.9 at 1,000/s | 652 µs | 672 µs | 732 µs | 807 µs |
+| p99 at 4,000/s | 598 µs | 633 µs | 656 µs | 817 µs |
+| p99.9 at 4,000/s | 624 µs | 690 µs | 713 µs | 961 µs |
 
-At 4,000/s, fastpg's p99.9 is about 30% lower than asyncpg's and psycopg's.
+At 4,000/s, fastpg's p99.9 is about 10% lower than asyncpg's and 12% lower than psycopg's.
 
 ## Run them yourself
 
