@@ -23,6 +23,7 @@ mod decode;
 mod errors;
 mod event_loop;
 mod json;
+mod listen;
 mod mailbox;
 mod msgpack;
 mod net;
@@ -71,6 +72,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bulk::RowReader>()?;
     m.add_class::<bulk::Bulk>()?;
     m.add_class::<cancel::Cancel>()?;
+    m.add_class::<listen::Listener>()?;
     m.add_class::<router::Router>()?;
     m.add_class::<tls::SocketOptions>()?;
     m.add_function(wrap_pyfunction!(rust_allocations, m)?)?;

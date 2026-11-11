@@ -21,7 +21,8 @@ The connection stays usable after a server error.
 ```
 FastPGError
 ├── InterfaceError                a problem on the client side
-│   └── ParameterError            a value can't be sent as its column's type
+│   ├── ParameterError            a value can't be sent as its column's type
+│   └── ListenerOverflowError     a listener got too many notifications: some were lost
 ├── ResultError
 │   ├── NoRowsError               select_one() found no row
 │   ├── TooManyRowsError          a single-row select found more than one

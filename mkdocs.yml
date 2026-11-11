@@ -22,6 +22,7 @@ nav:
       - Connection pool: guide/pool.md
       - Bulk writes: guide/writes.md
       - Transactions: guide/transactions.md
+      - Notifications: guide/notifications.md
       - TLS: guide/tls.md
       - Errors: guide/errors.md
   - API reference: api.md

@@ -25,6 +25,7 @@ import msgspec
 
 from fastpg import _writes
 from fastpg._group import grouping_for
+from fastpg._listen import Channels, Listener
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import (
     Cancel,
@@ -34,6 +35,7 @@ from fastpg._native import (
     dsn_targets,
 )
 from fastpg._native import Connection as NativeConnection
+from fastpg._native import Listener as NativeListener
 from fastpg._nulls import null_value_error
 from fastpg._spec import Plan, Planner
 from fastpg._template import Template, TemplateCompiler
@@ -435,6 +437,20 @@ class _Queries:
             self._canceller.abandon(future)
             raise
 
+    async def notify(self, channel: str, payload: str = "") -> None:
+        """Send a notification to the listeners of `channel` (``SELECT pg_notify($1, $2)``).
+
+        The channel name is exact (case-sensitive). Inside a transaction, it is delivered
+        only if the transaction commits.
+        """
+        future: asyncio.Future[int] = self._loop.create_future()
+        self._native.execute(future, "SELECT pg_notify($1, $2)", (channel, payload))
+        try:
+            await future
+        except asyncio.CancelledError:
+            self._canceller.abandon(future)
+            raise
+
     async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Run one or more `;`-separated statements without parameters (simple protocol).
 
@@ -576,6 +592,35 @@ class Connection(_Queries):
         self._release()
         self._canceller.stop()
 
+    def _send_unlisten(self, listener: NativeListener) -> None:
+        """Close ``listener`` and send its UNLISTEN without waiting for it (see
+        `cancelling`). A connection already closed listens to nothing any more."""
+        names = listener.close()
+        if not names or self._native.closed:
+            return
+        future: asyncio.Future[None] = self._loop.create_future()
+        future.add_done_callback(_forget)
+        with suppress(FastPGError):
+            self._native.execute_script(future, Channels.script("UNLISTEN", names))
+
+    async def _unlisten(self, listener: NativeListener, exc: BaseException | None) -> None:
+        """Close ``listener`` and UNLISTEN the channels no other listener here uses. While
+        ``exc`` propagates, a failure is noted on it rather than raised."""
+        if cancelling():
+            self._send_unlisten(listener)
+            return
+        names = listener.close()
+        if not names or self._native.closed:
+            return
+        future: asyncio.Future[None] = self._loop.create_future()
+        try:
+            self._native.execute_script(future, Channels.script("UNLISTEN", names))
+            await future
+        except FastPGError as e:
+            if exc is None:
+                raise
+            exc.add_note(f"fastpg: UNLISTEN failed too: {e}")
+
     @property
     def closed(self) -> bool:
         return self._native.closed
@@ -613,6 +658,31 @@ class Connection(_Queries):
             _pre_commit="SELECT 1",
         )
         return self._transaction
+
+    @context_manager
+    async def listen(self, *channels: str, max_queued: int = 10_000) -> AsyncGenerator[Listener]:
+        """Receive notifications: ``async with conn.listen("jobs") as listener:``, then
+        ``async for n in listener:`` (each `Notification`).
+
+        LISTEN on entry, UNLISTEN on exit. Channel names are exact (quoted, so
+        case-sensitive); at least one is needed. The connection still runs queries while
+        the block is open. See `Listener` for ``max_queued`` and a lost connection.
+        """
+        names = Channels(channels, max_queued).names
+        listener = self._native.listen(names, max_queued)
+        future: asyncio.Future[None] = self._loop.create_future()
+        try:
+            self._native.execute_script(future, Channels.script("LISTEN", names))
+            await future
+        except BaseException:
+            self._send_unlisten(listener)  # a cancelled LISTEN may still run
+            raise
+        try:
+            yield Listener(listener, self._loop)
+        except BaseException as e:
+            await self._unlisten(listener, e)
+            raise
+        await self._unlisten(listener, None)
 
     async def close(self) -> None:
         """Close gracefully: in-flight queries complete, then the session is terminated.

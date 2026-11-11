@@ -19,6 +19,7 @@ from fastpg._connection import (
     Transaction,
     connect,
 )
+from fastpg._listen import Listener, Notification
 from fastpg._named import NamedParams
 from fastpg._native import __version__
 from fastpg._pool import Pool, PoolStats, create_pool
@@ -38,6 +39,7 @@ from fastpg.errors import (
     IntegrityError,
     InterfaceError,
     InternalError,
+    ListenerOverflowError,
     MissingColumnError,
     NoRowsError,
     NotNullViolationError,
@@ -79,11 +81,14 @@ __all__ = [
     "InterfaceError",
     "InternalError",
     "IsolationLevel",
+    "Listener",
+    "ListenerOverflowError",
     "MissingColumnError",
     "NamedParams",
     "NoRowsError",
     "NotNullViolationError",
     "NotSupportedError",
+    "Notification",
     "NullValueError",
     "OperationalError",
     "ParameterError",
