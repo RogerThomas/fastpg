@@ -49,8 +49,8 @@ CHART = (
     "update-c16",
 )
 CHART_SUMMARY = "primary-key lookups, pages of rows, 1,000-row fetches and single-row writes"
-# The home page's smaller chart: its workloads, ordered by fastpg's lead like the chart above.
-HOME_CHART = ("point-c16-typed", "page-20-c16-typed", "fetch-1000-c4-typed", "insert-c16")
+# The home page's smaller chart: the Benchmarks chart's workloads with the biggest leads.
+HOME_CHART_SIZE = 2
 # Each chart group's rows, top to bottom: configuration and label.
 ROWS = (
     ("fastpg", "fastpg"),
@@ -222,18 +222,17 @@ def render(data: report.Report) -> str:
 
 
 def render_home(data: report.Report) -> str:
-    """The home page's text between its markers.
-
-    It ends on the smallest lead with no blank line, so the page's next lines (the machine
-    and the link to the Benchmarks page) carry on in the same paragraph.
-    """
+    """The home page's text between its markers: the headline and the smaller chart."""
     workloads = _workloads(data)
     lines = [
         _headline(workloads),
         "",
-        *_chart(_sorted(workloads, HOME_CHART), data.settings.pool_size, table=False),
+        *_chart(
+            _sorted(workloads, CHART)[:HOME_CHART_SIZE],
+            data.settings.pool_size,
+            table=False,
+        ),
         "",
-        _smallest(workloads),
     ]
     return "\n".join(lines)
 
