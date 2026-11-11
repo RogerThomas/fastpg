@@ -10,10 +10,10 @@
 //! the task queues the rows received so far, so chunk N is decoded while chunk N+1 is still
 //! on the wire.
 
-use std::future::IntoFuture;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use postgres_protocol::message::backend::Message;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -29,6 +29,7 @@ use crate::decode;
 use crate::errors::{QueryError, py_err};
 use crate::event_loop;
 use crate::json;
+use crate::listen::{self, Inbox, Listener};
 use crate::mailbox::Mailbox;
 use crate::msgpack;
 use crate::net::{self, IoWatch};
@@ -235,6 +236,8 @@ pub(crate) struct Shared {
     event_loop: Py<PyAny>,
     /// Server-side cancel of an abandoned operation (see `cancel.rs`).
     pub(crate) cancels: Cancels,
+    /// The open listeners' queues (see `listen.rs`).
+    pub(crate) listeners: Mutex<Vec<Arc<Inbox>>>,
 }
 
 impl Shared {
@@ -460,6 +463,19 @@ pub(crate) fn plain_request(future: Py<PyAny>) -> Arc<Request> {
     request(future, Target::None)
 }
 
+/// Run the driver until it ends, as `Driver::into_future` does (`Ok` once the server or
+/// the client closed the session, `Err` on an I/O or protocol error), handing each
+/// notification to the connection's listeners. Notices and parameter status changes are
+/// dropped, as `into_future` drops them.
+async fn drive(shared: &Shared, mut driver: Driver) -> Result<(), xitca_postgres::Error> {
+    while let Some(message) = driver.try_next().await? {
+        if let Message::NotificationResponse(body) = message {
+            listen::deliver(shared, &body);
+        }
+    }
+    Ok(())
+}
+
 /// From "connect attempt finished" to "driver gone": resolves `connected`, runs the driver
 /// until the client is dropped (once Terminate is written: see `net::Writes`), the server
 /// goes away or `terminate()` is called, then marks the connection dead and resolves
@@ -482,7 +498,7 @@ async fn serve(
             // `biased`: `terminate()` wins over everything. Then the driver, so messages
             // already received (e.g. the server's final ErrorResponse) are routed before the
             // driver is dropped on EOF; `dead` (below) then fails every still-pending request.
-            let driver = driver.into_future();
+            let driver = drive(&shared, driver);
             tokio::pin!(driver);
             tokio::select! {
                 biased;
@@ -495,6 +511,7 @@ async fn serve(
         Err(e) => shared.post(connected, Outcome::Failed(e)),
     }
     shared.dead.send_replace(true);
+    listen::wake_all(&shared);
     shared.post(closed, Outcome::Done);
 }
 
@@ -543,6 +560,7 @@ impl Connection {
                 generation: FORK_GENERATION.load(Ordering::Relaxed),
                 event_loop,
                 cancels: Cancels::default(),
+                listeners: Mutex::new(Vec::new()),
             }),
             gate: None,
         })
@@ -945,6 +963,28 @@ impl Connection {
 
     fn statement_cache_len(&self) -> usize {
         self.shared.cache.len()
+    }
+
+    /// Start queueing the notifications on `channels` (exact names) for a new listener, at
+    /// most `max_queued` of them unread. Python sends the LISTEN.
+    fn listen(
+        &self,
+        py: Python<'_>,
+        channels: Vec<String>,
+        max_queued: usize,
+    ) -> PyResult<Listener> {
+        self.require_client(py)?;
+        Ok(listen::register(self.shared.clone(), channels, max_queued))
+    }
+
+    /// Whether a listener is open on the session (through this handle or any view of it).
+    fn has_listeners(&self) -> bool {
+        !self
+            .shared
+            .listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
     }
 }
 

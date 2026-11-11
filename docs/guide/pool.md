@@ -33,8 +33,9 @@ Pass these to `create_pool()`:
 
     Other callers share the pool's connections, and the pool doesn't reset them between
     queries.
-    For `SET`, temporary tables, advisory locks or `LISTEN`, take a connection of your own
-    with `acquire()`, below.
+    For `SET`, temporary tables or advisory locks, take a connection of your own with
+    `acquire()`, below.
+    For `LISTEN`, use `pool.listen()`: see [Notifications](notifications.md).
 
 ## A connection of your own
 
@@ -92,8 +93,9 @@ async def test_count(pool):
 
 * Connecting gives up after 30 seconds with `ConnectError`.
   To change that, put `connect_timeout` (in seconds) in the DSN, e.g. `?connect_timeout=10`.
-* When every connection is busy and the pool is at `max_size`, a query, `acquire()` or
-  `transaction()` waits up to `max_wait` seconds for one, then raises `PoolTimeoutError`.
+* When every connection is busy and the pool is at `max_size`, a query, `acquire()`,
+  `transaction()` or `listen()` waits up to `max_wait` seconds for one, then raises
+  `PoolTimeoutError`.
 * If you cancel a query, for example with `asyncio.timeout()`, fastpg also cancels it on
   the server when nothing else is running on its connection.
 * A lost connection is dropped, and the pool opens new ones as needed.

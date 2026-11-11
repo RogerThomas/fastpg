@@ -215,6 +215,7 @@ class ModelPlanner:
         )
         aliases = (cls.write_alias(name, info) for name, info in model.model_fields.items())
         field_columns = tuple(alias for alias in aliases if alias is not None)
+        adapter = TypeAdapter(model)
         return Plan(
             spec=spec,
             direct_error=direct_error,
@@ -222,10 +223,11 @@ class ModelPlanner:
             msgpack_one=None,
             msgpack_many=None,
             msgpack_error="pydantic models are decoded from JSON (strategy='json') or directly",
-            json_one=TypeAdapter(model).validate_json,
+            json_one=adapter.validate_json,
             json_many=TypeAdapter[list[BaseModel]](list_of).validate_json,
             json_error=None,
             json_non_finite_floats=True,
+            json_object=adapter.validate_json,
             validation_error=ValidationError,
             text_columns=text_columns,
             field_columns=field_columns,

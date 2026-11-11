@@ -217,6 +217,12 @@ class NamedBinder:
         self._store(self._bound, (query, params_type), bound)
         return bound
 
+    @staticmethod
+    def read_by_key(params_type: type[object]) -> bool:
+        """Whether a ``params=`` of this type is read by key (a mapping) rather than by
+        field; TypeError for a type ``params=`` doesn't take."""
+        return NamedBinder._fields(params_type) is None
+
     def bind(
         self,
         query: str | Template,

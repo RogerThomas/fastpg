@@ -10,7 +10,7 @@ fastpg is alpha software. This is what it can't do yet.
   `max_prepared_statements` above 0 (the default is 200 from pgbouncer 1.24).
   fastpg always uses named prepared statements, so older pgbouncer, or
   `max_prepared_statements = 0`, doesn't work.
-* **No `LISTEN`/`NOTIFY`**, and no `COPY ... TO`.
+* **No `COPY ... TO`.**
 * **One event loop per connection.** Use a connection or pool only from the event loop
   that opened it. A pool isn't thread-safe.
   After `fork()`, open new connections in the child process.

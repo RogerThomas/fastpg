@@ -164,6 +164,22 @@ class Connection:
         """`future`'s caller gave up: a server-side cancel, if it is alone in flight."""
     def drain(self) -> None: ...
     def statement_cache_len(self) -> int: ...
+    def listen(self, channels: list[str], max_queued: int) -> Listener:
+        """Queue the notifications on `channels` for a new listener; Python sends LISTEN."""
+    def has_listeners(self) -> bool:
+        """Whether a listener is open on the session (through this handle or a view)."""
+
+@final
+class Listener:
+    """A listener's queue of notifications; see `fastpg._listen` and listen.rs."""
+
+    def pop(self) -> tuple[str, str, int] | None:
+        """The next `(channel, payload, pid)`, or None if none is queued."""
+    def wait(self, future: asyncio.Future[None]) -> None:
+        """Resolve `future` when a notification arrives, the queue overflows, the listener
+        closes or the connection ends (each waiting task passes its own)."""
+    def close(self) -> list[str]:
+        """Stop queueing; returns the channels to UNLISTEN."""
 
 @final
 class Cancel:

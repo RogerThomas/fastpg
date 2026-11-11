@@ -37,7 +37,7 @@ import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Sequence
-from contextlib import suppress
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import InitVar, dataclass, field
 from types import TracebackType
 from typing import Any, ClassVar, Concatenate, LiteralString, Self, overload
@@ -57,6 +57,7 @@ from fastpg._connection import (
     context_manager,
 )
 from fastpg._group import grouping_for
+from fastpg._listen import Channels, Listener, NotifyQuery, Payload, PayloadDecoder
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import Template, TemplateCompiler
@@ -136,13 +137,13 @@ class PoolStats:
     idle: int
     """Shared connections with nothing in flight."""
     acquired: int
-    """Connections checked out by ``acquire()`` / ``transaction()``."""
+    """Connections checked out by ``acquire()`` / ``transaction()`` / ``listen()``."""
     in_flight: int
     """Shared statements in flight (including cancelled ones still running server-side)."""
     waiting: int
     """Shared statements waiting for a free slot."""
     waiting_acquire: int
-    """``acquire()`` / ``transaction()`` calls waiting for an idle connection."""
+    """``acquire()`` / ``transaction()`` / ``listen()`` calls waiting for an idle connection."""
 
 
 def _check_seconds(name: str, value: float | None) -> None:
@@ -925,6 +926,10 @@ class Pool:
         for entry in list(self._entries):
             if entry.state != _Entry.EXCLUSIVE:  # checked-out connections close on release
                 self._discard(entry)
+            elif entry.fetcher.has_listeners():
+                # Closed now: its listeners end (ConnectionClosedError), so their blocks do,
+                # by listen() on the pool or on an acquire() block's connection alike.
+                self._spawn(entry.conn.close())
         while self._entries or self._tasks:
             if self._tasks:
                 await asyncio.wait(list(self._tasks))
@@ -1146,6 +1151,13 @@ class Pool:
         affected: int = await self._query(self._EXECUTE, query, args, None, "auto")
         return affected
 
+    async def notify(self, channel: str, payload: Payload = "") -> None:
+        """Shared mode ``Connection.notify``: send a notification to the listeners of
+        `channel` (``SELECT pg_notify($1, $2)``), autocommit. A ``str`` payload is sent as
+        it is; anything ``params=`` takes as JSON."""
+        query, value = NotifyQuery.for_payload(payload)
+        await self._query(self._EXECUTE, query, (channel, value), None, "auto")
+
     async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Shared mode ``Connection.execute_script``: runs as one implicit transaction."""
         if isinstance(query, Template):
@@ -1226,6 +1238,52 @@ class Pool:
         finally:
             await self._give_back(entry, reset=not clean)
 
+    @overload
+    def listen(
+        self,
+        *channels: str,
+        into: type[dict[Any, Any]],
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[dict[str, Any]]]: ...
+    @overload
+    def listen[T = str](
+        self,
+        *channels: str,
+        into: type[T] = str,
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[T]]: ...
+    @context_manager
+    async def listen(
+        self,
+        *channels: str,
+        into: type[Any] = str,
+        max_queued: int = 10_000,
+    ) -> AsyncGenerator[Listener[Any]]:
+        """Receive notifications: ``async with pool.listen("jobs") as listener:``, then
+        ``async for n in listener:`` (each `Notification`).
+
+        Holds one connection for the block, taken as ``acquire()`` takes one (it counts
+        toward ``max_size`` and waits up to ``max_wait``). LISTEN on entry; on exit, the
+        session reset (which UNLISTENs), and the connection rejoins shared rotation. Channel
+        names are exact (quoted, so case-sensitive); at least one is needed. Closing the
+        pool ends the listener (``ConnectionClosedError``). See `Listener` for
+        ``max_queued`` and a lost connection, and ``Connection.listen`` for ``into=``.
+        """
+        # Checked before a connection is taken.
+        names = Channels(channels, max_queued).names
+        decoder = PayloadDecoder.build(into)
+        entry = await self._take()
+        try:
+            # close() may have begun while this task waited to resume with the connection:
+            # it has then already ended the listeners it found.
+            if self._closing is not None:
+                msg = "pool is closed"
+                raise ConnectionClosedError(msg)
+            async with entry.fetcher.listen(names, decoder, max_queued) as listener:
+                yield listener
+        finally:
+            await self._give_back(entry, reset=True)
+
     async def close(self) -> None:
         """Close gracefully: new calls and waiters fail with ConnectionClosedError, shared
         statements in flight complete, and checked-out connections close when released.
@@ -1275,8 +1333,8 @@ async def create_pool(
             first and it serves until then (unless the pool is at ``max_size``).
         max_idle: Seconds after which an idle connection above ``min_size`` is closed.
         max_wait: Seconds anything waits for a connection before ``PoolTimeoutError`` (None:
-            forever): ``acquire()``, ``transaction()``, a bulk write, and a shared statement
-            while every connection is busy and the pool can't grow.
+            forever): ``acquire()``, ``transaction()``, ``listen()``, a bulk write, and a shared
+            statement while every connection is busy and the pool can't grow.
     """
     # Before connecting: a configuration Pool() rejects would leave the connections open.
     _check_config(

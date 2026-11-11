@@ -7,7 +7,8 @@ never raises one.
 
 FastPGError (alias: Error)
 ├── InterfaceError                client-side problems
-│   └── ParameterError            parameter missing, or can't be encoded for its declared type
+│   ├── ParameterError            parameter missing, or can't be encoded for its declared type
+│   └── ListenerOverflowError     a listener's queue filled up: notifications were lost
 ├── ResultError                   result doesn't fit what the caller asked for
 │   ├── NoRowsError               select_one() found nothing
 │   ├── TooManyRowsError          select_one() / select_one_or_none() found >1 row
@@ -57,6 +58,12 @@ class InterfaceError(FastPGError):
 
 class ParameterError(InterfaceError):
     """A query parameter has no value (named parameters) or can't be encoded for its type."""
+
+
+class ListenerOverflowError(InterfaceError):
+    """A listener's queue filled up (``max_queued`` notifications not yet read) and more
+    arrived: those were lost. The listener stops queueing, gives the ones already queued,
+    then raises this from then on."""
 
 
 class ResultError(FastPGError):
@@ -250,8 +257,8 @@ class ConnectionClosedError(OperationalError):
 
 class PoolTimeoutError(OperationalError):
     """A pool had no connection free for ``max_wait`` seconds: for ``acquire()``,
-    ``transaction()``, a bulk write, or a shared statement while every connection was busy
-    and the pool couldn't grow."""
+    ``transaction()``, ``listen()``, a bulk write, or a shared statement while every
+    connection was busy and the pool couldn't grow."""
 
 
 class AuthenticationError(OperationalError):
