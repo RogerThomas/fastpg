@@ -62,7 +62,8 @@ class ParameterError(InterfaceError):
 
 class ListenerOverflowError(InterfaceError):
     """A listener's queue filled up (``max_queued`` notifications not yet read) and more
-    arrived: those were lost. The listener stops queueing, and raises this from then on."""
+    arrived: those were lost. The listener stops queueing, gives the ones already queued,
+    then raises this from then on."""
 
 
 class ResultError(FastPGError):

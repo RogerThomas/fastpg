@@ -311,9 +311,6 @@ class Pool:
         default_factory=deque[asyncio.Future[_Entry]],
     )
     _tasks: set[asyncio.Task[Any]] = field(init=False, repr=False, default_factory=set[Any])
-    # The connections checked out by listen(): closed when the pool closes, which ends their
-    # listeners (any other checkout closes when its block ends).
-    _listening: set[_Entry] = field(init=False, repr=False, default_factory=set[_Entry])
     _closing: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _wakeup: asyncio.Future[None] | None = field(init=False, repr=False, default=None)
     _maintainer: asyncio.Task[None] = field(init=False, repr=False)
@@ -929,8 +926,10 @@ class Pool:
         for entry in list(self._entries):
             if entry.state != _Entry.EXCLUSIVE:  # checked-out connections close on release
                 self._discard(entry)
-        for entry in self._listening:  # their listeners end, and their blocks with them
-            self._spawn(entry.conn.close())
+            elif entry.fetcher.has_listeners():
+                # Closed now: its listeners end (ConnectionClosedError), so their blocks do,
+                # by listen() on the pool or on an acquire() block's connection alike.
+                self._spawn(entry.conn.close())
         while self._entries or self._tasks:
             if self._tasks:
                 await asyncio.wait(list(self._tasks))
@@ -1264,22 +1263,25 @@ class Pool:
         ``async for n in listener:`` (each `Notification`).
 
         Holds one connection for the block, taken as ``acquire()`` takes one (it counts
-        toward ``max_size`` and waits up to ``max_wait``). LISTEN on entry; on exit,
-        UNLISTEN and the session reset, and the connection rejoins shared rotation. Channel
+        toward ``max_size`` and waits up to ``max_wait``). LISTEN on entry; on exit, the
+        session reset (which UNLISTENs), and the connection rejoins shared rotation. Channel
         names are exact (quoted, so case-sensitive); at least one is needed. Closing the
         pool ends the listener (``ConnectionClosedError``). See `Listener` for
         ``max_queued`` and a lost connection, and ``Connection.listen`` for ``into=``.
         """
         # Checked before a connection is taken.
-        Channels(channels, max_queued)
-        PayloadDecoder.build(into)
+        names = Channels(channels, max_queued).names
+        decoder = PayloadDecoder.build(into)
         entry = await self._take()
-        self._listening.add(entry)
         try:
-            async with entry.conn.listen(*channels, into=into, max_queued=max_queued) as listener:
+            # close() may have begun while this task waited to resume with the connection:
+            # it has then already ended the listeners it found.
+            if self._closing is not None:
+                msg = "pool is closed"
+                raise ConnectionClosedError(msg)
+            async with entry.fetcher.listen(names, decoder, max_queued) as listener:
                 yield listener
         finally:
-            self._listening.discard(entry)
             await self._give_back(entry, reset=True)
 
     async def close(self) -> None:

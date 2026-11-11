@@ -82,6 +82,8 @@ The listener keeps going: the next notification arrives as usual.
   the notifications it already received, then raises `ConnectionClosedError`.
   fastpg doesn't reconnect: open a new listener.
 * A listener keeps up to 10,000 notifications you haven't read yet.
-  If more arrive, it raises `ListenerOverflowError`, because notifications were lost.
+  If more arrive, it first gives you those 10,000, then raises `ListenerOverflowError`,
+  because the ones after were lost.
   Pass `max_queued=` to change the limit.
 * A listener only receives notifications sent after its block starts.
+* `conn.listen()` raises `InterfaceError` inside a transaction: open the listener first.

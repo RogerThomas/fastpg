@@ -976,6 +976,16 @@ impl Connection {
         self.require_client(py)?;
         Ok(listen::register(self.shared.clone(), channels, max_queued))
     }
+
+    /// Whether a listener is open on the session (through this handle or any view of it).
+    fn has_listeners(&self) -> bool {
+        !self
+            .shared
+            .listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
 }
 
 impl Connection {

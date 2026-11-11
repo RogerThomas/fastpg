@@ -240,6 +240,75 @@ class _Queries:
             return future
         return self._fetch_encoded(future, query, params, shape, plan, strategy, into)
 
+    def _close_listener(self, listener: NativeListener) -> asyncio.Future[None] | None:
+        """Close ``listener`` and send UNLISTEN for the channels no other listener here
+        uses; the UNLISTEN's future, or None when there is nothing to send (a connection
+        already closed listens to nothing any more)."""
+        names = listener.close()
+        if not names or self._native.closed:
+            return None
+        future: asyncio.Future[None] = self._loop.create_future()
+        self._native.execute_script(future, Channels.script("UNLISTEN", names))
+        return future
+
+    def _send_unlisten(self, listener: NativeListener) -> None:
+        """`_close_listener`, without waiting for the UNLISTEN (see `cancelling`)."""
+        with suppress(FastPGError):
+            future = self._close_listener(listener)
+            if future is not None:
+                future.add_done_callback(_forget)
+
+    async def _unlisten(self, listener: NativeListener, exc: BaseException | None) -> None:
+        """`_close_listener`, waiting for the UNLISTEN unless the task is being cancelled.
+        While ``exc`` propagates, a failure is noted on it rather than raised."""
+        if cancelling():
+            self._send_unlisten(listener)
+            return
+        try:
+            future = self._close_listener(listener)
+            if future is not None:
+                await future
+        except FastPGError as e:
+            if exc is None:
+                raise
+            exc.add_note(f"fastpg: UNLISTEN failed too: {e}")
+
+    @context_manager
+    async def _listen(
+        self,
+        names: list[str],
+        decoder: PayloadDecoder[Any],
+        max_queued: int,
+        *,
+        unlisten: bool,
+    ) -> AsyncGenerator[Listener[Any]]:
+        """``listen()``'s block, for checked ``names`` and a built ``decoder``. ``unlisten``:
+        send UNLISTEN on exit; a pooled connection skips it, as the session reset that
+        follows UNLISTENs everything."""
+        listener = self._native.listen(names, max_queued)
+        future: asyncio.Future[None] = self._loop.create_future()
+        try:
+            self._native.execute_script(future, Channels.script("LISTEN", names))
+            await future
+        except BaseException:
+            if unlisten:
+                self._send_unlisten(listener)  # a cancelled LISTEN may still run
+            else:
+                listener.close()
+            raise
+        try:
+            yield Listener(listener, self._loop, decoder)
+        except BaseException as e:
+            if unlisten:
+                await self._unlisten(listener, e)
+            else:
+                listener.close()
+            raise
+        if unlisten:
+            await self._unlisten(listener, None)
+        else:
+            listener.close()
+
     @overload
     async def select_one(
         self,
@@ -446,13 +515,8 @@ class _Queries:
         delivered only if the transaction commits.
         """
         query, value = NotifyQuery.for_payload(payload)
-        future: asyncio.Future[int] = self._loop.create_future()
-        self._native.execute(future, query, (channel, value))
-        try:
-            await future
-        except asyncio.CancelledError:
-            self._canceller.abandon(future)
-            raise
+        # execute() itself: a private copy of its body would add a coroutine layer to it.
+        await self.execute(query, channel, value)
 
     async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Run one or more `;`-separated statements without parameters (simple protocol).
@@ -595,35 +659,6 @@ class Connection(_Queries):
         self._release()
         self._canceller.stop()
 
-    def _send_unlisten(self, listener: NativeListener) -> None:
-        """Close ``listener`` and send its UNLISTEN without waiting for it (see
-        `cancelling`). A connection already closed listens to nothing any more."""
-        names = listener.close()
-        if not names or self._native.closed:
-            return
-        future: asyncio.Future[None] = self._loop.create_future()
-        future.add_done_callback(_forget)
-        with suppress(FastPGError):
-            self._native.execute_script(future, Channels.script("UNLISTEN", names))
-
-    async def _unlisten(self, listener: NativeListener, exc: BaseException | None) -> None:
-        """Close ``listener`` and UNLISTEN the channels no other listener here uses. While
-        ``exc`` propagates, a failure is noted on it rather than raised."""
-        if cancelling():
-            self._send_unlisten(listener)
-            return
-        names = listener.close()
-        if not names or self._native.closed:
-            return
-        future: asyncio.Future[None] = self._loop.create_future()
-        try:
-            self._native.execute_script(future, Channels.script("UNLISTEN", names))
-            await future
-        except FastPGError as e:
-            if exc is None:
-                raise
-            exc.add_note(f"fastpg: UNLISTEN failed too: {e}")
-
     @property
     def closed(self) -> bool:
         return self._native.closed
@@ -692,23 +727,20 @@ class Connection(_Queries):
 
         Payloads are ``str``s as sent (``into=str``, the default), or decoded from JSON into
         ``into=``, which takes the types query methods take there (TypeError for others).
+
+        Refused (``InterfaceError``) inside a transaction: its rollback would undo the
+        LISTEN, and the listener would never receive anything.
         """
+        if self._transaction is not None and self._transaction.active:
+            msg = (
+                "listen() inside a transaction is refused: a rollback would undo its LISTEN;"
+                " open the listener before the transaction, or on another connection"
+            )
+            raise InterfaceError(msg)
         names = Channels(channels, max_queued).names
         decoder = PayloadDecoder.build(into)
-        listener = self._native.listen(names, max_queued)
-        future: asyncio.Future[None] = self._loop.create_future()
-        try:
-            self._native.execute_script(future, Channels.script("LISTEN", names))
-            await future
-        except BaseException:
-            self._send_unlisten(listener)  # a cancelled LISTEN may still run
-            raise
-        try:
-            yield Listener(listener, self._loop, decoder)
-        except BaseException as e:
-            await self._unlisten(listener, e)
-            raise
-        await self._unlisten(listener, None)
+        async with self._listen(names, decoder, max_queued, unlisten=True) as listener:
+            yield listener
 
     async def close(self) -> None:
         """Close gracefully: in-flight queries complete, then the session is terminated.
@@ -951,6 +983,21 @@ class Fetcher(_Queries):
     @classmethod
     def of(cls, conn: Connection) -> Self:
         return cls(conn._native, conn._loop, conn._canceller)
+
+    def listen(
+        self,
+        names: list[str],
+        decoder: PayloadDecoder[Any],
+        max_queued: int,
+    ) -> AbstractAsyncContextManager[Listener[Any]]:
+        """``Pool.listen()``'s block on this connection: no UNLISTEN on exit, as the pool's
+        session reset follows."""
+        return self._listen(names, decoder, max_queued, unlisten=False)
+
+    def has_listeners(self) -> bool:
+        """Whether a listener is open on the session (by ``listen()`` on the pool or on an
+        ``acquire()`` block's connection)."""
+        return self._native.has_listeners()
 
     def fetch(
         self,

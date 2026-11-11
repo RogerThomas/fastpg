@@ -1,13 +1,15 @@
 //! LISTEN/NOTIFY: the notifications a connection's driver receives, queued for its listeners.
 //!
 //! The driver task (`connection::serve`) hands every NotificationResponse to [`deliver`],
-//! which queues it in the [`Inbox`] of each listener of its channel, and wakes the one waiting
-//! for it the way a query's result does: a completion posted to the connection's mailbox
-//! resolves the listener's future. Python (`fastpg._listen`) then takes the notifications
-//! with [`Listener::pop`]. Python sends LISTEN and UNLISTEN; Rust only keeps the queues.
+//! which queues it in the [`Inbox`] of each listener of its channel, and wakes the tasks
+//! waiting for it the way a query's result does: a completion posted to the connection's
+//! mailbox resolves each waiting future. Python (`fastpg._listen`) then takes the
+//! notifications with [`Listener::pop`]. Python sends LISTEN and UNLISTEN; Rust only keeps
+//! the queues.
 //!
 //! An inbox holds at most `max_queued` notifications. One more and it stops queueing for good:
-//! [`Listener::pop`] raises `ListenerOverflowError` from then on, so nothing is lost silently.
+//! [`Listener::pop`] still gives what was queued, then raises `ListenerOverflowError` from then
+//! on, so nothing is lost silently.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,9 +34,9 @@ struct InboxState {
     overflowed: bool,
     /// Its `async with` block ended (`close()`): `pop` raises.
     closed: bool,
-    /// The listener's pending `wait()`, resolved when something arrives or the connection
-    /// ends.
-    waiter: Option<Py<PyAny>>,
+    /// The futures of the listener's pending `wait()`s (one per task iterating it), all
+    /// resolved when something arrives, it overflows or closes, or the connection ends.
+    waiters: Vec<Py<PyAny>>,
 }
 
 /// One listener's channels and queue (registered in `Shared::listeners`).
@@ -77,7 +79,7 @@ pub(crate) fn deliver(shared: &Shared, body: &NotificationResponseBody) {
         } else {
             state.overflowed = true;
         }
-        if let Some(waiter) = state.waiter.take() {
+        for waiter in state.waiters.drain(..) {
             shared.post(plain_request(waiter), Outcome::Done);
         }
     }
@@ -91,7 +93,7 @@ pub(crate) fn wake_all(shared: &Shared) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     for inbox in listeners.iter() {
-        if let Some(waiter) = inbox.state().waiter.take() {
+        for waiter in inbox.state().waiters.drain(..) {
             shared.post(plain_request(waiter), Outcome::Done);
         }
     }
@@ -122,9 +124,8 @@ pub struct Listener {
 #[pymethods]
 impl Listener {
     /// The next notification as `(channel, payload, pid)`, or None if none is queued.
-    /// Raises `InterfaceError` once closed, `ListenerOverflowError` once the queue has
-    /// overflowed, and `ConnectionClosedError` once the connection is gone and the queue
-    /// empty.
+    /// Raises `InterfaceError` once closed; once the queue is empty, `ListenerOverflowError`
+    /// if it overflowed, and `ConnectionClosedError` if the connection is gone.
     fn pop(&self, py: Python<'_>) -> PyResult<Option<(String, String, i32)>> {
         let mut state = self.inbox.state();
         if state.closed {
@@ -134,6 +135,9 @@ impl Listener {
                 "the listener was closed when its listen() block ended",
             ));
         }
+        if let Some(note) = state.queue.pop_front() {
+            return Ok(Some((note.channel, note.payload, note.pid)));
+        }
         if state.overflowed {
             let message = format!(
                 "the listener had {} notifications queued (max_queued) when more arrived: \
@@ -142,16 +146,15 @@ impl Listener {
             );
             return Err(py_err(py, "ListenerOverflowError", message));
         }
-        if let Some(note) = state.queue.pop_front() {
-            return Ok(Some((note.channel, note.payload, note.pid)));
-        }
         if self.shared.dead() {
             return Err(self.shared.closed_error().into_pyerr(py));
         }
         Ok(None)
     }
 
-    /// Resolve `future` (to None) when a notification arrives or the connection ends.
+    /// Resolve `future` (to None) when a notification arrives, the queue overflows, the
+    /// listener closes or the connection ends. Each task iterating the listener waits with a
+    /// future of its own: all of them are resolved.
     fn wait(&self, py: Python<'_>, future: Py<PyAny>) -> PyResult<()> {
         let mut state = self.inbox.state();
         if state.closed || state.overflowed || !state.queue.is_empty() || self.shared.dead() {
@@ -159,21 +162,30 @@ impl Listener {
             future.bind(py).call_method1("set_result", (py.None(),))?;
             return Ok(());
         }
-        state.waiter = Some(future);
+        // The futures of cancelled waits are done: drop them, so a loop of waits that time
+        // out doesn't pile them up.
+        let mut pending = Vec::with_capacity(state.waiters.len() + 1);
+        for waiter in state.waiters.drain(..) {
+            if !waiter.bind(py).call_method0("done")?.is_truthy()? {
+                pending.push(waiter);
+            }
+        }
+        pending.push(future);
+        state.waiters = pending;
         Ok(())
     }
 
-    /// Stop queueing, and refuse `pop` from now on (idempotent); a task still waiting (in
-    /// another task than the block's) wakes up to that refusal. Returns the channels no
-    /// other listener on the connection still listens to: the ones to UNLISTEN.
+    /// Stop queueing, and refuse `pop` from now on (idempotent); tasks still waiting (in
+    /// other tasks than the block's) wake up to that refusal. Returns the channels no other
+    /// listener on the connection still listens to: the ones to UNLISTEN.
     fn close(&self, py: Python<'_>) -> Vec<String> {
-        let waiter = {
+        let waiters = {
             let mut state = self.inbox.state();
             state.closed = true;
             state.queue.clear();
-            state.waiter.take()
+            std::mem::take(&mut state.waiters)
         };
-        if let Some(waiter) = waiter {
+        for waiter in waiters {
             // Already done if its awaiter was cancelled: nobody to wake then.
             let _ = waiter.bind(py).call_method1("set_result", (py.None(),));
         }

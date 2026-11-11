@@ -306,13 +306,86 @@ async def test_closing_the_connection_ends_its_listener(conn: fastpg.Connection)
             await waiting
 
 
-async def test_overflow_raises_and_says_how_many_were_queued(conn: fastpg.Connection) -> None:
+async def test_overflow_gives_the_queue_then_raises(conn: fastpg.Connection) -> None:
     async with conn.listen("channel", max_queued=2) as listener:
-        for payload in ("1", "2", "3"):
+        for payload in ("1", "2", "3", "4"):
             await conn.notify("channel", payload)
+        received = [(await _next(listener)).payload for _ in range(2)]
         for _ in range(2):  # and keeps raising
             with pytest.raises(fastpg.ListenerOverflowError, match="2 notifications"):
                 await _next(listener)
+    assert received == ["1", "2"]
+
+
+async def test_two_tasks_iterating_one_listener_are_both_woken(
+    conn: fastpg.Connection,
+) -> None:
+    async with conn.listen("channel") as listener:
+        first = asyncio.create_task(_next(listener))
+        second = asyncio.create_task(_next(listener))
+        await conn.select_one("SELECT 1")  # both tasks are waiting by now
+        await conn.notify("channel", "one")
+        await conn.notify("channel", "two")
+        received = sorted([(await first).payload, (await second).payload])
+        first = asyncio.create_task(_next(listener))
+        second = asyncio.create_task(_next(listener))
+        await conn.select_one("SELECT 1")  # both waiting again
+    for task in (first, second):  # the block's end wakes both
+        with pytest.raises(fastpg.InterfaceError, match="listen\\(\\) block ended"):
+            await task
+    assert received == ["one", "two"]
+
+
+async def test_listen_inside_a_transaction_is_refused(conn: fastpg.Connection) -> None:
+    async with conn.transaction():
+        with pytest.raises(fastpg.InterfaceError, match="listen\\(\\) inside a transaction"):
+            async with conn.listen("channel"):
+                pass
+        assert await _channels(conn) == []
+
+
+async def _listen_on_acquired(pool: fastpg.Pool, entered: asyncio.Event) -> None:
+    async with pool.acquire() as conn, conn.listen("channel") as listener:
+        entered.set()
+        async for _ in listener:
+            pass
+
+
+async def test_closing_the_pool_ends_a_listener_on_an_acquired_connection(
+    dsn: str,
+    loop_errors: LoopErrors,
+) -> None:
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1)
+    entered = asyncio.Event()
+    task = asyncio.create_task(_listen_on_acquired(pool, entered))
+    async with asyncio.timeout(5):
+        await entered.wait()
+        await pool.close()
+        with pytest.raises(fastpg.ConnectionClosedError):
+            await task
+    assert pool.stats().size == 0
+    assert loop_errors.messages() == []
+
+
+async def test_pool_listen_given_a_connection_as_the_pool_closes_raises(
+    dsn: str,
+    loop_errors: LoopErrors,
+) -> None:
+    pool = await fastpg.create_pool(dsn, min_size=1, max_size=1, max_wait=None)
+    entered = asyncio.Event()
+    async with pool.acquire():
+        task = asyncio.create_task(_listen_until_entered(pool, entered))
+        async with asyncio.timeout(5):
+            while pool.stats().waiting_acquire == 0:
+                await asyncio.sleep(0)
+    # The connection is the waiting listen()'s now, but it hasn't resumed yet: close first.
+    async with asyncio.timeout(5):
+        await pool.close()
+        with pytest.raises(fastpg.ConnectionClosedError, match="pool is closed"):
+            await task
+    assert not entered.is_set()
+    assert pool.stats().size == 0
+    assert loop_errors.messages() == []
 
 
 async def test_closing_the_pool_ends_an_open_listener(

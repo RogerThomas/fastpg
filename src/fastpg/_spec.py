@@ -101,6 +101,10 @@ class Plan[T]:
     json_non_finite_floats: bool
     """The JSON decoders take `NaN`/`Infinity` tokens (pydantic's do, msgspec's don't: a
     non-finite float then fails the query, naming its column)."""
+    json_object: Callable[[str], T]
+    """Builds one `T` from JSON text, an object keyed by field name as a row's columns are
+    (a notification's payload, for ``listen(into=...)``). Raises `validation_error`, or
+    msgspec's `DecodeError` for malformed JSON."""
     validation_error: type[Exception]
     """Raised by the validating decoders; re-raised as `fastpg.DecodeError`."""
     text_columns: tuple[str, ...]
@@ -113,6 +117,33 @@ class Plan[T]:
     """Columns feeding `uuid.UUID` fields: the msgpack route encodes a uuid value there as
     16-byte bin, which msgspec decodes faster than the 36-character text. Other fields (a
     `str` one, ...) get the text."""
+
+
+class _NamedTupleFromJSON:
+    """`Plan.json_object` for a NamedTuple: msgspec decodes NamedTuples from JSON arrays
+    only, so the object is decoded into a Struct with the same fields, then each field fills
+    the NamedTuple's, by name as columns do."""
+
+    __slots__ = ("_decode", "_target")
+
+    def __init__(
+        self,
+        target: type[tuple[Any, ...]],
+        info: mi.NamedTupleType,
+        annotations: dict[str, Any],
+    ) -> None:
+        # A collections.namedtuple field has no annotation: it takes Any.
+        fields = [
+            (f.name, annotations.get(f.name, Any), f.default)
+            if not f.required
+            else (f.name, annotations.get(f.name, Any))
+            for f in info.fields
+        ]
+        self._decode = msgspec.json.Decoder(msgspec.defstruct(target.__name__, fields)).decode
+        self._target = target
+
+    def __call__(self, payload: str) -> tuple[Any, ...]:
+        return self._target(*msgspec.structs.astuple(self._decode(payload)))
 
 
 class StructPlanner:
@@ -368,6 +399,7 @@ class StructPlanner:
             map_error = f"{struct.__qualname__} is array_like; rows are encoded as maps"
         # A Decimal inside JSON: msgpack would turn its JSON number into a float.
         has_decimal = any(cls._has_json_decimal(f.type) for f in info.fields)
+        json_one = msgspec.json.Decoder(struct)
         return Plan(
             spec=spec,
             direct_error=direct_error,
@@ -375,10 +407,11 @@ class StructPlanner:
             msgpack_one=msgspec.msgpack.Decoder(struct, ext_hook=_msgpack_ext).decode,
             msgpack_many=msgspec.msgpack.Decoder(list[struct], ext_hook=_msgpack_ext).decode,
             msgpack_error=map_error,
-            json_one=msgspec.json.Decoder(struct).decode,
+            json_one=json_one.decode,
             json_many=msgspec.json.Decoder(list[struct]).decode,
             json_error=map_error,
             json_non_finite_floats=False,
+            json_object=json_one.decode,
             # Its base class: malformed input becomes a fastpg error too.
             validation_error=msgspec.DecodeError,
             text_columns=tuple(f.encode_name for f in info.fields if cls._is_str(f.type)),
@@ -427,6 +460,7 @@ class StructPlanner:
             json_many=None,
             json_error=route_error,
             json_non_finite_floats=False,
+            json_object=_NamedTupleFromJSON(target, info, annotations),
             validation_error=msgspec.ValidationError,
             text_columns=(),
             field_columns=(),
@@ -461,6 +495,7 @@ class Planner:
             json_many=None,
             json_error=route_error,
             json_non_finite_floats=False,
+            json_object=msgspec.json.Decoder(dict[str, Any]).decode,
             validation_error=msgspec.ValidationError,
             text_columns=(),
             field_columns=(),

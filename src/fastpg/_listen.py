@@ -9,13 +9,11 @@ payloads from JSON into ``into=``: the types queries take there, checked by the 
 
 import asyncio
 import sys
-import typing
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, LiteralString, Self, TypeIs
+from typing import Any, ClassVar, LiteralString, Self
 
 import msgspec
-import msgspec.inspect as mi
 
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Listener as NativeListener
@@ -69,44 +67,6 @@ class Channels:
         return "; ".join(f"{command} {Identifier(name).quoted}" for name in names)
 
 
-class _Encoded[T]:
-    """A plan's JSON decoder, which takes bytes, for payloads, which are ``str``s."""
-
-    __slots__ = ("_decode",)
-
-    def __init__(self, decode: Callable[[bytes], T]) -> None:
-        self._decode = decode
-
-    def __call__(self, payload: str) -> T:
-        return self._decode(payload.encode())
-
-
-class _NamedTupleFromJSON:
-    """A JSON object into a NamedTuple, each field filled by its name as a column fills it
-    (msgspec reads NamedTuples from JSON arrays only)."""
-
-    __slots__ = ("_decode", "_target")
-
-    def __init__(self, target: type[tuple[Any, ...]]) -> None:
-        info = mi.type_info(target)
-        if not isinstance(info, mi.NamedTupleType):  # guaranteed for namedtuple classes
-            msg = f"msgspec does not describe {target!r} as a NamedTuple"
-            raise TypeError(msg)
-        hints = typing.get_type_hints(target)
-        fields: list[tuple[str, Any] | tuple[str, Any, Any]] = [
-            # A collections.namedtuple field has no annotation: Any.
-            (f.name, hints.get(f.name, Any))
-            if f.required
-            else (f.name, hints.get(f.name, Any), f.default)
-            for f in info.fields
-        ]
-        self._decode = msgspec.json.Decoder(msgspec.defstruct(target.__name__, fields)).decode
-        self._target = target
-
-    def __call__(self, payload: str) -> tuple[Any, ...]:
-        return self._target(*msgspec.structs.astuple(self._decode(payload)))
-
-
 class PayloadDecoder[T]:
     """How a listener turns payloads into ``into=``, built once per listener (not public
     API). ``errors``: what ``decode`` raises for a payload that doesn't fit."""
@@ -122,26 +82,14 @@ class PayloadDecoder[T]:
         self.errors = errors
 
     @staticmethod
-    def _is_tuple_type(into: object) -> TypeIs[type[tuple[Any, ...]]]:
-        return isinstance(into, type) and issubclass(into, tuple)
-
-    @staticmethod
     def build(into: object) -> "PayloadDecoder[Any]":
         """The decoder for ``into``: payloads as they are for ``str``; else, for a type
-        queries take as ``into=`` (TypeError for any other, as queries raise), decoded from
-        JSON by the query's decoder (a Struct, a pydantic model) or msgspec."""
+        queries take as ``into=`` (TypeError for any other, as queries raise), its plan's
+        JSON-object decoder."""
         if into is str:
             return PayloadDecoder(str, ())
         plan = Planner.plan_for(into)
-        if into is dict:
-            decode_dict = msgspec.json.Decoder(dict[str, Any]).decode
-            return PayloadDecoder(decode_dict, (msgspec.DecodeError,))
-        if plan.json_one is not None:
-            return PayloadDecoder(_Encoded(plan.json_one), (plan.validation_error,))
-        if PayloadDecoder._is_tuple_type(into):  # the one kind left: NamedTuple
-            return PayloadDecoder(_NamedTupleFromJSON(into), (msgspec.DecodeError,))
-        msg = f"listen() can't decode into {into!r}"
-        raise TypeError(msg)
+        return PayloadDecoder(plan.json_object, (plan.validation_error, msgspec.DecodeError))
 
 
 class NotifyQuery:
@@ -181,10 +129,11 @@ class Listener[T = str]:
 
     ``async for n in listener`` yields each `Notification` in the order the server sent
     them. Notifications sent before the block started are not seen. Up to ``max_queued``
-    notifications wait to be read; if more arrive, the listener stops queueing and raises
-    ``ListenerOverflowError`` (notifications were lost). Once the connection is lost or
-    closed (the pool's too), it yields what was already queued, then raises
-    ``ConnectionClosedError``. It works only inside its block.
+    notifications wait to be read; if more arrive, the listener stops queueing, yields what
+    was already queued, then raises ``ListenerOverflowError`` (the ones beyond were lost).
+    Once the connection is lost or closed (the pool's too), it yields what was already
+    queued, then raises ``ConnectionClosedError``. It works only inside its block. Several
+    tasks may iterate it: each notification goes to one of them.
 
     With ``listen(into=...)`` other than ``str``, a payload that doesn't decode raises
     ``DecodeError`` for that notification; the next one is read as usual.
