@@ -45,6 +45,37 @@ async with pool.transaction() as tx:
 
 So a listener never hears about an order that wasn't saved.
 
+## Structs, models and dicts
+
+`notify()` also takes anything [`params=`](queries.md#name-with-params) takes, and sends it
+as JSON:
+
+```python
+import msgspec
+
+
+class Order(msgspec.Struct):
+    id: int
+    total: int
+
+
+await pool.notify("orders", Order(id=42, total=100))
+```
+
+Pass `into=` to `listen()` to get each payload back as that type.
+`into=` takes the same types as in [queries](queries.md):
+
+```python
+async with pool.listen("orders", into=Order) as listener:
+    async for n in listener:
+        print(n.payload.id, n.payload.total)  # 42 100
+```
+
+Without `into=`, each payload is the text that was sent.
+
+If a payload isn't valid for `into=`, that notification raises `DecodeError`.
+The listener keeps going: the next notification arrives as usual.
+
 ## Good to know
 
 * If the connection is lost or closed, or the pool closes, the listener first gives you

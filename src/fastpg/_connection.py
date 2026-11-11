@@ -25,7 +25,7 @@ import msgspec
 
 from fastpg import _writes
 from fastpg._group import grouping_for
-from fastpg._listen import Channels, Listener
+from fastpg._listen import Channels, Listener, NotifyQuery, Payload, PayloadDecoder
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import (
     Cancel,
@@ -437,14 +437,17 @@ class _Queries:
             self._canceller.abandon(future)
             raise
 
-    async def notify(self, channel: str, payload: str = "") -> None:
+    async def notify(self, channel: str, payload: Payload = "") -> None:
         """Send a notification to the listeners of `channel` (``SELECT pg_notify($1, $2)``).
 
-        The channel name is exact (case-sensitive). Inside a transaction, it is delivered
-        only if the transaction commits.
+        A ``str`` payload is sent as it is; anything ``params=`` takes as JSON
+        (``ParameterError`` for a NaN or an infinity in it, as for any JSON parameter).
+        The channel name is exact (case-sensitive). Inside a transaction, it is
+        delivered only if the transaction commits.
         """
+        query, value = NotifyQuery.for_payload(payload)
         future: asyncio.Future[int] = self._loop.create_future()
-        self._native.execute(future, "SELECT pg_notify($1, $2)", (channel, payload))
+        self._native.execute(future, query, (channel, value))
         try:
             await future
         except asyncio.CancelledError:
@@ -659,16 +662,39 @@ class Connection(_Queries):
         )
         return self._transaction
 
+    @overload
+    def listen(
+        self,
+        *channels: str,
+        into: type[dict[Any, Any]],
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[dict[str, Any]]]: ...
+    @overload
+    def listen[T = str](
+        self,
+        *channels: str,
+        into: type[T] = str,
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[T]]: ...
     @context_manager
-    async def listen(self, *channels: str, max_queued: int = 10_000) -> AsyncGenerator[Listener]:
+    async def listen(
+        self,
+        *channels: str,
+        into: type[Any] = str,
+        max_queued: int = 10_000,
+    ) -> AsyncGenerator[Listener[Any]]:
         """Receive notifications: ``async with conn.listen("jobs") as listener:``, then
         ``async for n in listener:`` (each `Notification`).
 
         LISTEN on entry, UNLISTEN on exit. Channel names are exact (quoted, so
         case-sensitive); at least one is needed. The connection still runs queries while
         the block is open. See `Listener` for ``max_queued`` and a lost connection.
+
+        Payloads are ``str``s as sent (``into=str``, the default), or decoded from JSON into
+        ``into=``, which takes the types query methods take there (TypeError for others).
         """
         names = Channels(channels, max_queued).names
+        decoder = PayloadDecoder.build(into)
         listener = self._native.listen(names, max_queued)
         future: asyncio.Future[None] = self._loop.create_future()
         try:
@@ -678,7 +704,7 @@ class Connection(_Queries):
             self._send_unlisten(listener)  # a cancelled LISTEN may still run
             raise
         try:
-            yield Listener(listener, self._loop)
+            yield Listener(listener, self._loop, decoder)
         except BaseException as e:
             await self._unlisten(listener, e)
             raise

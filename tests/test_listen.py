@@ -6,13 +6,52 @@ so a listener's connection notifying itself queues them deterministically.
 """
 
 import asyncio
+import math
 from collections.abc import AsyncIterator, Callable, Coroutine
-from typing import Any, cast
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, NamedTuple, assert_type, cast
 
+import msgspec
+import pydantic
 import pytest
 from conftest import LoopErrors
 
 import fastpg
+
+
+class Order(msgspec.Struct):
+    id: int
+
+
+class OrderTuple(NamedTuple):
+    id: int
+
+
+@dataclass
+class OrderData:
+    id: int
+
+
+class OrderModel(pydantic.BaseModel):
+    id: int
+
+
+class AliasedModel(pydantic.BaseModel):
+    order_id: int = pydantic.Field(alias="id")
+
+
+class Reading(msgspec.Struct):
+    value: float
+
+
+@dataclass
+class ReadingData:
+    value: float
+
+
+class ReadingModel(pydantic.BaseModel):
+    value: float
 
 
 async def _pid(conn: fastpg.Connection) -> int:
@@ -24,7 +63,7 @@ async def _channels(target: fastpg.Connection | fastpg.Pool) -> list[str]:
     return [row[0] for row in rows]
 
 
-async def _next(listener: fastpg.Listener) -> fastpg.Notification:
+async def _next[T](listener: fastpg.Listener[T]) -> fastpg.Notification[T]:
     async with asyncio.timeout(5):
         return await anext(listener)
 
@@ -314,6 +353,194 @@ async def test_bad_arguments_are_refused_before_a_connection_is_taken(
     async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
         with pytest.raises(ValueError, match=match):
             async with pool.listen(*channels, max_queued=max_queued):
+                pass
+        assert pool.stats().acquired == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        Order(1),
+        OrderData(1),
+        OrderModel(id=1),
+        AliasedModel(id=1),
+        {"id": 1},
+        MappingProxyType({"id": 1}),
+    ],
+    ids=["struct", "dataclass", "pydantic", "pydantic-alias", "dict", "mapping"],
+)
+async def test_notify_sends_what_params_takes_as_json(
+    pool: fastpg.Pool,
+    other: fastpg.Connection,
+    payload: fastpg.NamedParams,
+) -> None:
+    async with other.listen("channel") as text, other.listen("channel", into=dict) as data:
+        await pool.notify("channel", payload)
+        await other.notify("channel", payload)
+        texts = [(await _next(text)).payload for _ in range(2)]
+        dicts = [(await _next(data)).payload for _ in range(2)]
+    assert texts == ['{"id":1}'] * 2
+    assert dicts == [{"id": 1}] * 2
+
+
+@pytest.mark.parametrize(
+    ("into", "expected"),
+    [
+        (dict, {"id": 1}),
+        (Order, Order(1)),
+        (OrderTuple, OrderTuple(1)),
+        (OrderModel, OrderModel(id=1)),
+        (AliasedModel, AliasedModel(id=1)),
+    ],
+    ids=["dict", "struct", "named-tuple", "pydantic", "pydantic-alias"],
+)
+async def test_into_takes_what_queries_take(
+    pool: fastpg.Pool,
+    other: fastpg.Connection,
+    into: type[Any],
+    expected: object,
+) -> None:
+    async with pool.listen("channel", into=into) as listener:
+        await other.notify("channel", Order(1))
+        await other.notify("channel", '{"id": 1}')
+        received = [(await _next(listener)).payload for _ in range(2)]
+    assert received == [expected, expected]
+
+
+async def test_into_types_the_listener(conn: fastpg.Connection) -> None:
+    async with (
+        conn.listen("channel") as default,
+        conn.listen("channel", into=str) as text,
+        conn.listen("channel", into=dict) as data,
+        conn.listen("channel", into=Order) as struct,
+        conn.listen("channel", into=OrderModel) as model,
+    ):
+        assert_type(default, fastpg.Listener[str])
+        assert_type(text, fastpg.Listener[str])
+        assert_type(data, fastpg.Listener[dict[str, Any]])
+        assert_type(struct, fastpg.Listener[Order])
+        assert_type(model, fastpg.Listener[OrderModel])
+        await conn.notify("channel", Order(1))
+        notification = await _next(struct)
+        assert_type(notification, fastpg.Notification[Order])
+        assert (await _next(model)).payload == OrderModel(id=1)
+    assert notification == fastpg.Notification("channel", Order(1), await _pid(conn))
+
+
+async def test_into_str_gives_the_text_as_it_was_sent(conn: fastpg.Connection) -> None:
+    async with conn.listen("channel", into=str) as listener:
+        await conn.notify("channel", '{"id": 1}')
+        await conn.notify("channel", "not-json")
+        received = [(await _next(listener)).payload for _ in range(2)]
+    assert received == ['{"id": 1}', "not-json"]
+
+
+@pytest.mark.parametrize(
+    ("into", "bad", "cause"),
+    [
+        (Order, "not-json", msgspec.DecodeError),
+        (Order, '{"id": "x"}', msgspec.ValidationError),
+        (dict, "not-json", msgspec.DecodeError),
+        (dict, "[1]", msgspec.ValidationError),
+        (OrderTuple, "not-json", msgspec.DecodeError),
+        (OrderTuple, '{"id": "x"}', msgspec.ValidationError),
+        (OrderModel, "not-json", pydantic.ValidationError),
+        (OrderModel, '{"id": "x"}', pydantic.ValidationError),
+    ],
+    ids=[
+        "struct-bad-json",
+        "struct-invalid",
+        "dict-bad-json",
+        "dict-invalid",
+        "named-tuple-bad-json",
+        "named-tuple-invalid",
+        "pydantic-bad-json",
+        "pydantic-invalid",
+    ],
+)
+async def test_a_payload_that_does_not_decode_raises_and_the_listener_goes_on(
+    conn: fastpg.Connection,
+    into: type[Any],
+    bad: str,
+    cause: type[Exception],
+) -> None:
+    async with conn.listen("channel", into=into) as listener:
+        await conn.notify("channel", bad)
+        await conn.notify("channel", '{"id": 2}')
+        with pytest.raises(fastpg.DecodeError, match="on channel 'channel'") as exc:
+            await _next(listener)
+        notification = await _next(listener)
+    assert isinstance(exc.value.__cause__, cause)
+    assert notification.payload == into(id=2)
+
+
+@pytest.mark.parametrize(
+    ("payload", "found"),
+    [
+        ({"x": math.nan}, r"nan at \$\.x"),
+        (Reading(-math.inf), r"-inf at \$\.value"),
+        (ReadingData(math.inf), r"inf at \$\.value"),
+        (ReadingModel(value=math.nan), r"nan at \$\.value"),
+    ],
+    ids=["dict", "struct", "dataclass", "pydantic"],
+)
+async def test_notify_refuses_nan_and_infinities(
+    pool: fastpg.Pool,
+    conn: fastpg.Connection,
+    payload: fastpg.NamedParams,
+    found: str,
+) -> None:
+    async with conn.listen("channel") as listener:
+        with pytest.raises(fastpg.ParameterError, match=f"{found} has no JSON form"):
+            await pool.notify("channel", payload)
+        with pytest.raises(fastpg.ParameterError, match=f"{found} has no JSON form"):
+            await conn.notify("channel", payload)
+        await conn.notify("channel", "after")
+        notification = await _next(listener)
+    assert notification.payload == "after"  # nothing was sent before it
+
+
+async def test_notify_refuses_what_params_refuses(
+    pool: fastpg.Pool,
+    conn: fastpg.Connection,
+) -> None:
+    untyped_caller: Any = OrderTuple(1)  # what an untyped caller could pass
+    match = r"payload must be a str, or what params= takes: params= must be"
+    async with conn.listen("channel") as listener:
+        with pytest.raises(TypeError, match=match):
+            await pool.notify("channel", untyped_caller)
+        with pytest.raises(TypeError, match=match):
+            await conn.notify("channel", untyped_caller)
+        await conn.notify("channel", "after")
+        notification = await _next(listener)
+    assert notification.payload == "after"  # nothing was sent before it
+
+
+async def test_a_transaction_notifies_a_struct_on_commit(
+    conn: fastpg.Connection,
+    other: fastpg.Connection,
+) -> None:
+    async with conn.listen("channel", into=Order) as listener:
+        async with other.transaction() as tx:
+            await tx.notify("channel", Order(1))
+        notification = await _next(listener)
+    assert notification.payload == Order(1)
+
+
+async def test_into_queries_refuse_is_refused_before_listening(
+    dsn: str,
+    conn: fastpg.Connection,
+) -> None:
+    match = r"into= must be dict, a NamedTuple, or a msgspec\.Struct or pydantic\.BaseModel"
+    with pytest.raises(TypeError, match=match):
+        await conn.select_one("SELECT 1 AS id", into=OrderData)
+    with pytest.raises(TypeError, match=match):
+        async with conn.listen("channel", into=OrderData):
+            pass
+    assert await _channels(conn) == []
+    async with await fastpg.create_pool(dsn, min_size=1, max_size=1) as pool:
+        with pytest.raises(TypeError, match=match):
+            async with pool.listen("channel", into=OrderData):
                 pass
         assert pool.stats().acquired == 0
 

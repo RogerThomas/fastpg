@@ -37,7 +37,7 @@ import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable, Sequence
-from contextlib import suppress
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import InitVar, dataclass, field
 from types import TracebackType
 from typing import Any, ClassVar, Concatenate, LiteralString, Self, overload
@@ -57,7 +57,7 @@ from fastpg._connection import (
     context_manager,
 )
 from fastpg._group import grouping_for
-from fastpg._listen import Channels, Listener
+from fastpg._listen import Channels, Listener, NotifyQuery, Payload, PayloadDecoder
 from fastpg._named import NamedBinder, NamedParams
 from fastpg._native import Router
 from fastpg._template import Template, TemplateCompiler
@@ -1152,16 +1152,12 @@ class Pool:
         affected: int = await self._query(self._EXECUTE, query, args, None, "auto")
         return affected
 
-    async def notify(self, channel: str, payload: str = "") -> None:
+    async def notify(self, channel: str, payload: Payload = "") -> None:
         """Shared mode ``Connection.notify``: send a notification to the listeners of
-        `channel` (``SELECT pg_notify($1, $2)``), autocommit."""
-        await self._query(
-            self._EXECUTE,
-            "SELECT pg_notify($1, $2)",
-            (channel, payload),
-            None,
-            "auto",
-        )
+        `channel` (``SELECT pg_notify($1, $2)``), autocommit. A ``str`` payload is sent as
+        it is; anything ``params=`` takes as JSON."""
+        query, value = NotifyQuery.for_payload(payload)
+        await self._query(self._EXECUTE, query, (channel, value), None, "auto")
 
     async def execute_script(self, query: LiteralString | Template, /) -> None:
         """Shared mode ``Connection.execute_script``: runs as one implicit transaction."""
@@ -1243,8 +1239,27 @@ class Pool:
         finally:
             await self._give_back(entry, reset=not clean)
 
+    @overload
+    def listen(
+        self,
+        *channels: str,
+        into: type[dict[Any, Any]],
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[dict[str, Any]]]: ...
+    @overload
+    def listen[T = str](
+        self,
+        *channels: str,
+        into: type[T] = str,
+        max_queued: int = 10_000,
+    ) -> AbstractAsyncContextManager[Listener[T]]: ...
     @context_manager
-    async def listen(self, *channels: str, max_queued: int = 10_000) -> AsyncGenerator[Listener]:
+    async def listen(
+        self,
+        *channels: str,
+        into: type[Any] = str,
+        max_queued: int = 10_000,
+    ) -> AsyncGenerator[Listener[Any]]:
         """Receive notifications: ``async with pool.listen("jobs") as listener:``, then
         ``async for n in listener:`` (each `Notification`).
 
@@ -1253,13 +1268,15 @@ class Pool:
         UNLISTEN and the session reset, and the connection rejoins shared rotation. Channel
         names are exact (quoted, so case-sensitive); at least one is needed. Closing the
         pool ends the listener (``ConnectionClosedError``). See `Listener` for
-        ``max_queued`` and a lost connection.
+        ``max_queued`` and a lost connection, and ``Connection.listen`` for ``into=``.
         """
-        Channels(channels, max_queued)  # checked before a connection is taken
+        # Checked before a connection is taken.
+        Channels(channels, max_queued)
+        PayloadDecoder.build(into)
         entry = await self._take()
         self._listening.add(entry)
         try:
-            async with entry.conn.listen(*channels, max_queued=max_queued) as listener:
+            async with entry.conn.listen(*channels, into=into, max_queued=max_queued) as listener:
                 yield listener
         finally:
             self._listening.discard(entry)
