@@ -325,7 +325,7 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         if: ${{ !cancelled() }}
         run: rustup toolchain install
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         if: ${{ !cancelled() }}
         with:
           tool: cargo-about@${{ env.CARGO_ABOUT_VERSION }}
