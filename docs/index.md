@@ -81,6 +81,6 @@ New here? Start with [Getting started](guide/getting-started.md).
 
 For a more detailed breakdown, and how the benchmarks were run, see [Benchmarks](performance.md).
 
-fastpg is alpha software. See what it can't do yet in [Limitations](limitations.md).
+See what it doesn't do in [Limitations](limitations.md).
 
 fastpg follows Semantic Versioning. Names starting with `_` are internal and can change in any release.

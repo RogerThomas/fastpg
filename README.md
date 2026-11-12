@@ -121,4 +121,5 @@ The smallest lead, binary COPY of 5,000 rows, is 1.23x
 
 **[rogerthomas.github.io/fastpg](https://rogerthomas.github.io/fastpg/)**
 
-fastpg is alpha software. MIT licensed.
+fastpg follows Semantic Versioning. Names starting with `_` are internal and can change in any release.
+MIT licensed.
