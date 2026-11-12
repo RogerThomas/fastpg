@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/RogerThomas/fastpg/compare/v0.2.2...v0.2.3) (2026-11-12)
+
+
+### Features
+
+* LISTEN/NOTIFY: listen() on pools and connections, notify() on pools, connections and transactions ([#97](https://github.com/RogerThomas/fastpg/issues/97)) ([83aefde](https://github.com/RogerThomas/fastpg/commit/83aefdefdcbc0fd6be8d3fc989946e98cc3dc647))
+
 ## [0.2.2](https://github.com/RogerThomas/fastpg/compare/v0.2.1...v0.2.2) (2026-11-10)
 
 
