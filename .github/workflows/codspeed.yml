@@ -70,7 +70,7 @@ jobs:
           workspaces: native -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -88,7 +88,7 @@ jobs:
             | docker exec -i "$POSTGRES_CONTAINER" psql -q -U fastpg -d fastpg -v ON_ERROR_STOP=1
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@61efe07e57e55bedeab750c434504de272a56e8c # v5.6.1
+        uses: CodSpeedHQ/action@af75f77f17a054769abefaa42fe8dc2975469b5f # v5.6.3
         with:
           mode: simulation
           run: uv run pytest benchmarks --codspeed --timeout 600
